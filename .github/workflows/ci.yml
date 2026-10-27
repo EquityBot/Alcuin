@@ -39,4 +39,5 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --locked -- -D warnings
-      - run: cargo test --locked
+      # Two threads: timing-bounded tests (1 s durable-write budgets) need headroom on 4-vCPU runners.
+      - run: cargo test --locked -- --test-threads=2
