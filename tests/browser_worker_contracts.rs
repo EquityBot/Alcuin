@@ -158,7 +158,8 @@ async fn compiled_browser_worker_acknowledges_start_in_isolated_home_then_refuse
     )
     .await
     .unwrap();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    // The spawned worker refuses in about 2 s unloaded; 30 s covers a busy CI runner.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
     let metadata = loop {
         let metadata = store.require(id).unwrap();
         if metadata["status"] == "error" {

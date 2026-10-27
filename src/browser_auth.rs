@@ -804,7 +804,9 @@ mod tests {
             ),
             ("SWEET_COOKIE_LINUX_KEYRING".into(), "basic".into()),
         ]);
-        let config = json!({"cookieSync":true,"chromeCookiePath":source,"cookieNames":["PUBLIC-session"],"cookieSyncWaitMs":400});
+        // The fixture appears after 100 ms; the 2 s retry wait lets it finish writing first, even on
+        // a loaded runner, since a database still being written is refused as changed.
+        let config = json!({"cookieSync":true,"chromeCookiePath":source,"cookieNames":["PUBLIC-session"],"cookieSyncWaitMs":2_000});
         let creator = {
             let fixture = fixture.clone();
             tokio::spawn(async move {
@@ -821,7 +823,7 @@ mod tests {
             .await
             .unwrap();
         creator.await.unwrap();
-        assert!(started.elapsed() >= Duration::from_millis(400));
+        assert!(started.elapsed() >= Duration::from_millis(2_000));
         assert_eq!(batch.cookies.len(), 1);
         let missing = json!({"cookieSync":true,"chromeCookiePath":home.path().join("PUBLIC-missing/Cookies"),"cookieSyncWaitMs":60_000});
         let cancel = CancellationToken::new();

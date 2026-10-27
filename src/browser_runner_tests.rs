@@ -4881,7 +4881,12 @@ async fn sequential_browser_turns_wait_for_an_unmounted_temporary_chat_view() {
 
 #[tokio::test]
 async fn sequential_browser_refuses_unknown_or_ordinary_chat_without_another_guarded_step() {
-    let limits = one_second_command_limits();
+    // A 5 s command deadline separates waiting it out from refusing on the first read, even on
+    // a loaded runner.
+    let limits = RunnerLimits {
+        command: Duration::from_secs(5),
+        ..limits()
+    };
     for fault in [Fault::SequentialPrivacyUnknown, Fault::SequentialPrivacyOff] {
         let f = fixture(fault, false).await;
         let started = Instant::now();
@@ -5643,7 +5648,8 @@ async fn a_lock_held_through_cleanup_and_warning_keeps_the_completed_answer() {
     let f = fixture(Fault::CloseRefusedThenLockedSettlement, false).await;
     let started = std::time::Instant::now();
     let result = run_within(&f, &one_second_command_limits()).await;
-    assert!(started.elapsed() < Duration::from_secs(14));
+    // Bounded well below the 60 s defaults; about 12 s unloaded, more on a 2-core CI runner.
+    assert!(started.elapsed() < Duration::from_secs(30));
     let completed =
         result.expect("Cleanup warning persistence must not replace a completed answer");
     assert_eq!(completed["status"], "completed");
@@ -5820,7 +5826,7 @@ async fn required_file_exports_are_committed_before_retirement_and_need_an_answe
                 Path::new(exported["path"].as_str().unwrap())
                     .parent()
                     .unwrap(),
-                f.home.path()
+                crate::native_fs::canonical_wire_path(f.home.path()).unwrap()
             );
             assert!(exported["path"].as_str().unwrap().ends_with("public-2.txt"));
             let log = f.store.log(&f.id).unwrap();
@@ -5952,7 +5958,13 @@ async fn failed_required_file_export_reuses_owned_answer_and_captured_file_witho
             let message = before["errorMessage"].as_str().unwrap();
             assert!(
                 message.starts_with("Failed to copy saved file artifact ")
-                    && message.contains(&format!(" beside {}: ", answer.display())),
+                    && message.contains(&format!(
+                        " beside {}: ",
+                        crate::native_fs::canonical_wire_path(f.home.path())
+                            .unwrap()
+                            .join("PUBLIC-output.md")
+                            .display()
+                    )),
                 "{message}"
             );
         }

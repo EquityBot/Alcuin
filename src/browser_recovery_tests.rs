@@ -183,14 +183,17 @@ async fn verify_reopening_deadlines() {
             if !detail.contains("Fresh observation cleanup confirmed") {
                 // Native authority reads can exceed the bounded cleanup budget under
                 // concurrent filesystem load. Only that exact, fail-closed outcome is valid.
+                // An uncommitted navigation times out rather than being refused.
                 let method = match case {
-                    "page-error" => "Page.enable",
-                    "runtime-error" => "Runtime.enable",
-                    "navigation-error" => "Page.navigate",
+                    "page-error" => Some("Page.enable"),
+                    "runtime-error" => Some("Runtime.enable"),
+                    "navigation-error" => Some("Page.navigate"),
+                    "navigation-uncommitted" => None,
                     _ => panic!("{case}: {detail}"),
                 };
                 assert!(
-                    detail.contains(&format!("CDP command {method} was refused by the endpoint")),
+                    method.is_none_or(|method| detail
+                        .contains(&format!("CDP command {method} was refused by the endpoint"))),
                     "{case}: {detail}"
                 );
                 assert!(detail.contains("Observation cleanup unconfirmed; exact admission retained: Browser profile transaction deadline reached"), "{case}: {detail}");
