@@ -1,0 +1,860 @@
+{
+  "source": "gpt-tokenizer/model/gpt-5",
+  "moduleRoute": "createRequire",
+  "options": {
+    "allowedSpecial": "all"
+  },
+  "seed": 1791868853,
+  "sourceHashes": {
+    "node_modules/gpt-tokenizer/data/o200k_base.tiktoken": "446a9538cb6c348e3516120d7c08b09f57c36495e2acfffe59a5bf8b0cfb1a2d",
+    "node_modules/gpt-tokenizer/cjs/BytePairEncodingCore.js": "d4be9cb32d84fd9a7ecbd92f1be1ff7fa739ca06990feea587f2193f44bff574",
+    "node_modules/gpt-tokenizer/cjs/GptEncoding.js": "33df4050c2ab55e6265056902fa37c96c8c15d68e659f2598df6421b05af7b6e"
+  },
+  "strings": [
+    {
+      "input": "",
+      "tokens": 0
+    },
+    {
+      "input": "Hello, world!",
+      "tokens": 4
+    },
+    {
+      "input": "PUBLIC review\n\n```rust\nfn main() {}\n```",
+      "tokens": 11
+    },
+    {
+      "input": "café naïve façade",
+      "tokens": 5
+    },
+    {
+      "input": "🐕🧑🏽‍💻 🇦🇺",
+      "tokens": 14
+    },
+    {
+      "input": "汉字 日本語 한국어",
+      "tokens": 6
+    },
+    {
+      "input": "عربي עברית हिन्दी",
+      "tokens": 5
+    },
+    {
+      "input": "CamelCase XMLHttpRequest UTF8",
+      "tokens": 6
+    },
+    {
+      "input": "12345678901234567890",
+      "tokens": 7
+    },
+    {
+      "input": " /path/to/file\r\nend",
+      "tokens": 6
+    },
+    {
+      "input": "  \n \t\n\r\n  ",
+      "tokens": 4
+    },
+    {
+      "input": "foo////bar///\n///",
+      "tokens": 4
+    },
+    {
+      "input": "<|endoftext|><|im_start|><|fim_prefix|>",
+      "tokens": 9
+    },
+    {
+      "input": "\u0000�  ",
+      "tokens": 5
+    },
+    {
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tokens": 1250
+    },
+    {
+      "input": "<|endoftext|>",
+      "tokens": 1
+    },
+    {
+      "input": "<|fim_prefix|>",
+      "tokens": 1
+    },
+    {
+      "input": "<|fim_middle|>",
+      "tokens": 1
+    },
+    {
+      "input": "<|fim_suffix|>",
+      "tokens": 1
+    },
+    {
+      "input": "<|im_start|>",
+      "tokens": 1
+    },
+    {
+      "input": "<|im_end|>",
+      "tokens": 1
+    },
+    {
+      "input": "<|im_sep|>",
+      "tokens": 1
+    },
+    {
+      "input": "<|endofprompt|>",
+      "tokens": 1
+    },
+    {
+      "input": "a<|endoftext|>",
+      "tokens": 8
+    },
+    {
+      "input": "a<|fim_prefix|>",
+      "tokens": 7
+    },
+    {
+      "input": "a<|fim_middle|>",
+      "tokens": 7
+    },
+    {
+      "input": "a<|fim_suffix|>",
+      "tokens": 7
+    },
+    {
+      "input": "a<|im_start|>",
+      "tokens": 7
+    },
+    {
+      "input": "a<|im_end|>",
+      "tokens": 7
+    },
+    {
+      "input": "a<|im_sep|>",
+      "tokens": 7
+    },
+    {
+      "input": "a<|endofprompt|>",
+      "tokens": 8
+    },
+    {
+      "input": "PUBLIC ",
+      "tokens": 2
+    },
+    {
+      "input": "lowercase  ",
+      "tokens": 3
+    },
+    {
+      "input": "\r\n עברית<|endoftext|>",
+      "tokens": 10
+    },
+    {
+      "input": "１２３４５  /\r\n ",
+      "tokens": 8
+    },
+    {
+      "input": "\t हिन्दी/////  ",
+      "tokens": 5
+    },
+    {
+      "input": "١٢٣٤٥ İIſǅŋĀÅµ!@#$%^&*()PUBLIC ////汉字",
+      "tokens": 25
+    },
+    {
+      "input": "CamelCase UPPERCASE!@#$%^&*()İIſǅŋĀÅµ !@#$%^&*()１２３４５<|fim_prefix|> ",
+      "tokens": 39
+    },
+    {
+      "input": "\u0000 ﻿עברית UPPERCASE🐕\u0000 🐕",
+      "tokens": 17
+    },
+    {
+      "input": "\n\n \t<|endoftext|> 汉字﻿עברית ```",
+      "tokens": 20
+    },
+    {
+      "input": "//// <|im_start|>हिन्दी/ 🐕```   <|endoftext|>UPPERCASE ",
+      "tokens": 32
+    },
+    {
+      "input": "é UPPERCASE<|fim_prefix|>עברית ١٢٣٤٥<|im_start|>हिन्दी  עברית <|endoftext|>",
+      "tokens": 40
+    },
+    {
+      "input": "PUBLIC /////﻿ éCamelCase``` ١٢٣٤٥PUBLICé １２３４５﻿",
+      "tokens": 24
+    },
+    {
+      "input": "  ١٢٣٤٥<|im_start|>عربي עברית\r\n/ <|endoftext|>/🐕 \u0000   ",
+      "tokens": 34
+    },
+    {
+      "input": "!@#$%^&*()  \r\n/ 🐕İIſǅŋĀÅµ١٢٣٤٥  1234567890PUBLIC !@#$%^&*()```  <|im_start|>",
+      "tokens": 50
+    },
+    {
+      "input": "عربي 汉字/ हिन्दी```CamelCase  <|endoftext|>汉字 PUBLIC  UPPERCASECamelCase",
+      "tokens": 33
+    },
+    {
+      "input": "עברית  PUBLIC<|fim_prefix|>  1234567890UPPERCASE \r\n 1234567890  CamelCaseé ١٢٣٤٥PUBLIClowercase ",
+      "tokens": 46
+    },
+    {
+      "input": "``` हिन्दी \r\n PUBLIC<|fim_prefix|>  \r\n<|im_start|>  汉字!@#$%^&*()  ١٢٣٤٥עברית🐕  ",
+      "tokens": 45
+    },
+    {
+      "input": "عربي １２３４５////汉字 ﻿\n\n1234567890  <|fim_prefix|>  ééعربي 🧑🏽‍💻é  1234567890汉字",
+      "tokens": 52
+    },
+    {
+      "input": "🐕 <|im_start|><|fim_prefix|><|im_start|> CamelCaseİIſǅŋĀÅµ١٢٣٤٥ <|im_start|>1234567890  lowercase汉字é  lowercase汉字 汉字١٢٣٤٥ ",
+      "tokens": 67
+    },
+    {
+      "input": "UPPERCASE ",
+      "tokens": 4
+    },
+    {
+      "input": "////  ",
+      "tokens": 2
+    },
+    {
+      "input": "   ﻿",
+      "tokens": 7
+    },
+    {
+      "input": "/ 1234567890🧑🏽‍💻é ",
+      "tokens": 16
+    },
+    {
+      "input": "\n\n <|fim_prefix|>１２３４５!@#$%^&*() \u0000",
+      "tokens": 20
+    },
+    {
+      "input": "🐕 🧑🏽‍💻é\n\n 1234567890```",
+      "tokens": 18
+    },
+    {
+      "input": "\r\n é<|endoftext|>``` 🐕<|im_start|>🐕 ",
+      "tokens": 23
+    },
+    {
+      "input": "PUBLIC <|im_start|>عربي עברית１２３４５ \r\n",
+      "tokens": 20
+    },
+    {
+      "input": "PUBLIC ﻿\n\n1234567890 UPPERCASE////  lowercase<|im_start|>",
+      "tokens": 22
+    },
+    {
+      "input": "﻿ １２３４５lowercaseİIſǅŋĀÅµ   <|fim_prefix|> 🧑🏽‍💻CamelCaseİIſǅŋĀÅµ ",
+      "tokens": 49
+    },
+    {
+      "input": "  UPPERCASE﻿é 🐕UPPERCASE1234567890 \n\nCamelCasePUBLIC हिन्दी",
+      "tokens": 23
+    },
+    {
+      "input": "עברית CamelCase汉字<|fim_prefix|> \n\n﻿PUBLIC 1234567890UPPERCASEहिन्दी   ",
+      "tokens": 30
+    },
+    {
+      "input": "\u0000 <|fim_prefix|>   PUBLIC!@#$%^&*()  1234567890עבריתlowercase ```CamelCase  ",
+      "tokens": 34
+    },
+    {
+      "input": "عربي 🧑🏽‍💻 １２３４５ lowercase<|im_start|>\r\n PUBLIC\r\né lowercaseעבריתlowercase é",
+      "tokens": 33
+    },
+    {
+      "input": "1234567890 ```1234567890    1234567890 PUBLIC İIſǅŋĀÅµ <|endoftext|>UPPERCASECamelCase é﻿",
+      "tokens": 49
+    },
+    {
+      "input": "İIſǅŋĀÅµ ﻿İIſǅŋĀÅµعربي ```<|endoftext|>１２３４５ !@#$%^&*()   ``` \n\n <|endoftext|>é ",
+      "tokens": 58
+    },
+    {
+      "input": "PUBLIC 1234567890１２３４５🐕 éहिन्दीİIſǅŋĀÅµ ١٢٣٤٥/CamelCase \n\n!@#$%^&*()\t 🐕 é \u0000",
+      "tokens": 51
+    },
+    {
+      "input": "!@#$%^&*() ```<|fim_prefix|>é  İIſǅŋĀÅµ﻿ İIſǅŋĀÅµé\t ﻿\u0000हिन्दी 🧑🏽‍💻 ``` 1234567890é",
+      "tokens": 67
+    },
+    {
+      "input": "<|fim_prefix|> \n\nCamelCase🧑🏽‍💻 İIſǅŋĀÅµ!@#$%^&*() \n\nCamelCaseUPPERCASE  <|im_start|>  汉字<|endoftext|>   PUBLIC ",
+      "tokens": 64
+    },
+    {
+      "input": "\n\n ",
+      "tokens": 2
+    },
+    {
+      "input": "﻿ \n\n",
+      "tokens": 3
+    },
+    {
+      "input": "<|endoftext|> \n\nहिन्दी",
+      "tokens": 5
+    },
+    {
+      "input": "``` 汉字é ",
+      "tokens": 7
+    },
+    {
+      "input": "``` CamelCase１２３４５١٢٣٤٥ ```",
+      "tokens": 13
+    },
+    {
+      "input": "1234567890  हिन्दीUPPERCASE عربيİIſǅŋĀÅµ",
+      "tokens": 22
+    },
+    {
+      "input": "عربي PUBLIC\r\n/ CamelCase\n\nعربي ",
+      "tokens": 11
+    },
+    {
+      "input": "PUBLIC lowercaseUPPERCASEहिन्दी １２３４５﻿UPPERCASE 🐕",
+      "tokens": 21
+    },
+    {
+      "input": "汉字 <|fim_prefix|>UPPERCASElowercase İIſǅŋĀÅµעברית CamelCase ",
+      "tokens": 30
+    },
+    {
+      "input": "﻿  عربي\u0000 1234567890１２３４５<|fim_prefix|> UPPERCASECamelCase  ",
+      "tokens": 32
+    },
+    {
+      "input": "1234567890 İIſǅŋĀÅµ🐕PUBLIC ////\t  \n\nlowercase<|im_start|> \r\n",
+      "tokens": 29
+    },
+    {
+      "input": "/ عربي１２３４５  \téİIſǅŋĀÅµ عربيעבריתé ```1234567890",
+      "tokens": 30
+    },
+    {
+      "input": "é 1234567890汉字1234567890  CamelCase  <|endoftext|>עברית İIſǅŋĀÅµ﻿汉字 ",
+      "tokens": 45
+    },
+    {
+      "input": "CamelCase ééé \r\n\n\n﻿ \t١٢٣٤٥\u0000 عربيPUBLIC<|fim_prefix|>  ",
+      "tokens": 29
+    },
+    {
+      "input": " UPPERCASE﻿é ١٢٣٤٥ <|endoftext|> עברית   lowercaseélowercase é🐕",
+      "tokens": 39
+    },
+    {
+      "input": "\u0000 1234567890汉字﻿  ١٢٣٤٥  lowercase\n\n<|endoftext|> עברית🐕\t  ```é ",
+      "tokens": 40
+    },
+    {
+      "input": "\t lowercase<|im_start|><|fim_prefix|> é<|endoftext|>İIſǅŋĀÅµ <|fim_prefix|> 1234567890 \té  lowercase汉字<|endoftext|> /",
+      "tokens": 58
+    },
+    {
+      "input": "1234567890  ////  !@#$%^&*()\t﻿  ١٢٣٤٥１２３４５ 🐕עברית١٢٣٤٥ עברית İIſǅŋĀÅµ ﻿ ",
+      "tokens": 58
+    },
+    {
+      "input": "//// \n\n🐕\t ١٢٣٤٥\u0000!@#$%^&*() PUBLIC1234567890  é１２３４５<|endoftext|> İIſǅŋĀÅµ<|fim_prefix|>İIſǅŋĀÅµ lowercase１２３４５  ",
+      "tokens": 71
+    },
+    {
+      "input": "  ",
+      "tokens": 3
+    },
+    {
+      "input": "<|fim_prefix|> İIſǅŋĀÅµ",
+      "tokens": 10
+    },
+    {
+      "input": "lowercase  !@#$%^&*()",
+      "tokens": 12
+    },
+    {
+      "input": "\t lowercase हिन्दी ",
+      "tokens": 8
+    },
+    {
+      "input": "<|im_start|> !@#$%^&*()\t﻿ /",
+      "tokens": 12
+    },
+    {
+      "input": "हिन्दी UPPERCASE!@#$%^&*()汉字 CamelCase\u0000",
+      "tokens": 18
+    },
+    {
+      "input": "\r\n １２３４５!@#$%^&*()İIſǅŋĀÅµ 1234567890🧑🏽‍💻 ",
+      "tokens": 38
+    },
+    {
+      "input": "１２３４５ <|im_start|>1234567890 １２３４５é\n\n 🐕",
+      "tokens": 26
+    },
+    {
+      "input": "🧑🏽‍💻 \r\n <|fim_prefix|> 汉字हिन्दीé हिन्दीעברית",
+      "tokens": 27
+    },
+    {
+      "input": "عربي UPPERCASE<|endoftext|>עברית ١٢٣٤٥  \n\n🐕汉字 ",
+      "tokens": 30
+    },
+    {
+      "input": "  UPPERCASE!@#$%^&*()PUBLIC 汉字é /éUPPERCASE ////",
+      "tokens": 25
+    },
+    {
+      "input": "\u0000 ////汉字🐕 İIſǅŋĀÅµCamelCasePUBLIC ١٢٣٤٥  é1234567890",
+      "tokens": 34
+    },
+    {
+      "input": "  עבריתहिन्दी עבריתlowercaseİIſǅŋĀÅµ  हिन्दी עבריתعربيעברית ",
+      "tokens": 35
+    },
+    {
+      "input": "हिन्दी  <|endoftext|>🧑🏽‍💻 !@#$%^&*()１２３４５١٢٣٤٥ עברית////  ١٢٣٤٥汉字\r\n  ",
+      "tokens": 51
+    },
+    {
+      "input": "!@#$%^&*() PUBLIC \t é１２３４５   \r\nעברית  İIſǅŋĀÅµlowercase \u0000é",
+      "tokens": 43
+    },
+    {
+      "input": "  🐕עברית\r\n  \r\nİIſǅŋĀÅµ éעברית﻿ 🧑🏽‍💻lowercase``` CamelCasePUBLIC<|fim_prefix|> ",
+      "tokens": 45
+    },
+    {
+      "input": "\u0000 \r\n\n\n\r\n 汉字हिन्दीUPPERCASE lowercase汉字🐕 עברית<|endoftext|>/ lowercase\u0000\r\n  ",
+      "tokens": 31
+    },
+    {
+      "input": "١٢٣٤٥ /<|fim_prefix|>/ !@#$%^&*()\t UPPERCASE١٢٣٤٥１２３４５ CamelCase🧑🏽‍💻<|fim_prefix|> <|im_start|>CamelCaseİIſǅŋĀÅµ １２３４５",
+      "tokens": 74
+    },
+    {
+      "input": "<|endoftext|> ```हिन्दी\n\n éİIſǅŋĀÅµlowercase  éUPPERCASE <|fim_prefix|>\tعربي １２３４５🐕/ <|fim_prefix|><|im_start|>  ",
+      "tokens": 57
+    },
+    {
+      "input": "/ ",
+      "tokens": 2
+    },
+    {
+      "input": "!@#$%^&*() \t",
+      "tokens": 8
+    },
+    {
+      "input": "١٢٣٤٥ <|im_start|>١٢٣٤٥",
+      "tokens": 16
+    },
+    {
+      "input": "\t 1234567890\n\n  ",
+      "tokens": 11
+    },
+    {
+      "input": "İIſǅŋĀÅµ <|im_start|>🐕 ```",
+      "tokens": 20
+    },
+    {
+      "input": "हिन्दी é////é ﻿１２３４５",
+      "tokens": 15
+    },
+    {
+      "input": "<|fim_prefix|> ```!@#$%^&*()עברית 1234567890 CamelCase ",
+      "tokens": 21
+    },
+    {
+      "input": "  हिन्दी\tعربي /عربي``` 🐕",
+      "tokens": 13
+    },
+    {
+      "input": "עברית <|endoftext|> عربي   🧑🏽‍💻 <|fim_prefix|>PUBLIC",
+      "tokens": 30
+    },
+    {
+      "input": "   1234567890  lowercasePUBLICé \n\n UPPERCASE ",
+      "tokens": 21
+    },
+    {
+      "input": "  \u0000!@#$%^&*()\t é\t  汉字!@#$%^&*()é ﻿",
+      "tokens": 30
+    },
+    {
+      "input": "\t 1234567890<|im_start|>हिन्दी 🧑🏽‍💻!@#$%^&*()UPPERCASE <|fim_prefix|><|im_start|>عربي   ",
+      "tokens": 50
+    },
+    {
+      "input": "é !@#$%^&*() ١٢٣٤٥ 🧑🏽‍💻CamelCase<|im_start|> عربيİIſǅŋĀÅµ1234567890 １２３４５हिन्दी  ",
+      "tokens": 57
+    },
+    {
+      "input": "<|endoftext|> \u0000عربي１２３４５  UPPERCASE١٢٣٤٥  lowercaseİIſǅŋĀÅµ عربيUPPERCASEé  ",
+      "tokens": 41
+    },
+    {
+      "input": "CamelCase     !@#$%^&*()עברית<|endoftext|> İIſǅŋĀÅµ<|fim_prefix|>🧑🏽‍💻 1234567890PUBLIC  İIſǅŋĀÅµعربي",
+      "tokens": 68
+    },
+    {
+      "input": "PUBLIC lowercase🧑🏽‍💻<|endoftext|> İIſǅŋĀÅµ!@#$%^&*()İIſǅŋĀÅµ !@#$%^&*()/1234567890 é١٢٣٤٥\n\n lowercase <|fim_prefix|> ",
+      "tokens": 71
+    },
+    {
+      "input": "עברית é１２３４５<|fim_prefix|> UPPERCASE////PUBLIC  עברית\r\n <|im_start|><|fim_prefix|>``` CamelCase１２３４５🐕 PUBLIC",
+      "tokens": 46
+    },
+    {
+      "input": "lowercase \t <|im_start|> CamelCase汉字عربي UPPERCASEहिन्दी  1234567890<|im_start|><|endoftext|> /lowercase\t lowercaseé",
+      "tokens": 47
+    },
+    {
+      "input": "١٢٣٤٥ ```1234567890  <|fim_prefix|>```\r\n \t<|endoftext|>🧑🏽‍💻  汉字<|endoftext|> PUBLIC1234567890\u0000 <|endoftext|>é ",
+      "tokens": 66
+    },
+    {
+      "input": "  UPPERCASE",
+      "tokens": 6
+    },
+    {
+      "input": "﻿ 🧑🏽‍💻1234567890",
+      "tokens": 14
+    },
+    {
+      "input": "/ <|fim_prefix|>```  ",
+      "tokens": 12
+    },
+    {
+      "input": "汉字  \n\n  ```",
+      "tokens": 9
+    },
+    {
+      "input": "عربي עברית   !@#$%^&*() ",
+      "tokens": 15
+    },
+    {
+      "input": "<|endoftext|> １２３４５!@#$%^&*()é é🧑🏽‍💻  ",
+      "tokens": 28
+    },
+    {
+      "input": "PUBLIC <|endoftext|>  İIſǅŋĀÅµ1234567890🧑🏽‍💻 عربي",
+      "tokens": 34
+    },
+    {
+      "input": "１２３４５ CamelCase１２３４５é \n\n!@#$%^&*()🧑🏽‍💻 \t",
+      "tokens": 30
+    },
+    {
+      "input": "﻿ \t<|fim_prefix|>１２３４５ ////עברית١٢٣٤٥  ////  ",
+      "tokens": 28
+    },
+    {
+      "input": "<|fim_prefix|> PUBLIC﻿\n\n ١٢٣٤٥🧑🏽‍💻//// \n\n١٢٣٤٥<|im_start|> ",
+      "tokens": 34
+    },
+    {
+      "input": "\t lowercase\t!@#$%^&*() UPPERCASEहिन्दीé lowercaseé  CamelCase",
+      "tokens": 28
+    },
+    {
+      "input": "/ \r\nעבריתहिन्दी \u0000 ```  \n\n﻿ עבריתعربي/ ",
+      "tokens": 20
+    },
+    {
+      "input": "1234567890     é\n\nlowercase \u0000////UPPERCASE   <|endoftext|> \u0000",
+      "tokens": 33
+    },
+    {
+      "input": "<|endoftext|> １２３４５   हिन्दी é \u00001234567890汉字 <|fim_prefix|>///// 🧑🏽‍💻हिन्दी",
+      "tokens": 42
+    },
+    {
+      "input": "/ CamelCase\n\nहिन्दी \u0000<|endoftext|>  CamelCase🧑🏽‍💻١٢٣٤٥ İIſǅŋĀÅµ<|fim_prefix|>/ 🐕 हिन्दी ",
+      "tokens": 57
+    },
+    {
+      "input": "é !@#$%^&*()１２３４５<|fim_prefix|> \t////\n\n ////\n\n<|fim_prefix|> İIſǅŋĀÅµहिन्दीעברית /﻿  ",
+      "tokens": 51
+    },
+    {
+      "input": "١٢٣٤٥ １２３４５عربي１２３４５  \n\n﻿ \n\né\n\n lowercase１２３４５  עברית1234567890``` ﻿ ",
+      "tokens": 46
+    },
+    {
+      "input": "lowercase \u0000////<|im_start|> ﻿```  é \t /عربي PUBLICé🧑🏽‍💻 é\tCamelCase ",
+      "tokens": 42
+    },
+    {
+      "input": "\r\n İIſǅŋĀÅµ",
+      "tokens": 10
+    },
+    {
+      "input": "!@#$%^&*() \n\n\r\n",
+      "tokens": 9
+    },
+    {
+      "input": "```  🧑🏽‍💻<|endoftext|> ",
+      "tokens": 19
+    },
+    {
+      "input": "PUBLIC lowercaseעבריתCamelCase  ",
+      "tokens": 7
+    },
+    {
+      "input": "🐕 עברית١٢٣٤٥\n\n lowercase汉字",
+      "tokens": 13
+    },
+    {
+      "input": "﻿ UPPERCASE   é عربي ",
+      "tokens": 15
+    },
+    {
+      "input": "🧑🏽‍💻 é```CamelCase עברית1234567890汉字 ﻿",
+      "tokens": 21
+    },
+    {
+      "input": "<|im_start|> !@#$%^&*()汉字عربي \u0000lowercase  é<|im_start|>",
+      "tokens": 25
+    },
+    {
+      "input": "lowercase ```lowercase１２３４５ ////🧑🏽‍💻١٢٣٤٥ 汉字!@#$%^&*()\n\n ",
+      "tokens": 33
+    },
+    {
+      "input": "हिन्दी  <|fim_prefix|>  1234567890עברית١٢٣٤٥ \t<|endoftext|>汉字 <|fim_prefix|>",
+      "tokens": 42
+    },
+    {
+      "input": "\u0000 !@#$%^&*() CamelCase UPPERCASE UPPERCASE ////🧑🏽‍💻\r\n é",
+      "tokens": 32
+    },
+    {
+      "input": "PUBLIC \r\n\u0000🐕 UPPERCASEעברית 🐕/🐕   ``` ",
+      "tokens": 22
+    },
+    {
+      "input": "CamelCase \tعربيPUBLIC  UPPERCASE\r\n \u00001234567890עברית  <|im_start|>  \u0000",
+      "tokens": 34
+    },
+    {
+      "input": "  \n\n!@#$%^&*()\n\n   عربي é １２３４５ 1234567890עברית١٢٣٤٥ İIſǅŋĀÅµ<|fim_prefix|>",
+      "tokens": 51
+    },
+    {
+      "input": "<|im_start|>  PUBLIC\r\n /é汉字 ١٢٣٤٥İIſǅŋĀÅµé é////İIſǅŋĀÅµ <|fim_prefix|>/<|fim_prefix|> ",
+      "tokens": 49
+    },
+    {
+      "input": "עברית <|fim_prefix|>```<|fim_prefix|>  1234567890PUBLIC /  é \t  é é",
+      "tokens": 41
+    },
+    {
+      "input": "  élowercase\n\n \r\n\u0000é 汉字عربي\u0000 <|fim_prefix|>\u0000lowercase /lowercase🧑🏽‍💻 <|endoftext|> ",
+      "tokens": 44
+    },
+    {
+      "input": "   é１２３４５ ١٢٣٤٥İIſǅŋĀÅµ\r\n <|im_start|>\r\n/  🧑🏽‍💻é  <|fim_prefix|>汉字 lowercase１２３４５CamelCase ",
+      "tokens": 65
+    },
+    {
+      "input": "汉字 ",
+      "tokens": 3
+    },
+    {
+      "input": "  ",
+      "tokens": 4
+    },
+    {
+      "input": "<|endoftext|> é<|fim_prefix|>",
+      "tokens": 9
+    },
+    {
+      "input": "  ////İIſǅŋĀÅµlowercase ",
+      "tokens": 15
+    },
+    {
+      "input": "  lowercase  \u0000",
+      "tokens": 8
+    },
+    {
+      "input": "<|fim_prefix|> 🧑🏽‍💻हिन्दी  !@#$%^&*()é",
+      "tokens": 23
+    },
+    {
+      "input": "//// 🧑🏽‍💻﻿\u0000 \r\n\t  ",
+      "tokens": 18
+    },
+    {
+      "input": "🧑🏽‍💻 <|endoftext|>עברית<|fim_prefix|> /عربي汉字 CamelCase",
+      "tokens": 30
+    },
+    {
+      "input": "``` é汉字  <|im_start|>﻿עברית ////עברית",
+      "tokens": 18
+    },
+    {
+      "input": "हिन्दी UPPERCASE🐕PUBLIC !@#$%^&*()éé  ﻿<|im_start|> ",
+      "tokens": 30
+    },
+    {
+      "input": "!@#$%^&*()  é/ /////  UPPERCASEéPUBLIC lowercase",
+      "tokens": 20
+    },
+    {
+      "input": "汉字 <|fim_prefix|>עבריתlowercase \u0000 汉字 ﻿İIſǅŋĀÅµ١٢٣٤٥ ```////",
+      "tokens": 38
+    },
+    {
+      "input": "１２３４５ lowercase ﻿ UPPERCASE\r\n\t !@#$%^&*()עברית﻿  é  ",
+      "tokens": 31
+    },
+    {
+      "input": "CamelCase  <|endoftext|>İIſǅŋĀÅµ !@#$%^&*()\u0000﻿ <|im_start|>\r\né ////🧑🏽‍💻\r\n עברית",
+      "tokens": 51
+    },
+    {
+      "input": "हिन्दी <|im_start|>हिन्दी``` 1234567890\u0000١٢٣٤٥ עברית🐕  !@#$%^&*() <|endoftext|> ```हिन्दी",
+      "tokens": 49
+    },
+    {
+      "input": "<|im_start|> ١٢٣٤٥é\r\n 汉字 １２３４５ <|endoftext|>\n\n\r\n עבריתعربيé <|endoftext|> //// ",
+      "tokens": 41
+    },
+    {
+      "input": "🧑🏽‍💻 !@#$%^&*()\n\n\r\n \n\n\r\n  ﻿🧑🏽‍💻  \n\n🐕汉字 lowercase🧑🏽‍💻<|endoftext|> 汉字",
+      "tokens": 55
+    },
+    {
+      "input": "!@#$%^&*() UPPERCASE1234567890\t हिन्दीUPPERCASEé עברית<|endoftext|>🧑🏽‍💻 ﻿İIſǅŋĀÅµlowercase PUBLIC!@#$%^&*()עברית <|endoftext|> ",
+      "tokens": 70
+    },
+    {
+      "input": "🐕 \n\nहिन्दीé ﻿עברית   \r\n\t  🧑🏽‍💻é ```﻿\u0000 1234567890汉字\r\n ",
+      "tokens": 43
+    },
+    {
+      "input": "CamelCase \t",
+      "tokens": 3
+    },
+    {
+      "input": "\r\n é!@#$%^&*()",
+      "tokens": 10
+    },
+    {
+      "input": "  \n\nCamelCase ",
+      "tokens": 7
+    },
+    {
+      "input": "\t \r\n🧑🏽‍💻<|endoftext|> İIſǅŋĀÅµ",
+      "tokens": 25
+    },
+    {
+      "input": "١٢٣٤٥ עבריתé عربي🧑🏽‍💻",
+      "tokens": 20
+    },
+    {
+      "input": "CamelCase \n\n١٢٣٤٥🧑🏽‍💻 lowercaseé ",
+      "tokens": 22
+    },
+    {
+      "input": "İIſǅŋĀÅµ CamelCase  \u0000 ``` عربي",
+      "tokens": 20
+    }
+  ],
+  "requests": [
+    {
+      "body": {
+        "instructions": "PUBLIC system",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "PUBLIC question"
+              }
+            ]
+          }
+        ]
+      },
+      "tokens": 205
+    },
+    {
+      "body": {
+        "instructions": "PUBLIC system",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "PUBLIC review\n\n```rust\nfn main() {}\n```"
+              }
+            ]
+          }
+        ],
+        "reasoning": {
+          "effort": "xhigh",
+          "mode": "pro"
+        },
+        "tools": [
+          {
+            "type": "web_search"
+          }
+        ],
+        "background": true,
+        "store": true
+      },
+      "tokens": 239
+    },
+    {
+      "body": {
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "PUBLIC café\n🐕"
+              }
+            ]
+          }
+        ],
+        "tools": [
+          {
+            "type": "web_search_preview"
+          }
+        ]
+      },
+      "tokens": 4215
+    },
+    {
+      "body": {
+        "input": [],
+        "reasoning": {
+          "mode": "pro",
+          "effort": "xhigh"
+        }
+      },
+      "tokens": 211
+    },
+    {
+      "body": {
+        "instructions": "\u0000�  ",
+        "input": [
+          {
+            "content": [
+              {
+                "text": "<|endoftext|><|im_start|><|fim_prefix|>"
+              }
+            ]
+          }
+        ]
+      },
+      "tokens": 223
+    }
+  ]
+}

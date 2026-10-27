@@ -1,0 +1,29 @@
+[
+  {
+    "input": null,
+    "accepted": true
+  },
+  {
+    "input": "pro",
+    "accepted": true
+  },
+  {
+    "input": "Pro",
+    "accepted": false,
+    "error": "Industrious API dispatch requires Pro reasoning mode."
+  },
+  {
+    "input": "high",
+    "accepted": false,
+    "error": "Industrious API dispatch requires Pro reasoning mode."
+  },
+  {
+    "input": "standard",
+    "accepted": false,
+    "error": "Industrious API dispatch requires Pro reasoning mode."
+  },
+  {
+    "input": "",
+    "accepted": true
+  }
+]

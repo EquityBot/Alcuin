@@ -1,0 +1,10 @@
+{
+  "reference": "qualified Industrious temporaryChat.js, 21 October 2026",
+  "referenceSha256": "6ccb52a659b33a9ef4f793179f4e398450567da14049422871d24338cbff7cf5",
+  "predicateSha256": "65698bab85660972dfff52b8621ef113de95884d228704ce0421833114748a58",
+  "scope": "Live UI state only; does not attest backend retention",
+  "changes": [
+    "Native header-before-route and route-before-mount return null (unknown), rather than false. Mutation and acceptance guards still require true; read-only receipt polling may wait for the mounted exact Temporary view.",
+    "The observed encoded local-chatgpt:{uuid} provisional route stays unknown until its server conversation has a matching mounted Temporary view; it grants no payload, Send, capture or retirement authority."
+  ]
+}

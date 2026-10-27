@@ -1,0 +1,859 @@
+{
+  "sourceRevision": "0c1ac91b72761b1cca91bc3a31cbbd12b4732a33",
+  "compiledModuleSha256": "afed9b3ee9a094bed8a337c36af10c1ccd6db9d9cd50922f71c980fd80814052",
+  "normalisation": "Generated bundle directory paths become basenames; ordinary display separators become forward slashes; synthetic roots in errors become <ROOT>. All file bytes are retained.",
+  "cases": [
+    {
+      "name": "empty",
+      "files": [],
+      "options": {
+        "model": "gpt-6-pro",
+        "prompt": "PUBLIC prompt reference"
+      },
+      "expected": {
+        "markdown": "[SYSTEM]\n\n[USER]\nPUBLIC prompt reference",
+        "composerText": "PUBLIC prompt reference",
+        "estimatedInputTokens": 10,
+        "attachments": [],
+        "inlineFileCount": 0,
+        "tokenEstimateIncludesInlineFiles": false,
+        "attachmentsPolicy": "auto",
+        "attachmentMode": "inline",
+        "bundled": null,
+        "fallback": null,
+        "materializedFallback": null
+      }
+    },
+    {
+      "name": "system_and_unicode",
+      "files": [],
+      "options": {
+        "model": "gpt-6-pro",
+        "prompt": "PUBLIC café 🦀﻿",
+        "system": "﻿ PUBLIC system ﻿"
+      },
+      "expected": {
+        "markdown": "[SYSTEM]\nPUBLIC system\n\n[USER]\nPUBLIC café 🦀",
+        "composerText": "PUBLIC system\n\nPUBLIC café 🦀",
+        "estimatedInputTokens": 20,
+        "attachments": [],
+        "inlineFileCount": 0,
+        "tokenEstimateIncludesInlineFiles": false,
+        "attachmentsPolicy": "auto",
+        "attachmentMode": "inline",
+        "bundled": null,
+        "fallback": null,
+        "materializedFallback": null
+      }
+    },
+    {
+      "name": "one_inline",
+      "files": [
+        {
+          "path": "public.rs",
+          "contentBase64": "UFVCTElDIHNvdXJjZQo="
+        }
+      ],
+      "options": {
+        "model": "gpt-6-pro",
+        "prompt": "PUBLIC prompt reference"
+      },
+      "expected": {
+        "markdown": "[SYSTEM]\n\n[USER]\nPUBLIC prompt reference\n\n### File: public.rs\nLines: 1-1\n```rust\n1 | PUBLIC source\n```",
+        "composerText": "PUBLIC prompt reference",
+        "estimatedInputTokens": 30,
+        "attachments": [
+          {
+            "name": "public.rs",
+            "displayPath": "public.rs",
+            "sizeBytes": 14,
+            "generatedBundle": false,
+            "bytesBase64": "UFVCTElDIHNvdXJjZQo="
+          }
+        ],
+        "inlineFileCount": 0,
+        "tokenEstimateIncludesInlineFiles": false,
+        "attachmentsPolicy": "auto",
+        "attachmentMode": "upload",
+        "bundled": null,
+        "fallback": null,
+        "materializedFallback": null
+      }
+    },
+    {
+      "name": "two_inline_deferred_text",
+      "files": [
+        {
+          "path": "a.rs",
+          "contentBase64": "UFVCTElDIHNvdXJjZQo="
+        },
+        {
+          "path": "b.rs",
+          "contentBase64": "UFVCTElDIHNvdXJjZQo="
+        }
+      ],
+      "options": {
+        "model": "gpt-6-pro",
+        "prompt": "PUBLIC prompt reference"
+      },
+      "expected": {
+        "markdown": "[SYSTEM]\n\n[USER]\nPUBLIC prompt reference\n\n### File: a.rs\nLines: 1-1\n```rust\n1 | PUBLIC source\n```\n\n### File: b.rs\nLines: 1-1\n```rust\n1 | PUBLIC source\n```",
+        "composerText": "PUBLIC prompt reference",
+        "estimatedInputTokens": 63,
+        "attachments": [
+          {
+            "name": "attachments-bundle.txt",
+            "displayPath": "attachments-bundle.txt",
+            "sizeBytes": 113,
+            "generatedBundle": true,
+            "bytesBase64": "IyMjIEZpbGU6IGEucnMKTGluZXM6IDEtMQpgYGBydXN0CjEgfCBQVUJMSUMgc291cmNlCmBgYAoKIyMjIEZpbGU6IGIucnMKTGluZXM6IDEtMQpgYGBydXN0CjEgfCBQVUJMSUMgc291cmNlCmBgYAo="
+          }
+        ],
+        "inlineFileCount": 0,
+        "tokenEstimateIncludesInlineFiles": false,
+        "attachmentsPolicy": "auto",
+        "attachmentMode": "bundle",
+        "bundled": {
+          "originalCount": 2,
+          "format": "text",
+          "name": "attachments-bundle.txt"
+        },
+        "fallback": null,
+        "materializedFallback": null
+      }
+    },
+    {
+      "name": "one_upload",
+      "files": [
+        {
+          "path": "public.rs",
+          "contentBase64": "UFVCTElDIHNvdXJjZQo="
+        }
+      ],
+      "options": {
+        "model": "gpt-6-pro",
+        "prompt": "PUBLIC prompt reference",
+        "browserAttachments": "always"
+      },
+      "expected": {
+        "markdown": "[SYSTEM]\n\n[USER]\nPUBLIC prompt reference\n\n### File: public.rs\nLines: 1-1\n```rust\n1 | PUBLIC source\n```",
+        "composerText": "PUBLIC prompt reference",
+        "estimatedInputTokens": 30,
+        "attachments": [
+          {
+            "name": "public.rs",
+            "displayPath": "public.rs",
+            "sizeBytes": 14,
+            "generatedBundle": false,
+            "bytesBase64": "UFVCTElDIHNvdXJjZQo="
+          }
+        ],
+        "inlineFileCount": 0,
+        "tokenEstimateIncludesInlineFiles": false,
+        "attachmentsPolicy": "always",
+        "attachmentMode": "upload",
+        "bundled": null,
+        "fallback": null,
+        "materializedFallback": null
+      }
+    },
+    {
+      "name": "two_upload_text",
+      "files": [
+        {
+          "path": "a.rs",
+          "contentBase64": "UFVCTElDIHNvdXJjZQo="
+        },
+        {
+          "path": "b.rs",
+          "contentBase64": "UFVCTElDIHNvdXJjZQo="
+        }
+      ],
+      "options": {
+        "model": "gpt-6-pro",
+        "prompt": "PUBLIC prompt reference",
+        "browserAttachments": "always"
+      },
+      "expected": {
+        "markdown": "[SYSTEM]\n\n[USER]\nPUBLIC prompt reference\n\n### File: a.rs\nLines: 1-1\n```rust\n1 | PUBLIC source\n```\n\n### File: b.rs\nLines: 1-1\n```rust\n1 | PUBLIC source\n```",
+        "composerText": "PUBLIC prompt reference",
+        "estimatedInputTokens": 63,
+        "attachments": [
+          {
+            "name": "attachments-bundle.txt",
+            "displayPath": "attachments-bundle.txt",
+            "sizeBytes": 113,
+            "generatedBundle": true,
+            "bytesBase64": "IyMjIEZpbGU6IGEucnMKTGluZXM6IDEtMQpgYGBydXN0CjEgfCBQVUJMSUMgc291cmNlCmBgYAoKIyMjIEZpbGU6IGIucnMKTGluZXM6IDEtMQpgYGBydXN0CjEgfCBQVUJMSUMgc291cmNlCmBgYAo="
+          }
+        ],
+        "inlineFileCount": 0,
+        "tokenEstimateIncludesInlineFiles": false,
+        "attachmentsPolicy": "always",
+        "attachmentMode": "bundle",
+        "bundled": {
+          "originalCount": 2,
+          "format": "text",
+          "name": "attachments-bundle.txt"
+        },
+        "fallback": null,
+        "materializedFallback": null
+      }
+    },
+    {
+      "name": "one_forced_zip",
+      "files": [
+        {
+          "path": "public.rs",
+          "contentBase64": "UFVCTElDIHNvdXJjZQo="
+        }
+      ],
+      "options": {
+        "model": "gpt-6-pro",
+        "prompt": "PUBLIC prompt reference",
+        "browserBundleFiles": true,
+        "browserBundleFormat": "zip"
+      },
+      "expected": {
+        "markdown": "[SYSTEM]\n\n[USER]\nPUBLIC prompt reference\n\n### File: public.rs\nLines: 1-1\n```rust\n1 | PUBLIC source\n```",
+        "composerText": "PUBLIC prompt reference\n\nThe attached `attachments-bundle.zip` contains 1 selected file with relative paths preserved. Extract it into a temporary directory, then inspect the resulting file tree with filesystem and search tools before answering.",
+        "estimatedInputTokens": 71,
+        "attachments": [
+          {
+            "name": "attachments-bundle.zip",
+            "displayPath": "attachments-bundle.zip",
+            "sizeBytes": 130,
+            "generatedBundle": true,
+            "bytesBase64": "UEsDBBQAAAgAAAAAIQCVljH4DgAAAA4AAAAJAAAAcHVibGljLnJzUFVCTElDIHNvdXJjZQpQSwECFAAUAAAIAAAAACEAlZYx+A4AAAAOAAAACQAAAAAAAAAAAAAAAAAAAAAAcHVibGljLnJzUEsFBgAAAAABAAEANwAAADUAAAAAAA=="
+          }
+        ],
+        "inlineFileCount": 0,
+        "tokenEstimateIncludesInlineFiles": false,
+        "attachmentsPolicy": "auto",
+        "attachmentMode": "bundle",
+        "bundled": {
+          "originalCount": 1,
+          "format": "zip",
+          "name": "attachments-bundle.zip"
+        },
+        "fallback": null,
+        "materializedFallback": null
+      }
+    },
+    {
+      "name": "two_upload_zip",
+      "files": [
+        {
+          "path": "a.rs",
+          "contentBase64": "UFVCTElDIHNvdXJjZQo="
+        },
+        {
+          "path": "b.rs",
+          "contentBase64": "UFVCTElDIHNvdXJjZQo="
+        }
+      ],
+      "options": {
+        "model": "gpt-6-pro",
+        "prompt": "PUBLIC prompt reference",
+        "browserAttachments": "always",
+        "browserBundleFormat": "zip"
+      },
+      "expected": {
+        "markdown": "[SYSTEM]\n\n[USER]\nPUBLIC prompt reference\n\n### File: a.rs\nLines: 1-1\n```rust\n1 | PUBLIC source\n```\n\n### File: b.rs\nLines: 1-1\n```rust\n1 | PUBLIC source\n```",
+        "composerText": "PUBLIC prompt reference\n\nThe attached `attachments-bundle.zip` contains 2 selected files with relative paths preserved. Extract it into a temporary directory, then inspect the resulting file tree with filesystem and search tools before answering.",
+        "estimatedInputTokens": 85,
+        "attachments": [
+          {
+            "name": "attachments-bundle.zip",
+            "displayPath": "attachments-bundle.zip",
+            "sizeBytes": 218,
+            "generatedBundle": true,
+            "bytesBase64": "UEsDBBQAAAgAAAAAIQCVljH4DgAAAA4AAAAEAAAAYS5yc1BVQkxJQyBzb3VyY2UKUEsDBBQAAAgAAAAAIQCVljH4DgAAAA4AAAAEAAAAYi5yc1BVQkxJQyBzb3VyY2UKUEsBAhQAFAAACAAAAAAhAJWWMfgOAAAADgAAAAQAAAAAAAAAAAAAAAAAAAAAAGEucnNQSwECFAAUAAAIAAAAACEAlZYx+A4AAAAOAAAABAAAAAAAAAAAAAAAAAAwAAAAYi5yc1BLBQYAAAAAAgACAGQAAABgAAAAAAA="
+          }
+        ],
+        "inlineFileCount": 0,
+        "tokenEstimateIncludesInlineFiles": false,
+        "attachmentsPolicy": "always",
+        "attachmentMode": "bundle",
+        "bundled": {
+          "originalCount": 2,
+          "format": "zip",
+          "name": "attachments-bundle.zip"
+        },
+        "fallback": null,
+        "materializedFallback": null
+      }
+    },
+    {
+      "name": "mixed_inline_deferred_zip",
+      "files": [
+        {
+          "path": "public.rs",
+          "contentBase64": "UFVCTElDIHNvdXJjZQo="
+        },
+        {
+          "path": "public.PNG",
+          "contentBase64": "AAGA/w=="
+        }
+      ],
+      "options": {
+        "model": "gpt-6-pro",
+        "prompt": "PUBLIC prompt reference"
+      },
+      "expected": {
+        "markdown": "[SYSTEM]\n\n[USER]\nPUBLIC prompt reference\n\n### File: public.rs\nLines: 1-1\n```rust\n1 | PUBLIC source\n```",
+        "composerText": "PUBLIC prompt reference",
+        "estimatedInputTokens": 30,
+        "attachments": [
+          {
+            "name": "public.rs",
+            "displayPath": "public.rs",
+            "sizeBytes": 14,
+            "generatedBundle": false,
+            "bytesBase64": "UFVCTElDIHNvdXJjZQo="
+          },
+          {
+            "name": "public.PNG",
+            "displayPath": "public.PNG",
+            "sizeBytes": 4,
+            "generatedBundle": false,
+            "bytesBase64": "AAGA/w=="
+          }
+        ],
+        "inlineFileCount": 0,
+        "tokenEstimateIncludesInlineFiles": false,
+        "attachmentsPolicy": "auto",
+        "attachmentMode": "upload",
+        "bundled": null,
+        "fallback": null,
+        "materializedFallback": null
+      }
+    },
+    {
+      "name": "mixed_upload",
+      "files": [
+        {
+          "path": "public.rs",
+          "contentBase64": "UFVCTElDIHNvdXJjZQo="
+        },
+        {
+          "path": "public.png",
+          "contentBase64": "AAGA/w=="
+        }
+      ],
+      "options": {
+        "model": "gpt-6-pro",
+        "prompt": "PUBLIC prompt reference",
+        "browserAttachments": "always"
+      },
+      "expected": {
+        "markdown": "[SYSTEM]\n\n[USER]\nPUBLIC prompt reference\n\n### File: public.rs\nLines: 1-1\n```rust\n1 | PUBLIC source\n```",
+        "composerText": "PUBLIC prompt reference",
+        "estimatedInputTokens": 30,
+        "attachments": [
+          {
+            "name": "public.rs",
+            "displayPath": "public.rs",
+            "sizeBytes": 14,
+            "generatedBundle": false,
+            "bytesBase64": "UFVCTElDIHNvdXJjZQo="
+          },
+          {
+            "name": "public.png",
+            "displayPath": "public.png",
+            "sizeBytes": 4,
+            "generatedBundle": false,
+            "bytesBase64": "AAGA/w=="
+          }
+        ],
+        "inlineFileCount": 0,
+        "tokenEstimateIncludesInlineFiles": false,
+        "attachmentsPolicy": "always",
+        "attachmentMode": "upload",
+        "bundled": null,
+        "fallback": null,
+        "materializedFallback": null
+      }
+    },
+    {
+      "name": "mixed_forced_zip",
+      "files": [
+        {
+          "path": "public.rs",
+          "contentBase64": "UFVCTElDIHNvdXJjZQo="
+        },
+        {
+          "path": "public.png",
+          "contentBase64": "AAGA/w=="
+        }
+      ],
+      "options": {
+        "model": "gpt-6-pro",
+        "prompt": "PUBLIC prompt reference",
+        "browserBundleFiles": true
+      },
+      "expected": {
+        "markdown": "[SYSTEM]\n\n[USER]\nPUBLIC prompt reference\n\n### File: public.rs\nLines: 1-1\n```rust\n1 | PUBLIC source\n```",
+        "composerText": "PUBLIC prompt reference\n\nThe attached `attachments-bundle.zip` contains 2 selected files with relative paths preserved. Extract it into a temporary directory, then inspect the resulting file tree with filesystem and search tools before answering.",
+        "estimatedInputTokens": 71,
+        "attachments": [
+          {
+            "name": "attachments-bundle.zip",
+            "displayPath": "attachments-bundle.zip",
+            "sizeBytes": 230,
+            "generatedBundle": true,
+            "bytesBase64": "UEsDBBQAAAgAAAAAIQCVljH4DgAAAA4AAAAJAAAAcHVibGljLnJzUFVCTElDIHNvdXJjZQpQSwMEFAAACAAAAAAhAO3CBzYEAAAABAAAAAoAAABwdWJsaWMucG5nAAGA/1BLAQIUABQAAAgAAAAAIQCVljH4DgAAAA4AAAAJAAAAAAAAAAAAAAAAAAAAAABwdWJsaWMucnNQSwECFAAUAAAIAAAAACEA7cIHNgQAAAAEAAAACgAAAAAAAAAAAAAAAAA1AAAAcHVibGljLnBuZ1BLBQYAAAAAAgACAG8AAABhAAAAAAA="
+          }
+        ],
+        "inlineFileCount": 0,
+        "tokenEstimateIncludesInlineFiles": false,
+        "attachmentsPolicy": "auto",
+        "attachmentMode": "bundle",
+        "bundled": {
+          "originalCount": 2,
+          "format": "zip",
+          "name": "attachments-bundle.zip"
+        },
+        "fallback": null,
+        "materializedFallback": null
+      }
+    },
+    {
+      "name": "reserved_bundle_name",
+      "files": [
+        {
+          "path": "a.rs",
+          "contentBase64": "UFVCTElDIHNvdXJjZQo="
+        },
+        {
+          "path": "b.rs",
+          "contentBase64": "UFVCTElDIHNvdXJjZQo="
+        },
+        {
+          "path": "attachments-bundle.zip",
+          "contentBase64": "AAGA/w=="
+        }
+      ],
+      "options": {
+        "model": "gpt-6-pro",
+        "prompt": "PUBLIC prompt reference",
+        "browserAttachments": "always"
+      },
+      "expected": {
+        "markdown": "[SYSTEM]\n\n[USER]\nPUBLIC prompt reference\n\n### File: a.rs\nLines: 1-1\n```rust\n1 | PUBLIC source\n```\n\n### File: b.rs\nLines: 1-1\n```rust\n1 | PUBLIC source\n```",
+        "composerText": "PUBLIC prompt reference\n\nThe attached `attachments-bundle-2.zip` contains 2 selected files with relative paths preserved. Extract it into a temporary directory, then inspect the resulting file tree with filesystem and search tools before answering.",
+        "estimatedInputTokens": 87,
+        "attachments": [
+          {
+            "name": "attachments-bundle-2.zip",
+            "displayPath": "attachments-bundle-2.zip",
+            "sizeBytes": 218,
+            "generatedBundle": true,
+            "bytesBase64": "UEsDBBQAAAgAAAAAIQCVljH4DgAAAA4AAAAEAAAAYS5yc1BVQkxJQyBzb3VyY2UKUEsDBBQAAAgAAAAAIQCVljH4DgAAAA4AAAAEAAAAYi5yc1BVQkxJQyBzb3VyY2UKUEsBAhQAFAAACAAAAAAhAJWWMfgOAAAADgAAAAQAAAAAAAAAAAAAAAAAAAAAAGEucnNQSwECFAAUAAAIAAAAACEAlZYx+A4AAAAOAAAABAAAAAAAAAAAAAAAAAAwAAAAYi5yc1BLBQYAAAAAAgACAGQAAABgAAAAAAA="
+          },
+          {
+            "name": "attachments-bundle.zip",
+            "displayPath": "attachments-bundle.zip",
+            "sizeBytes": 4,
+            "generatedBundle": false,
+            "bytesBase64": "AAGA/w=="
+          }
+        ],
+        "inlineFileCount": 0,
+        "tokenEstimateIncludesInlineFiles": false,
+        "attachmentsPolicy": "always",
+        "attachmentMode": "bundle",
+        "bundled": {
+          "originalCount": 2,
+          "format": "zip",
+          "name": "attachments-bundle-2.zip"
+        },
+        "fallback": null,
+        "materializedFallback": null
+      }
+    },
+    {
+      "name": "eleven_raw",
+      "files": [
+        {
+          "path": "public-0.png",
+          "contentBase64": "AAGA/w=="
+        },
+        {
+          "path": "public-1.png",
+          "contentBase64": "AAGA/w=="
+        },
+        {
+          "path": "public-2.png",
+          "contentBase64": "AAGA/w=="
+        },
+        {
+          "path": "public-3.png",
+          "contentBase64": "AAGA/w=="
+        },
+        {
+          "path": "public-4.png",
+          "contentBase64": "AAGA/w=="
+        },
+        {
+          "path": "public-5.png",
+          "contentBase64": "AAGA/w=="
+        },
+        {
+          "path": "public-6.png",
+          "contentBase64": "AAGA/w=="
+        },
+        {
+          "path": "public-7.png",
+          "contentBase64": "AAGA/w=="
+        },
+        {
+          "path": "public-8.png",
+          "contentBase64": "AAGA/w=="
+        },
+        {
+          "path": "public-9.png",
+          "contentBase64": "AAGA/w=="
+        },
+        {
+          "path": "public-10.png",
+          "contentBase64": "AAGA/w=="
+        }
+      ],
+      "options": {
+        "model": "gpt-6-pro",
+        "prompt": "PUBLIC prompt reference"
+      },
+      "expected": {
+        "markdown": "[SYSTEM]\n\n[USER]\nPUBLIC prompt reference",
+        "composerText": "PUBLIC prompt reference\n\nThe attached `attachments-bundle.zip` contains 11 selected files with relative paths preserved. Extract it into a temporary directory, then inspect the resulting file tree with filesystem and search tools before answering.",
+        "estimatedInputTokens": 50,
+        "attachments": [
+          {
+            "name": "attachments-bundle.zip",
+            "displayPath": "attachments-bundle.zip",
+            "sizeBytes": 1168,
+            "generatedBundle": true,
+            "bytesBase64": "UEsDBBQAAAgAAAAAIQDtwgc2BAAAAAQAAAAMAAAAcHVibGljLTAucG5nAAGA/1BLAwQUAAAIAAAAACEA7cIHNgQAAAAEAAAADAAAAHB1YmxpYy0xLnBuZwABgP9QSwMEFAAACAAAAAAhAO3CBzYEAAAABAAAAAwAAABwdWJsaWMtMi5wbmcAAYD/UEsDBBQAAAgAAAAAIQDtwgc2BAAAAAQAAAAMAAAAcHVibGljLTMucG5nAAGA/1BLAwQUAAAIAAAAACEA7cIHNgQAAAAEAAAADAAAAHB1YmxpYy00LnBuZwABgP9QSwMEFAAACAAAAAAhAO3CBzYEAAAABAAAAAwAAABwdWJsaWMtNS5wbmcAAYD/UEsDBBQAAAgAAAAAIQDtwgc2BAAAAAQAAAAMAAAAcHVibGljLTYucG5nAAGA/1BLAwQUAAAIAAAAACEA7cIHNgQAAAAEAAAADAAAAHB1YmxpYy03LnBuZwABgP9QSwMEFAAACAAAAAAhAO3CBzYEAAAABAAAAAwAAABwdWJsaWMtOC5wbmcAAYD/UEsDBBQAAAgAAAAAIQDtwgc2BAAAAAQAAAAMAAAAcHVibGljLTkucG5nAAGA/1BLAwQUAAAIAAAAACEA7cIHNgQAAAAEAAAADQAAAHB1YmxpYy0xMC5wbmcAAYD/UEsBAhQAFAAACAAAAAAhAO3CBzYEAAAABAAAAAwAAAAAAAAAAAAAAAAAAAAAAHB1YmxpYy0wLnBuZ1BLAQIUABQAAAgAAAAAIQDtwgc2BAAAAAQAAAAMAAAAAAAAAAAAAAAAAC4AAABwdWJsaWMtMS5wbmdQSwECFAAUAAAIAAAAACEA7cIHNgQAAAAEAAAADAAAAAAAAAAAAAAAAABcAAAAcHVibGljLTIucG5nUEsBAhQAFAAACAAAAAAhAO3CBzYEAAAABAAAAAwAAAAAAAAAAAAAAAAAigAAAHB1YmxpYy0zLnBuZ1BLAQIUABQAAAgAAAAAIQDtwgc2BAAAAAQAAAAMAAAAAAAAAAAAAAAAALgAAABwdWJsaWMtNC5wbmdQSwECFAAUAAAIAAAAACEA7cIHNgQAAAAEAAAADAAAAAAAAAAAAAAAAADmAAAAcHVibGljLTUucG5nUEsBAhQAFAAACAAAAAAhAO3CBzYEAAAABAAAAAwAAAAAAAAAAAAAAAAAFAEAAHB1YmxpYy02LnBuZ1BLAQIUABQAAAgAAAAAIQDtwgc2BAAAAAQAAAAMAAAAAAAAAAAAAAAAAEIBAABwdWJsaWMtNy5wbmdQSwECFAAUAAAIAAAAACEA7cIHNgQAAAAEAAAADAAAAAAAAAAAAAAAAABwAQAAcHVibGljLTgucG5nUEsBAhQAFAAACAAAAAAhAO3CBzYEAAAABAAAAAwAAAAAAAAAAAAAAAAAngEAAHB1YmxpYy05LnBuZ1BLAQIUABQAAAgAAAAAIQDtwgc2BAAAAAQAAAANAAAAAAAAAAAAAAAAAMwBAABwdWJsaWMtMTAucG5nUEsFBgAAAAALAAsAfwIAAPsBAAAAAA=="
+          }
+        ],
+        "inlineFileCount": 0,
+        "tokenEstimateIncludesInlineFiles": false,
+        "attachmentsPolicy": "auto",
+        "attachmentMode": "bundle",
+        "bundled": {
+          "originalCount": 11,
+          "format": "zip",
+          "name": "attachments-bundle.zip"
+        },
+        "fallback": null,
+        "materializedFallback": null
+      }
+    },
+    {
+      "name": "ten_raw_with_inline_text",
+      "files": [
+        {
+          "path": "a.rs",
+          "contentBase64": "UFVCTElDIHNvdXJjZQo="
+        },
+        {
+          "path": "b.rs",
+          "contentBase64": "UFVCTElDIHNvdXJjZQo="
+        },
+        {
+          "path": "public-0.png",
+          "contentBase64": "AAGA/w=="
+        },
+        {
+          "path": "public-1.png",
+          "contentBase64": "AAGA/w=="
+        },
+        {
+          "path": "public-2.png",
+          "contentBase64": "AAGA/w=="
+        },
+        {
+          "path": "public-3.png",
+          "contentBase64": "AAGA/w=="
+        },
+        {
+          "path": "public-4.png",
+          "contentBase64": "AAGA/w=="
+        },
+        {
+          "path": "public-5.png",
+          "contentBase64": "AAGA/w=="
+        },
+        {
+          "path": "public-6.png",
+          "contentBase64": "AAGA/w=="
+        },
+        {
+          "path": "public-7.png",
+          "contentBase64": "AAGA/w=="
+        },
+        {
+          "path": "public-8.png",
+          "contentBase64": "AAGA/w=="
+        },
+        {
+          "path": "public-9.png",
+          "contentBase64": "AAGA/w=="
+        }
+      ],
+      "options": {
+        "model": "gpt-6-pro",
+        "prompt": "PUBLIC prompt reference"
+      },
+      "expected": {
+        "markdown": "[SYSTEM]\n\n[USER]\nPUBLIC prompt reference\n\n### File: a.rs\nLines: 1-1\n```rust\n1 | PUBLIC source\n```\n\n### File: b.rs\nLines: 1-1\n```rust\n1 | PUBLIC source\n```",
+        "composerText": "PUBLIC prompt reference\n\nThe attached `attachments-bundle.zip` contains 12 selected files with relative paths preserved. Extract it into a temporary directory, then inspect the resulting file tree with filesystem and search tools before answering.",
+        "estimatedInputTokens": 85,
+        "attachments": [
+          {
+            "name": "attachments-bundle.zip",
+            "displayPath": "attachments-bundle.zip",
+            "sizeBytes": 1258,
+            "generatedBundle": true,
+            "bytesBase64": "UEsDBBQAAAgAAAAAIQCVljH4DgAAAA4AAAAEAAAAYS5yc1BVQkxJQyBzb3VyY2UKUEsDBBQAAAgAAAAAIQCVljH4DgAAAA4AAAAEAAAAYi5yc1BVQkxJQyBzb3VyY2UKUEsDBBQAAAgAAAAAIQDtwgc2BAAAAAQAAAAMAAAAcHVibGljLTAucG5nAAGA/1BLAwQUAAAIAAAAACEA7cIHNgQAAAAEAAAADAAAAHB1YmxpYy0xLnBuZwABgP9QSwMEFAAACAAAAAAhAO3CBzYEAAAABAAAAAwAAABwdWJsaWMtMi5wbmcAAYD/UEsDBBQAAAgAAAAAIQDtwgc2BAAAAAQAAAAMAAAAcHVibGljLTMucG5nAAGA/1BLAwQUAAAIAAAAACEA7cIHNgQAAAAEAAAADAAAAHB1YmxpYy00LnBuZwABgP9QSwMEFAAACAAAAAAhAO3CBzYEAAAABAAAAAwAAABwdWJsaWMtNS5wbmcAAYD/UEsDBBQAAAgAAAAAIQDtwgc2BAAAAAQAAAAMAAAAcHVibGljLTYucG5nAAGA/1BLAwQUAAAIAAAAACEA7cIHNgQAAAAEAAAADAAAAHB1YmxpYy03LnBuZwABgP9QSwMEFAAACAAAAAAhAO3CBzYEAAAABAAAAAwAAABwdWJsaWMtOC5wbmcAAYD/UEsDBBQAAAgAAAAAIQDtwgc2BAAAAAQAAAAMAAAAcHVibGljLTkucG5nAAGA/1BLAQIUABQAAAgAAAAAIQCVljH4DgAAAA4AAAAEAAAAAAAAAAAAAAAAAAAAAABhLnJzUEsBAhQAFAAACAAAAAAhAJWWMfgOAAAADgAAAAQAAAAAAAAAAAAAAAAAMAAAAGIucnNQSwECFAAUAAAIAAAAACEA7cIHNgQAAAAEAAAADAAAAAAAAAAAAAAAAABgAAAAcHVibGljLTAucG5nUEsBAhQAFAAACAAAAAAhAO3CBzYEAAAABAAAAAwAAAAAAAAAAAAAAAAAjgAAAHB1YmxpYy0xLnBuZ1BLAQIUABQAAAgAAAAAIQDtwgc2BAAAAAQAAAAMAAAAAAAAAAAAAAAAALwAAABwdWJsaWMtMi5wbmdQSwECFAAUAAAIAAAAACEA7cIHNgQAAAAEAAAADAAAAAAAAAAAAAAAAADqAAAAcHVibGljLTMucG5nUEsBAhQAFAAACAAAAAAhAO3CBzYEAAAABAAAAAwAAAAAAAAAAAAAAAAAGAEAAHB1YmxpYy00LnBuZ1BLAQIUABQAAAgAAAAAIQDtwgc2BAAAAAQAAAAMAAAAAAAAAAAAAAAAAEYBAABwdWJsaWMtNS5wbmdQSwECFAAUAAAIAAAAACEA7cIHNgQAAAAEAAAADAAAAAAAAAAAAAAAAAB0AQAAcHVibGljLTYucG5nUEsBAhQAFAAACAAAAAAhAO3CBzYEAAAABAAAAAwAAAAAAAAAAAAAAAAAogEAAHB1YmxpYy03LnBuZ1BLAQIUABQAAAgAAAAAIQDtwgc2BAAAAAQAAAAMAAAAAAAAAAAAAAAAANABAABwdWJsaWMtOC5wbmdQSwECFAAUAAAIAAAAACEA7cIHNgQAAAAEAAAADAAAAAAAAAAAAAAAAAD+AQAAcHVibGljLTkucG5nUEsFBgAAAAAMAAwAqAIAACwCAAAAAA=="
+          }
+        ],
+        "inlineFileCount": 0,
+        "tokenEstimateIncludesInlineFiles": false,
+        "attachmentsPolicy": "auto",
+        "attachmentMode": "bundle",
+        "bundled": {
+          "originalCount": 12,
+          "format": "zip",
+          "name": "attachments-bundle.zip"
+        },
+        "fallback": null,
+        "materializedFallback": null
+      }
+    },
+    {
+      "name": "disabled_raw",
+      "files": [
+        {
+          "path": "public.png",
+          "contentBase64": "AAGA/w=="
+        }
+      ],
+      "options": {
+        "model": "gpt-6-pro",
+        "prompt": "PUBLIC prompt reference",
+        "browserAttachments": "never"
+      },
+      "error": "Inline file delivery cannot preserve verified ChatGPT source. Use --browser-attachments auto or always."
+    },
+    {
+      "name": "duplicate_raw",
+      "files": [
+        {
+          "path": "a/public.png",
+          "contentBase64": "AAGA/w=="
+        },
+        {
+          "path": "b/public.png",
+          "contentBase64": "AAGA/w=="
+        }
+      ],
+      "options": {
+        "model": "gpt-6-pro",
+        "prompt": "PUBLIC prompt reference"
+      },
+      "error": "Browser upload cannot safely include multiple files named \"public.png\":\n- <ROOT>/a/public.png\n- <ROOT>/b/public.png\nUse --browser-bundle-files (and --browser-bundle-format zip for raw or binary files), or choose unique names before retrying."
+    },
+    {
+      "name": "multiple_collisions",
+      "files": [
+        {
+          "path": "a/public.png",
+          "contentBase64": "AAGA/w=="
+        },
+        {
+          "path": "b/public.png",
+          "contentBase64": "AAGA/w=="
+        },
+        {
+          "path": "a/second.png",
+          "contentBase64": "AAGA/w=="
+        },
+        {
+          "path": "b/second.png",
+          "contentBase64": "AAGA/w=="
+        }
+      ],
+      "options": {
+        "model": "gpt-6-pro",
+        "prompt": "PUBLIC prompt reference"
+      },
+      "error": "Browser upload cannot safely include files with colliding basenames:\nFiles named \"public.png\":\n- <ROOT>/a/public.png\n- <ROOT>/b/public.png\nFiles named \"second.png\":\n- <ROOT>/a/second.png\n- <ROOT>/b/second.png\nUse --browser-bundle-files (and --browser-bundle-format zip for raw or binary files), or choose unique names before retrying."
+    },
+    {
+      "name": "too_many_text_format_raw",
+      "files": [
+        {
+          "path": "public-0.png",
+          "contentBase64": "AAGA/w=="
+        },
+        {
+          "path": "public-1.png",
+          "contentBase64": "AAGA/w=="
+        },
+        {
+          "path": "public-2.png",
+          "contentBase64": "AAGA/w=="
+        },
+        {
+          "path": "public-3.png",
+          "contentBase64": "AAGA/w=="
+        },
+        {
+          "path": "public-4.png",
+          "contentBase64": "AAGA/w=="
+        },
+        {
+          "path": "public-5.png",
+          "contentBase64": "AAGA/w=="
+        },
+        {
+          "path": "public-6.png",
+          "contentBase64": "AAGA/w=="
+        },
+        {
+          "path": "public-7.png",
+          "contentBase64": "AAGA/w=="
+        },
+        {
+          "path": "public-8.png",
+          "contentBase64": "AAGA/w=="
+        },
+        {
+          "path": "public-9.png",
+          "contentBase64": "AAGA/w=="
+        },
+        {
+          "path": "public-10.png",
+          "contentBase64": "AAGA/w=="
+        }
+      ],
+      "options": {
+        "model": "gpt-6-pro",
+        "prompt": "PUBLIC prompt reference",
+        "browserBundleFormat": "text"
+      },
+      "error": "Browser upload has 11 attachments after applying bundle format \"text\". Use --browser-bundle-format auto or zip to stay within the 10-attachment limit."
+    },
+    {
+      "name": "trailing_unicode_and_crlf",
+      "files": [
+        {
+          "path": "public.txt",
+          "contentBase64": "UFVCTElDIGZpcnN0DQpzZWNvbmTChe+7vw=="
+        }
+      ],
+      "options": {
+        "model": "gpt-6-pro",
+        "prompt": "PUBLIC prompt reference"
+      },
+      "expected": {
+        "markdown": "[SYSTEM]\n\n[USER]\nPUBLIC prompt reference\n\n### File: public.txt\nLines: 1-2\n```\n1 | PUBLIC first\r\n2 | second\n```",
+        "composerText": "PUBLIC prompt reference",
+        "estimatedInputTokens": 33,
+        "attachments": [
+          {
+            "name": "public.txt",
+            "displayPath": "public.txt",
+            "sizeBytes": 25,
+            "generatedBundle": false,
+            "bytesBase64": "UFVCTElDIGZpcnN0DQpzZWNvbmTChe+7vw=="
+          }
+        ],
+        "inlineFileCount": 0,
+        "tokenEstimateIncludesInlineFiles": false,
+        "attachmentsPolicy": "auto",
+        "attachmentMode": "upload",
+        "bundled": null,
+        "fallback": null,
+        "materializedFallback": null
+      }
+    },
+    {
+      "name": "invalid_utf8_zip",
+      "files": [
+        {
+          "path": "public.txt",
+          "contentBase64": "UFVCTElD/w=="
+        }
+      ],
+      "options": {
+        "model": "gpt-6-pro",
+        "prompt": "PUBLIC prompt reference",
+        "browserBundleFiles": true,
+        "browserBundleFormat": "zip"
+      },
+      "expected": {
+        "markdown": "[SYSTEM]\n\n[USER]\nPUBLIC prompt reference\n\n### File: public.txt\nLines: 1-1\n```\n1 | PUBLIC�\n```",
+        "composerText": "PUBLIC prompt reference\n\nThe attached `attachments-bundle.zip` contains 1 selected file with relative paths preserved. Extract it into a temporary directory, then inspect the resulting file tree with filesystem and search tools before answering.",
+        "estimatedInputTokens": 69,
+        "attachments": [
+          {
+            "name": "attachments-bundle.zip",
+            "displayPath": "attachments-bundle.zip",
+            "sizeBytes": 125,
+            "generatedBundle": true,
+            "bytesBase64": "UEsDBBQAAAgAAAAAIQAlBhaYBwAAAAcAAAAKAAAAcHVibGljLnR4dFBVQkxJQ/9QSwECFAAUAAAIAAAAACEAJQYWmAcAAAAHAAAACgAAAAAAAAAAAAAAAAAAAAAAcHVibGljLnR4dFBLBQYAAAAAAQABADgAAAAvAAAAAAA="
+          }
+        ],
+        "inlineFileCount": 0,
+        "tokenEstimateIncludesInlineFiles": false,
+        "attachmentsPolicy": "auto",
+        "attachmentMode": "bundle",
+        "bundled": {
+          "originalCount": 1,
+          "format": "zip",
+          "name": "attachments-bundle.zip"
+        },
+        "fallback": null,
+        "materializedFallback": null
+      }
+    },
+    {
+      "name": "invalid_utf8_upload",
+      "files": [
+        {
+          "path": "public.txt",
+          "contentBase64": "UFVCTElD/w=="
+        }
+      ],
+      "options": {
+        "model": "gpt-6-pro",
+        "prompt": "PUBLIC prompt reference",
+        "browserAttachments": "always"
+      },
+      "expected": {
+        "markdown": "[SYSTEM]\n\n[USER]\nPUBLIC prompt reference\n\n### File: public.txt\nLines: 1-1\n```\n1 | PUBLIC�\n```",
+        "composerText": "PUBLIC prompt reference",
+        "estimatedInputTokens": 28,
+        "attachments": [
+          {
+            "name": "public.txt",
+            "displayPath": "public.txt",
+            "sizeBytes": 9,
+            "generatedBundle": false,
+            "bytesBase64": "UFVCTElD/w=="
+          }
+        ],
+        "inlineFileCount": 0,
+        "tokenEstimateIncludesInlineFiles": false,
+        "attachmentsPolicy": "always",
+        "attachmentMode": "upload",
+        "bundled": null,
+        "fallback": null,
+        "materializedFallback": null
+      }
+    }
+  ]
+}

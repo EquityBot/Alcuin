@@ -1,0 +1,31 @@
+🧿 Industrious 0.1.0 - Keeps 196k tokens feeling roomy, not risky.
+Advanced Options
+  --search <on|off>      Enable or disable the server-side search tool (default on).
+  --max-input <tokens>   Override the input token budget.
+  --max-output <tokens>  Override the max output tokens (model default otherwise).
+
+Browser Options
+  --chatgpt-url <url>                          Override the ChatGPT web URL (workspace/folder targets).
+  --browser-chrome-profile <name>              Reuse cookies from a specific Chrome profile.
+  --browser-chrome-path <path>                 Point to a custom Chrome/Chromium binary.
+  --browser-cookie-path <path>                 Use a specific Chrome/Chromium cookie store file.
+  --browser-attach-running                     Attach to your current Chrome session through its local remote debugging toggle.
+  --browser-url <url>                          Alias for --chatgpt-url.
+  --browser-timeout <ms|s|m>                   Cap total wait time for the assistant response.
+  --browser-input-timeout <ms|s|m>             Cap how long we wait for the composer textarea.
+  --browser-recheck-delay <ms|s|m|h>           After timeout, wait then revisit the conversation to retry capture.
+  --browser-recheck-timeout <ms|s|m|h>         Time budget for the delayed recheck attempt.
+  --browser-reuse-wait <ms|s|m|h>              Wait for a shared Chrome profile before launching (parallel runs).
+  --browser-profile-lock-timeout <ms|s|m|h>    Wait for the manual-login profile lock before sending.
+  --browser-auto-reattach-delay <ms|s|m|h>     Delay before periodic auto-reattach attempts after a timeout.
+  --browser-auto-reattach-interval <ms|s|m|h>  Interval between auto-reattach attempts (0 disables).
+  --browser-auto-reattach-timeout <ms|s|m|h>   Time budget for each auto-reattach attempt.
+  --browser-cookie-wait <ms|s|m>               Wait before retrying cookie sync when Chrome cookies are empty or locked.
+  --browser-cookie-sync                        Copy cookies from live Chrome (opt-in; token rotation may invalidate that session).
+  --browser-no-cookie-sync                     Skip copying cookies from your main profile.
+  --browser-manual-login                       Skip cookie copy; reuse a persistent automation profile and log in manually.
+  --browser-headless                           Launch Chrome in headless mode.
+  --browser-hide-window                        No effect on Windows or Linux (macOS only).
+  --browser-keep-browser                       Leave Chrome running after completion.
+
+Tip: run `industrious --help` to see the primary option set.

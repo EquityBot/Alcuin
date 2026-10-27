@@ -1,0 +1,159 @@
+[
+  {
+    "input": {
+      "modelSelection": {
+        "verified": true,
+        "source": "chatgpt-model-picker",
+        "requestedModel": "GPT-6",
+        "resolvedLabel": "GPT-6"
+      },
+      "thinkingSelection": {
+        "verified": true,
+        "strictFailClosed": true,
+        "source": "chatgpt-thinking-picker",
+        "requestedLevel": "pro",
+        "resolvedLabel": "Pro"
+      },
+      "effectiveModel": "gpt-6-pro"
+    },
+    "accepted": true
+  },
+  {
+    "input": {
+      "modelSelection": {
+        "verified": true,
+        "source": "chatgpt-model-picker",
+        "requestedModel": "GPT-6",
+        "resolvedLabel": "GPT-6"
+      },
+      "thinkingSelection": {
+        "verified": true,
+        "strictFailClosed": true,
+        "source": "chatgpt-thinking-picker",
+        "requestedLevel": "pro",
+        "resolvedLabel": "Pro"
+      }
+    },
+    "accepted": true
+  },
+  {
+    "input": {
+      "modelSelection": {
+        "verified": true,
+        "source": "chatgpt-model-picker",
+        "requestedModel": "GPT-6",
+        "resolvedLabel": "GPT-6"
+      },
+      "thinkingSelection": {
+        "verified": true,
+        "strictFailClosed": true,
+        "source": "chatgpt-thinking-picker",
+        "requestedLevel": "pro",
+        "resolvedLabel": "Pro"
+      },
+      "effectiveModel": "gpt-6-astra"
+    },
+    "accepted": false,
+    "error": "Industrious browser completion requires a verified Latest (GPT-6) Pro or Extra High pair. Preserve the uncertain result for recovery; do not replay or retire it."
+  },
+  {
+    "input": {
+      "modelSelection": {
+        "verified": false,
+        "source": "chatgpt-model-picker",
+        "requestedModel": "GPT-6",
+        "resolvedLabel": "GPT-6"
+      },
+      "thinkingSelection": {
+        "verified": true,
+        "strictFailClosed": true,
+        "source": "chatgpt-thinking-picker",
+        "requestedLevel": "pro",
+        "resolvedLabel": "Pro"
+      }
+    },
+    "accepted": false,
+    "error": "Industrious browser completion requires a verified Latest (GPT-6) Pro or Extra High pair. Preserve the uncertain result for recovery; do not replay or retire it."
+  },
+  {
+    "input": {
+      "modelSelection": {
+        "verified": true,
+        "source": "chatgpt-model-picker",
+        "requestedModel": "GPT-6",
+        "resolvedLabel": "GPT-6"
+      },
+      "thinkingSelection": {
+        "verified": true,
+        "strictFailClosed": false,
+        "source": "chatgpt-thinking-picker",
+        "requestedLevel": "pro",
+        "resolvedLabel": "Pro"
+      }
+    },
+    "accepted": false,
+    "error": "Industrious browser completion requires a verified Latest (GPT-6) Pro or Extra High pair. Preserve the uncertain result for recovery; do not replay or retire it."
+  },
+  {
+    "input": {
+      "modelSelection": {
+        "verified": true,
+        "source": "chatgpt-model-picker",
+        "requestedModel": "GPT-6",
+        "resolvedLabel": "GPT-6"
+      },
+      "thinkingSelection": {
+        "verified": true,
+        "strictFailClosed": true,
+        "source": "chatgpt-thinking-picker",
+        "requestedLevel": "extra-high",
+        "resolvedLabel": "Extra High"
+      },
+      "effectiveModel": "gpt-6-astra"
+    },
+    "accepted": true
+  },
+  {
+    "input": {
+      "modelSelection": {
+        "verified": true,
+        "source": "chatgpt-model-picker",
+        "requestedModel": "GPT-6",
+        "resolvedLabel": "GPT-6"
+      },
+      "thinkingSelection": {
+        "verified": true,
+        "strictFailClosed": true,
+        "source": "chatgpt-thinking-picker",
+        "requestedLevel": "heavy",
+        "resolvedLabel": "Heavy"
+      }
+    },
+    "accepted": false,
+    "error": "Industrious browser completion requires a verified Latest (GPT-6) Pro or Extra High pair. Preserve the uncertain result for recovery; do not replay or retire it."
+  },
+  {
+    "input": {
+      "modelSelection": {
+        "verified": true,
+        "source": "chatgpt-model-picker",
+        "requestedModel": "GPT-6",
+        "resolvedLabel": "GPT-5.6"
+      },
+      "thinkingSelection": {
+        "verified": true,
+        "strictFailClosed": true,
+        "source": "chatgpt-thinking-picker",
+        "requestedLevel": "pro",
+        "resolvedLabel": "Pro"
+      }
+    },
+    "accepted": false,
+    "error": "Industrious browser completion requires a verified Latest (GPT-6) Pro or Extra High pair. Preserve the uncertain result for recovery; do not replay or retire it."
+  },
+  {
+    "input": {},
+    "accepted": false,
+    "error": "Industrious browser completion requires a verified Latest (GPT-6) Pro or Extra High pair. Preserve the uncertain result for recovery; do not replay or retire it."
+  }
+]

@@ -1,0 +1,17 @@
+{
+  "referenceCommit": "46c757d",
+  "inputs": {
+    "src/browser/targetClaim.ts": "65b8e5c8be635699383f36d08a6396a8a748eb04fcf7a271c184ecd28502765d",
+    "src/browser/promptFingerprint.ts": "6d6c7add3db6ef1581e2a2f67bf4ff4d52bc691d88539aba8d51579acc39e6e2",
+    "src/browser/conversationTurns.ts": "a6be44e00f65bcd94404e5055307c01914eaaa7dffb8be6294ed053d72ba96bd",
+    "src/browser/constants.ts": "0f7b6e6f571190f132646d522d7e6f4cefb770f98e45d4d6415800912e7ef0df",
+    "src/browser/actions/attachmentContext.ts": "ce075b4ac3abb1dbb60322bf30a098d41ca5d3201d04e39f1b06fc71904c993e"
+  },
+  "scriptSha256": "a5ae230927da46d811f391f9567e1a87c8fa29a50ee05a5e617d2d58a902370b",
+  "changes": [
+    "Serialise parameters as function arguments.",
+    "Return the canonical expected prompt for the Rust receipt digest.",
+    "Remove whitespace from two empty lines.",
+    "Require complete escaped literal links, valid HTTP(S) autolink hosts and whole-token boundaries before fallback decoding; preserve exact source equality and source fingerprints."
+  ]
+}

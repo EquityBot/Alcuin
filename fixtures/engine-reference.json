@@ -1,0 +1,167 @@
+{
+  "source": "dist/src/cli/engine.js:resolveEngine",
+  "sourceSha256": "bc228287787df1139b8485b2a39441f50d974793bc6510f8b601b305dc418d21",
+  "cases": [
+    {
+      "input": {
+        "env": {}
+      },
+      "engine": "browser"
+    },
+    {
+      "input": {
+        "env": {
+          "OPENAI_API_KEY": "synthetic"
+        }
+      },
+      "engine": "api"
+    },
+    {
+      "input": {
+        "env": {
+          "OPENROUTER_API_KEY": "synthetic"
+        }
+      },
+      "engine": "api"
+    },
+    {
+      "input": {
+        "env": {
+          "OPENAI_API_KEY": " "
+        }
+      },
+      "engine": "api"
+    },
+    {
+      "input": {
+        "env": {
+          "ORACLE_ENGINE": " API "
+        }
+      },
+      "engine": "api"
+    },
+    {
+      "input": {
+        "env": {
+          "ORACLE_ENGINE": "invalid"
+        }
+      },
+      "engine": "browser"
+    },
+    {
+      "input": {
+        "configEngine": "api",
+        "env": {
+          "ORACLE_ENGINE": "browser"
+        }
+      },
+      "engine": "browser"
+    },
+    {
+      "input": {
+        "configEngine": "browser",
+        "env": {
+          "ORACLE_ENGINE": "api"
+        }
+      },
+      "engine": "api"
+    },
+    {
+      "input": {
+        "engine": "browser",
+        "configEngine": "api",
+        "env": {
+          "ORACLE_ENGINE": "api"
+        }
+      },
+      "engine": "browser"
+    },
+    {
+      "input": {
+        "engine": "api",
+        "configEngine": "browser",
+        "env": {
+          "ORACLE_ENGINE": "browser"
+        }
+      },
+      "engine": "api"
+    },
+    {
+      "input": {
+        "browserFlag": true,
+        "engine": "api",
+        "env": {}
+      },
+      "engine": "browser"
+    },
+    {
+      "input": {
+        "apiProviderRequested": true,
+        "env": {
+          "ORACLE_ENGINE": "browser"
+        }
+      },
+      "engine": "api"
+    },
+    {
+      "input": {
+        "browserFlag": true,
+        "apiProviderRequested": true,
+        "env": {}
+      },
+      "engine": "browser"
+    },
+    {
+      "input": {
+        "configEngine": "browser",
+        "env": {
+          "OPENAI_API_KEY": "synthetic"
+        }
+      },
+      "engine": "browser"
+    },
+    {
+      "input": {
+        "configEngine": "api",
+        "env": {}
+      },
+      "engine": "api"
+    },
+    {
+      "input": {
+        "env": {
+          "OPENAI_API_KEY": "",
+          "OPENROUTER_API_KEY": "synthetic"
+        }
+      },
+      "engine": "api"
+    },
+    {
+      "input": {
+        "env": {
+          "ORACLE_ENGINE": "BROWSER",
+          "OPENAI_API_KEY": "synthetic"
+        }
+      },
+      "engine": "browser"
+    },
+    {
+      "input": {
+        "env": {
+          "ORACLE_ENGINE": "invalid",
+          "OPENAI_API_KEY": "synthetic"
+        }
+      },
+      "engine": "api"
+    },
+    {
+      "input": {
+        "env": {
+          "ORACLE_ENGINE": "invalid",
+          "OPENROUTER_API_KEY": "synthetic"
+        }
+      },
+      "engine": "api"
+    }
+  ]
+}

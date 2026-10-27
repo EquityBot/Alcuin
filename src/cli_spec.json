@@ -1,0 +1,362 @@
+[
+  {
+    "flags": "-p, --prompt <text>"
+  },
+  {
+    "flags": "--message <text>"
+  },
+  {
+    "flags": "--followup <sessionId|responseId>"
+  },
+  {
+    "flags": "--followup-model <model>"
+  },
+  {
+    "flags": "-f, --file <paths...>"
+  },
+  {
+    "flags": "--max-file-size-bytes <bytes>"
+  },
+  {
+    "flags": "--include <paths...>"
+  },
+  {
+    "flags": "--files <paths...>"
+  },
+  {
+    "flags": "--path <paths...>"
+  },
+  {
+    "flags": "--paths <paths...>"
+  },
+  {
+    "flags": "--copy-markdown"
+  },
+  {
+    "flags": "--copy"
+  },
+  {
+    "flags": "-s, --slug <words>"
+  },
+  {
+    "flags": "-m, --model <model>"
+  },
+  {
+    "flags": "--models <models>"
+  },
+  {
+    "flags": "--reasoning-effort <effort>"
+  },
+  {
+    "flags": "--reasoning-mode <mode>"
+  },
+  {
+    "flags": "-e, --engine <mode>"
+  },
+  {
+    "flags": "--mode <mode>"
+  },
+  {
+    "flags": "--files-report"
+  },
+  {
+    "flags": "-v, --verbose"
+  },
+  {
+    "flags": "--notify"
+  },
+  {
+    "flags": "--no-notify"
+  },
+  {
+    "flags": "--notify-sound"
+  },
+  {
+    "flags": "--no-notify-sound"
+  },
+  {
+    "flags": "--timeout <seconds|duration|auto>"
+  },
+  {
+    "flags": "--background"
+  },
+  {
+    "flags": "--no-background"
+  },
+  {
+    "flags": "--http-timeout <ms|s|m|h>"
+  },
+  {
+    "flags": "--zombie-timeout <ms|s|m|h>"
+  },
+  {
+    "flags": "--zombie-last-activity"
+  },
+  {
+    "flags": "--preview [mode]"
+  },
+  {
+    "flags": "--dry-run [mode]"
+  },
+  {
+    "flags": "--route"
+  },
+  {
+    "flags": "--preflight"
+  },
+  {
+    "flags": "--perf-trace"
+  },
+  {
+    "flags": "--perf-trace-path <path>"
+  },
+  {
+    "flags": "--exec-session <id>"
+  },
+  {
+    "flags": "--session <id>"
+  },
+  {
+    "flags": "--status"
+  },
+  {
+    "flags": "--render-markdown"
+  },
+  {
+    "flags": "--render"
+  },
+  {
+    "flags": "--render-plain"
+  },
+  {
+    "flags": "--write-output <path>"
+  },
+  {
+    "flags": "--write-artifacts"
+  },
+  {
+    "flags": "--allow-partial"
+  },
+  {
+    "flags": "--partial <mode>"
+  },
+  {
+    "flags": "--verbose-render"
+  },
+  {
+    "flags": "--search <mode>"
+  },
+  {
+    "flags": "--max-input <tokens>"
+  },
+  {
+    "flags": "--max-output <tokens>"
+  },
+  {
+    "flags": "--base-url <url>"
+  },
+  {
+    "flags": "--provider <provider>"
+  },
+  {
+    "flags": "--no-azure"
+  },
+  {
+    "flags": "--azure-endpoint <url>"
+  },
+  {
+    "flags": "--azure-deployment <name>"
+  },
+  {
+    "flags": "--azure-api-version <version>"
+  },
+  {
+    "flags": "--browser"
+  },
+  {
+    "flags": "--browser-chrome-profile <name>"
+  },
+  {
+    "flags": "--browser-chrome-path <path>"
+  },
+  {
+    "flags": "--browser-cookie-path <path>"
+  },
+  {
+    "flags": "--browser-attach-running"
+  },
+  {
+    "flags": "--chatgpt-url <url>"
+  },
+  {
+    "flags": "--browser-url <url>"
+  },
+  {
+    "flags": "--browser-timeout <ms|s|m>"
+  },
+  {
+    "flags": "--browser-input-timeout <ms|s|m>"
+  },
+  {
+    "flags": "--browser-approval-wait <duration>"
+  },
+  {
+    "flags": "--browser-attachment-timeout <ms|s|m>"
+  },
+  {
+    "flags": "--browser-recheck-delay <ms|s|m|h>"
+  },
+  {
+    "flags": "--browser-recheck-timeout <ms|s|m|h>"
+  },
+  {
+    "flags": "--browser-reuse-wait <ms|s|m|h>"
+  },
+  {
+    "flags": "--browser-profile-lock-timeout <ms|s|m|h>"
+  },
+  {
+    "flags": "--browser-max-concurrent-tabs <n>"
+  },
+  {
+    "flags": "--browser-auto-reattach-delay <ms|s|m|h>"
+  },
+  {
+    "flags": "--browser-auto-reattach-interval <ms|s|m|h>"
+  },
+  {
+    "flags": "--browser-auto-reattach-timeout <ms|s|m|h>"
+  },
+  {
+    "flags": "--browser-cookie-wait <ms|s|m>"
+  },
+  {
+    "flags": "--browser-port <port>"
+  },
+  {
+    "flags": "--browser-debug-port <port>"
+  },
+  {
+    "flags": "--browser-cookie-names <names>"
+  },
+  {
+    "flags": "--browser-inline-cookies <jsonOrBase64>"
+  },
+  {
+    "flags": "--browser-inline-cookies-file <path>"
+  },
+  {
+    "flags": "--browser-cookie-sync"
+  },
+  {
+    "flags": "--browser-no-cookie-sync"
+  },
+  {
+    "flags": "--browser-manual-login"
+  },
+  {
+    "flags": "--browser-manual-login-profile-dir <path>"
+  },
+  {
+    "flags": "--copy-profile <dir>"
+  },
+  {
+    "flags": "--browser-headless"
+  },
+  {
+    "flags": "--browser-hide-window"
+  },
+  {
+    "flags": "--browser-keep-browser"
+  },
+  {
+    "flags": "--browser-model-strategy <mode>"
+  },
+  {
+    "flags": "--browser-thinking-time <level>"
+  },
+  {
+    "flags": "--browser-research <mode>"
+  },
+  {
+    "flags": "--browser-capture-provider-native"
+  },
+  {
+    "flags": "--no-browser-capture-provider-native"
+  },
+  {
+    "flags": "--browser-archive <mode>"
+  },
+  {
+    "flags": "--browser-fallback <provider>"
+  },
+  {
+    "flags": "--browser-follow-up <prompt>"
+  },
+  {
+    "flags": "--browser-allow-cookie-errors"
+  },
+  {
+    "flags": "--browser-attachments <mode>"
+  },
+  {
+    "flags": "--remote-chrome <host:port>"
+  },
+  {
+    "flags": "--browser-tab <ref>"
+  },
+  {
+    "flags": "--remote-host <host:port>"
+  },
+  {
+    "flags": "--remote-token <token>"
+  },
+  {
+    "flags": "--browser-inline-files"
+  },
+  {
+    "flags": "--browser-bundle-files"
+  },
+  {
+    "flags": "--browser-bundle-format <format>"
+  },
+  {
+    "flags": "--youtube <url>"
+  },
+  {
+    "flags": "--generate-image <file>"
+  },
+  {
+    "flags": "--edit-image <file>"
+  },
+  {
+    "flags": "--output <file>"
+  },
+  {
+    "flags": "--aspect <ratio>"
+  },
+  {
+    "flags": "--gemini-show-thoughts"
+  },
+  {
+    "flags": "--no-gemini-fallback"
+  },
+  {
+    "flags": "--retain-hours <hours>"
+  },
+  {
+    "flags": "--force"
+  },
+  {
+    "flags": "--debug-help"
+  },
+  {
+    "flags": "--heartbeat <seconds>"
+  },
+  {
+    "flags": "--wait"
+  },
+  {
+    "flags": "--no-wait"
+  }
+]

@@ -1,0 +1,13 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    # vendor/hyper is patched; upgrading hyper means reapplying vendor/hyper/PATCH.json.
+    ignore:
+      - dependency-name: hyper
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

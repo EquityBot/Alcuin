@@ -1,0 +1,319 @@
+Industrious CLI v0.1.0: Consult Latest (GPT-6), with Pro first and verified Extra High fallback.
+
+Usage: industrious [options] [command] [prompt]
+
+Latest (GPT-6) consultation tool. Pro is first; verified Pro unavailability
+permits Extra High on GPT-6.
+
+Arguments:
+  prompt                                Prompt text (shorthand for --prompt).
+
+Options:
+  -V, --version                         output the version number
+  -p, --prompt <text>                   User prompt to send to the model.
+  --followup <sessionId|responseId>     Continue a stored ChatGPT browser
+                                        conversation or an OpenAI/Azure
+                                        Responses API run.
+  --followup-model <model>              For multi-model API sessions, choose
+                                        which model response to continue from.
+  -f, --file <paths...>                 Files/directories or glob patterns to
+                                        attach (prefix with !pattern to
+                                        exclude). Oversized files are rejected
+                                        automatically (default cap: 1 MB;
+                                        configurable via
+                                        ORACLE_MAX_FILE_SIZE_BYTES or
+                                        config.maxFileSizeBytes). (default: [])
+  --max-file-size-bytes <bytes>         Reject files larger than this many
+                                        bytes.
+  --copy-markdown                       Copy the assembled markdown bundle to
+                                        the clipboard; pair with --render to
+                                        print it too. (default: false)
+  -s, --slug <words>                    Custom session slug (3-5 words).
+  -m, --model <model>                   Latest (GPT-6) only. Browser default
+                                        gpt-6-pro verifies Pro before dispatch;
+                                        positive owned Pro unavailability
+                                        permits Extra High on GPT-6. API default
+                                        gpt-6-astra uses Pro reasoning mode.
+                                        Older models, lower initial tiers and
+                                        conflicting overrides are refused. Saved
+                                        results remain readable without replay.
+                                        UI labels do not attest backend
+                                        identity.
+  --models <models>                     Comma-separated Latest/GPT-6 API model
+                                        list; every target and resolved override
+                                        must satisfy the current model policy.
+                                        (default: [])
+  --reasoning-effort <effort>           Reasoning effort for GPT-6 Astra API
+                                        requests (low or higher). (choices:
+                                        "none", "low", "medium", "high",
+                                        "xhigh", "max")
+  --reasoning-mode <mode>               Responses API reasoning execution mode.
+                                        New Industrious API requests require "pro".
+                                        (choices: "standard", "pro")
+  -e, --engine <mode>                   Execution engine (api | browser). New
+                                        requests use GPT-6 Astra Pro through the
+                                        API or verified Latest (GPT-6) in
+                                        ChatGPT. If omitted, Industrious picks api
+                                        when OPENAI_API_KEY is set, otherwise
+                                        browser. (choices: "api", "browser")
+  --files-report                        Show token usage per attached file (also
+                                        prints automatically when files exceed
+                                        the token budget). (default: false)
+  -v, --verbose                         Enable verbose logging for all
+                                        operations. (default: false)
+  --notify                              Desktop notification when a session
+                                        finishes (default on unless CI/SSH).
+  --no-notify                           Disable desktop notifications.
+  --notify-sound                        Play a notification sound on completion
+                                        (default off).
+  --no-notify-sound                     Disable notification sounds.
+  --timeout <seconds|duration|auto>     Overall timeout before aborting the API
+                                        call (auto = 60m for Pro models, 120s
+                                        otherwise). (default: "auto")
+  --background                          Use Responses API background mode
+                                        (create + retrieve) for API runs.
+  --no-background                       Disable Responses API background mode.
+  --http-timeout <ms|s|m|h>             HTTP client timeout for API requests
+                                        (default 20m).
+  --zombie-timeout <ms|s|m|h>           Override stale-session cutoff used by
+                                        `industrious status` (default 60m).
+  --zombie-last-activity                Base stale-session detection on last log
+                                        activity instead of start time.
+                                        (default: false)
+  --dry-run [mode]                      Preview without calling the model
+                                        (summary | json | full). (choices:
+                                        "summary", "json", "full", default:
+                                        false, preset: "summary")
+  --route                               Print API provider route plan and exit.
+                                        (default: false)
+  --preflight                           Check API provider readiness for the
+                                        requested model(s) and exit. (default:
+                                        false)
+  --perf-trace                          Write CLI performance timing trace JSON
+                                        (or set ORACLE_PERF_TRACE=1/path).
+                                        (default: false)
+  --perf-trace-path <path>              Write CLI performance timing trace JSON
+                                        to an explicit path.
+  --render-markdown                     Print the assembled markdown bundle for
+                                        prompt + files and exit; pair with
+                                        --copy to put it on the clipboard.
+                                        (default: false)
+  --render                              Alias for --render-markdown. (default:
+                                        false)
+  --render-plain                        Render markdown without
+                                        ANSI/highlighting (use plain text even
+                                        in a TTY). (default: false)
+  --write-output <path>                 Write only the final assistant message
+                                        to this file (overwrites; multi-model
+                                        appends .<model> before the extension).
+  --write-artifacts                     Also export captured browser files
+                                        beside --write-output without
+                                        overwriting existing files (browser runs
+                                        only). (default: false)
+  --allow-partial                       Exit 0 for multi-model runs when at
+                                        least one model succeeds. (default:
+                                        false)
+  --partial <mode>                      Multi-model failure policy (fail | ok).
+                                        (choices: "fail", "ok")
+  --verbose-render                      Show render/TTY diagnostics when
+                                        replaying sessions. (default: false)
+  --base-url <url>                      Override the OpenAI-compatible base URL
+                                        for API runs (e.g. LiteLLM proxy
+                                        endpoint).
+  --provider <provider>                 Choose API provider routing: auto,
+                                        openai, or azure. Use openai to ignore
+                                        Azure env/config. (choices: "auto",
+                                        "openai", "azure", default: "auto")
+  --no-azure                            Disable Azure OpenAI routing for this
+                                        run (same as --provider openai).
+  --azure-endpoint <url>                Azure OpenAI Endpoint (e.g.
+                                        https://resource.openai.azure.com/).
+  --azure-deployment <name>             Azure OpenAI Deployment Name.
+  --azure-api-version <version>         Azure OpenAI API Version.
+  --browser-cookie-path <path>          Explicit Chrome/Chromium cookie DB path
+                                        for session reuse.
+  --browser-attach-running              Attach to a running local browser
+                                        session instead of launching Chrome
+                                        (defaults to 127.0.0.1:9222; combine
+                                        with --remote-chrome to hint a different
+                                        host:port).
+  --chatgpt-url <url>                   Override the ChatGPT web URL (e.g.,
+                                        workspace/folder like
+                                        https://chatgpt.com/g/.../project;
+                                        default https://chatgpt.com/).
+  --browser-approval-wait <duration>    Wait for each Chrome remote-debugging
+                                        approval prompt (default 20s; e.g. 5m).
+                                        (env: ORACLE_BROWSER_APPROVAL_WAIT)
+  --browser-port <port>                 Use a fixed Chrome DevTools port
+                                        (helpful on WSL firewalls).
+  --browser-cookie-sync                 Copy cookies from live Chrome (opt-in;
+                                        token rotation may invalidate that
+                                        session).
+  --copy-profile <dir>                  Copy a signed-in Chrome user-data dir to
+                                        a throwaway profile and run browser mode
+                                        against it (login-free; auto-cleanup).
+                                        e.g. "$HOME/Library/Application
+                                        Support/Google/Chrome".
+  --browser-model-strategy <mode>       ChatGPT model picker strategy: select
+                                        (default) switches to the requested
+                                        model, current keeps the active model,
+                                        ignore skips the picker entirely.
+                                        (choices: "select", "current", "ignore")
+  --browser-research <mode>             Browser research mode: search activates
+                                        Web Search; deep activates Deep
+                                        Research. (choices: "off", "search",
+                                        "deep")
+  --browser-capture-provider-native     Save ChatGPT’s full conversation record
+                                        and independent text digests as private
+                                        session artifacts (opt-in; includes
+                                        prior turns).
+  --no-browser-capture-provider-native  Disable provider-native evidence
+                                        capture.
+  --browser-archive <mode>              Archive completed ChatGPT browser
+                                        conversations after local artifacts are
+                                        saved (auto archives successful
+                                        non-project one-shots only). (choices:
+                                        "auto", "always", "never")
+  --browser-fallback <provider>         After ChatGPT fails and its bounded
+                                        read-only recovery expires, consult
+                                        grok.com once in a separate manual-login
+                                        profile (explicit alternate-provider
+                                        consent). (choices: "none", "grok")
+  --browser-follow-up <prompt>          Submit an additional prompt in the same
+                                        ChatGPT browser conversation after the
+                                        initial answer; repeat for multi-turn
+                                        consults. (default: [])
+  --browser-attachments <mode>          How to deliver --file inputs in browser
+                                        mode: auto (default) and always upload;
+                                        the never mode rejects resolved files
+                                        because inline source cannot be
+                                        verified. (choices: "auto", "never",
+                                        "always", default: "auto")
+  --remote-chrome <host:port>           Connect to remote Chrome DevTools
+                                        Protocol, or when combined with
+                                        --browser-attach-running use this
+                                        host:port as the local attach hint.
+  --browser-tab <ref>                   Reuse an existing ChatGPT tab by ref
+                                        (current, target id, full URL, or title
+                                        substring) instead of opening a new tab.
+  --remote-host <host:port>             Delegate browser runs to a remote
+                                        `industrious serve` instance.
+  --remote-token <token>                Access token for the remote `industrious
+                                        serve` instance.
+  --browser-inline-files                Alias for --browser-attachments never
+                                        (refuses resolved files). (default:
+                                        false)
+  --browser-bundle-files                Force one browser upload bundle;
+                                        auto/zip includes all resolved files.
+                                        Multi-file text/source uploads already
+                                        bundle by default (flattened text unless
+                                        ZIP is selected). (default: false)
+  --browser-bundle-format <format>      Bundle format for browser uploads: auto
+                                        (flattened text for text-only, ZIP when
+                                        raw files are present), text, or zip.
+                                        (choices: "auto", "text", "zip",
+                                        default: "auto")
+  --generate-image <file>               Save generated downloadable image
+                                        artifacts from ChatGPT browser mode.
+  --edit-image <file>                   For ChatGPT, attach source images with
+                                        --file and use --generate-image for
+                                        output.
+  --output <file>                       Output file path for image operations.
+  --retain-hours <hours>                Prune stored sessions older than this
+                                        many hours before running (set 0 to
+                                        disable).
+  --force                               Force start a new session even if an
+                                        identical prompt is already running.
+                                        (default: false)
+  --debug-help                          Show the advanced/debug option set and
+                                        exit. (default: false)
+  --heartbeat <seconds>                 Emit periodic in-progress updates (0 to
+                                        disable). (default: 30)
+  --wait
+  -h, --help                            display help for command
+
+Commands:
+  perf-summary [options] <traces...>    Summarise numeric browser phases from
+                                        explicitly selected trace files.
+  browser-health [options]              Inspect login and current model/effort
+                                        in a fresh tab without selecting or
+                                        submitting.
+  recover-native [options]              Save a completed native ChatGPT reply
+                                        matched to a saved request.
+  serve [options]                       Run Industrious browser automation as a
+                                        remote service for other machines.
+  recover-remote [options] <run-id>     Retrieve a saved remote result into a
+                                        fresh session without submitting the
+                                        prompt again.
+  project-sources                       Manage ChatGPT Project Sources as
+                                        explicit shared project context.
+  bridge                                Bridge a Windows-hosted ChatGPT session
+                                        to Linux clients.
+  tui                                   Launch the interactive terminal UI for
+                                        humans (no automation).
+  doctor [options]                      Diagnose Industrious API provider readiness
+                                        and routing.
+  docs                                  Documentation maintenance utilities.
+  session [options] [id]                Attach to a stored session or list
+                                        recent sessions when no ID is provided.
+  status [options] [id]                 List recent sessions (24h window by
+                                        default) or attach to a session when an
+                                        ID is provided.
+  restart [options] <id>                Re-run a stored session as a new session
+                                        (clones options).
+
+Tips
+• Pass a prompt and attach relevant source with --file …; Industrious cannot inspect your project directly.
+• Preview the bundle with --dry-run summary --files-report and keep total input under ~196k tokens.
+• Explain the decision, constraints and prior attempts in a short project briefing.
+• Fresh browser requests verify Latest/GPT-6 and Pro before submission. A positively unavailable owned Pro control permits verified Extra High on GPT-6. Missing or ambiguous controls stop the run. New older-model dispatch is refused; saved results remain readable without replay. UI labels do not attest backend identity.
+• --perf-trace records browser queue, setup, mode selection, upload, generation and capture durations.
+• Spell out the project + platform + version requirements (repo name, target OS/toolchain versions, API dependencies) so Industrious doesn’t guess defaults.
+• When comparing multiple repos/files, spell out each repo + path + role (e.g., “Project A SettingsView → apps/project-a/Sources/SettingsView.swift; Project B SettingsView → ../project-b/mac/...”) so the model knows exactly which file is which.
+• Best results: 6–30 sentences plus key source files; very short prompts often yield generic answers.
+• Industrious is one-shot by default. Continue saved API or ChatGPT browser sessions with --followup <sessionId|responseId>; use repeated --browser-follow-up for planned same-run ChatGPT turns.
+• Run --files-report to inspect token spend before hitting the API.
+• Non-preview Pro runs spawn detached sessions. If the CLI times out, do not re-run — reattach with industrious session <slug> to resume/inspect the existing run.
+• Set a memorable 3–5 word slug via --slug "<words>" to keep session IDs tidy.
+• Finished sessions auto-hide preamble logs when reattached; raw timestamps remain in the saved log file.
+• Need hidden flags? Run industrious --help --verbose to list search/token/browser overrides.
+• If any Industrious session is already running, do not start new API runs. Attach to the existing browser session instead; only trigger API calls when you explicitly mean to.
+• Duplicate prompt guard: if the same prompt is already running, new runs are blocked unless you pass --force—prefer reattaching instead of spawning duplicates.
+
+Examples
+  industrious --render --copy --prompt "Review the TS data layer for schema drift" --file "src/**/*.ts,*/*.test.ts"
+    Build the bundle, print it, and copy it for manual paste into ChatGPT.
+
+  industrious --engine browser --model gpt-6-pro --browser-thinking-time pro --prompt "Cross-check the data layer assumptions" --file "src/**/*.ts"
+    Consult GPT-6 with independently verified Pro effort.
+
+  industrious perf-summary run-a.json run-b.json --json
+    Summarise numeric phase totals from selected consultation traces.
+
+  industrious recover-native --request request.json --write-output answer.md
+    Save a completed native ChatGPT reply while Industrious's manual-login Chrome is open.
+
+  industrious status --hours 72 --limit 50
+    Show sessions from the last 72h (capped at 50 entries).
+
+  industrious session <sessionId>
+    Attach to a running/completed session and stream the saved transcript.
+
+  industrious --prompt "Ship review" --slug "release-readiness-audit"
+    Encourage the model to hand you a 3–5 word slug and pass it along with --slug.
+
+  industrious --prompt "Tabs frozen: compare Project A SettingsView (apps/project-a/Sources/SettingsView.swift) vs Project B SettingsView (../project-b/mac/App/Presentation/Views/SettingsView.swift)" --file apps/project-a/Sources/SettingsView.swift --file ../project-b/mac/App/Presentation/Views/SettingsView.swift
+    Spell out what each attached file is (repo + path + role) before asking for comparisons so the model knows exactly what it is reading.
+
+
+Examples:
+  # Quick API run with two files
+  industrious --prompt "Summarize the risk register" --file docs/risk-register.md docs/risk-matrix.md
+
+  # Browser run (no API key) + globbed TypeScript sources, excluding tests
+  industrious --engine browser --prompt "Review the TS data layer" \
+    --file "src/**/*.ts" --file "!src/**/*.test.ts"
+
+  # Build, print, and copy a markdown bundle (semi-manual)
+  industrious --render --copy -p "Review the TS data layer" --file "src/**/*.ts" --file "!src/**/*.test.ts"
+

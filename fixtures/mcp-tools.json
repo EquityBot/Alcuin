@@ -1,0 +1,1613 @@
+{
+  "tools": [
+    {
+      "name": "consult",
+      "title": "Run a Industrious session",
+      "description": "Run a Industrious session (API or ChatGPT browser automation). Use `files` to attach project context. If `engine` is omitted, Industrious follows CLI defaults: config/ORACLE_ENGINE first, then API when OPENAI_API_KEY is set, otherwise browser. Browser ChatGPT Pro consults can take many minutes; set `waitForCompletion:false` to return a durable sessionId immediately, then use `wait` to block without agent-side polling. Use `dryRun:true` first when configuring an agent and inspect `sessions`/`industrious status` before retrying. Browser manual-login uses a private Industrious Chrome profile separate from the user's normal Chrome; dry-run output includes first-time setup guidance when that path is active. For browser-based image/file uploads, set `browserAttachments:\"always\"`. For ChatGPT image generation, set `generateImage` to enable the same image wait/download path as CLI --generate-image and read returned paths from `images`. Browser consults can include `browserFollowUps` for a multi-turn ChatGPT review in one conversation. Sessions are stored under `ORACLE_HOME_DIR` (shared with the CLI).",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "preset": {
+            "description": "Optional MCP convenience preset. \"chatgpt-pro-heavy\" selects ChatGPT browser mode, gpt-6-pro (GPT-6 model radio), and Pro thinking unless overridden.",
+            "type": "string",
+            "enum": [
+              "chatgpt-pro-heavy"
+            ]
+          },
+          "prompt": {
+            "type": "string",
+            "minLength": 1,
+            "description": "User prompt to run."
+          },
+          "files": {
+            "default": [],
+            "description": "Optional file paths or glob patterns (like the CLI `--file`). Resolved relative to the MCP server working directory.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "model": {
+            "description": "Single model name/label. If `engine` is omitted, Industrious follows CLI defaults: config/ORACLE_ENGINE first, then `api` when OPENAI_API_KEY is set, otherwise `browser`. Prefer setting `engine` explicitly to avoid default surprises.",
+            "type": "string"
+          },
+          "models": {
+            "description": "Multi-model fan-out (API engine only). Cannot be combined with browser automation.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "engine": {
+            "description": "Execution engine. `api` uses provider APIs. `browser` uses ChatGPT automation or the local Gemini web client according to the model. Picker labels apply to ChatGPT only. When omitted, Industrious follows CLI defaults: config/ORACLE_ENGINE first, then `api` when OPENAI_API_KEY is set, otherwise `browser`.",
+            "type": "string",
+            "enum": [
+              "api",
+              "browser"
+            ]
+          },
+          "browserModelLabel": {
+            "description": "Browser-only: explicit ChatGPT UI label to select (overrides model mapping). Example: \"GPT-5.2 Thinking\".",
+            "type": "string"
+          },
+          "browserAttachments": {
+            "description": "Browser-only: how to deliver `files`. \"auto\" (default) and \"always\" use real ChatGPT uploads. The \"never\" mode rejects resolved files because inline source cannot be verified.",
+            "type": "string",
+            "enum": [
+              "auto",
+              "never",
+              "always"
+            ]
+          },
+          "browserBundleFiles": {
+            "description": "Browser-only: force one upload bundle; auto/zip includes all resolved files. Multiple text/source uploads already bundle by default (flattened text unless ZIP is selected).",
+            "type": "boolean"
+          },
+          "browserBundleFormat": {
+            "description": "Browser-only: bundle upload format. Defaults to \"auto\", which keeps flattened text for text-only uploads and uses ZIP when raw files are present; \"zip\" forces a byte-preserving archive.",
+            "type": "string",
+            "enum": [
+              "auto",
+              "text",
+              "zip"
+            ]
+          },
+          "browserThinkingTime": {
+            "description": "Browser-only: set ChatGPT thinking time when supported by the chosen model.",
+            "type": "string",
+            "enum": [
+              "light",
+              "standard",
+              "extended",
+              "extra-high",
+              "pro",
+              "heavy",
+              "instant",
+              "low",
+              "medium",
+              "high",
+              "extra high",
+              "extrahigh",
+              "xhigh"
+            ]
+          },
+          "browserFallback": {
+            "description": "Explicit consent to consult grok.com once in a separate Private profile after ChatGPT fails and its bounded read-only recovery expires; the original ChatGPT request is retained for recovery.",
+            "type": "string",
+            "enum": [
+              "grok",
+              "none"
+            ]
+          },
+          "browserModelStrategy": {
+            "description": "Browser-only: model picker strategy. Mirrors the CLI --browser-model-strategy flag.",
+            "type": "string",
+            "enum": [
+              "select",
+              "current",
+              "ignore"
+            ]
+          },
+          "browserResearchMode": {
+            "description": "Browser-only: explicitly select ChatGPT Web Search or Deep Research.",
+            "type": "string",
+            "enum": [
+              "search",
+              "deep"
+            ]
+          },
+          "browserArchive": {
+            "description": "Browser-only: archive completed ChatGPT conversations after local artifacts are saved. \"auto\" archives successful non-project one-shots only.",
+            "type": "string",
+            "enum": [
+              "auto",
+              "always",
+              "never"
+            ]
+          },
+          "browserFollowUps": {
+            "description": "Browser-only: additional prompts to submit sequentially in the same ChatGPT conversation after the initial answer.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "browserKeepBrowser": {
+            "description": "Browser-only: keep Chrome running after completion (useful for debugging).",
+            "type": "boolean"
+          },
+          "generateImage": {
+            "description": "Browser-only: save generated image(s) to this file path. For ChatGPT browser mode this enables the image-aware wait/download path used by CLI --generate-image.",
+            "type": "string"
+          },
+          "outputPath": {
+            "description": "Browser-only image output fallback path, mirroring the CLI --output option for image operations.",
+            "type": "string"
+          },
+          "waitForCompletion": {
+            "description": "When false, start the Industrious run in a detached worker and return its sessionId immediately. Use the wait tool to block for completion without agent-side polling. Defaults to true for compatibility.",
+            "type": "boolean"
+          },
+          "dryRun": {
+            "description": "Preview the resolved Industrious run without creating a session or touching the browser.",
+            "type": "boolean"
+          },
+          "search": {
+            "description": "API-only: enable/disable the provider search tool (browser engine ignores this).",
+            "type": "boolean"
+          },
+          "slug": {
+            "description": "Optional human-friendly session id (used later with `industrious session <id>`).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "prompt"
+        ]
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "output": {
+            "type": "string"
+          },
+          "dryRun": {
+            "type": "boolean"
+          },
+          "resolved": {
+            "type": "object",
+            "properties": {
+              "resolvedEngine": {
+                "type": "string",
+                "enum": [
+                  "api",
+                  "browser"
+                ]
+              },
+              "model": {
+                "type": "string"
+              },
+              "models": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "files": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "followUpCount": {
+                "type": "number"
+              },
+              "browser": {
+                "type": "object",
+                "properties": {
+                  "desiredModel": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "thinkingTime": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "modelStrategy": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "researchMode": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "fallbackProvider": {
+                    "type": "string",
+                    "enum": [
+                      "grok",
+                      "none"
+                    ]
+                  },
+                  "attachments": {
+                    "type": "string"
+                  },
+                  "bundleFiles": {
+                    "type": "boolean"
+                  },
+                  "bundleFormat": {
+                    "type": "string",
+                    "enum": [
+                      "auto",
+                      "text",
+                      "zip"
+                    ]
+                  },
+                  "keepBrowser": {
+                    "type": "boolean"
+                  },
+                  "manualLogin": {
+                    "type": "boolean"
+                  },
+                  "profileDir": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "chatgptUrl": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "imageOutputPath": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              },
+              "guidance": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "resolvedEngine",
+              "model",
+              "files",
+              "followUpCount",
+              "guidance"
+            ],
+            "additionalProperties": false
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "model": {
+                  "type": "string"
+                },
+                "effectiveModel": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "startedAt": {
+                  "type": "string"
+                },
+                "completedAt": {
+                  "type": "string"
+                },
+                "usage": {
+                  "type": "object",
+                  "properties": {
+                    "inputTokens": {
+                      "type": "number"
+                    },
+                    "outputTokens": {
+                      "type": "number"
+                    },
+                    "reasoningTokens": {
+                      "type": "number"
+                    },
+                    "totalTokens": {
+                      "type": "number"
+                    },
+                    "cost": {
+                      "type": "number"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "response": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "error": {
+                  "type": "object",
+                  "properties": {
+                    "category": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "logPath": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "model",
+                "status"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "transcript",
+                    "deep-research-report",
+                    "image",
+                    "file"
+                  ]
+                },
+                "path": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "mimeType": {
+                  "type": "string"
+                },
+                "sizeBytes": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "kind",
+                "path"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "images": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "image"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "mimeType": {
+                  "type": "string"
+                },
+                "sizeBytes": {
+                  "type": "number"
+                },
+                "alt": {
+                  "type": "string"
+                },
+                "width": {
+                  "type": "number"
+                },
+                "height": {
+                  "type": "number"
+                },
+                "fileId": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "path"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string",
+                  "const": "artifact-staging-cleanup-failed"
+                },
+                "severity": {
+                  "type": "string",
+                  "const": "warning"
+                },
+                "message": {
+                  "type": "string",
+                  "const": "Artifact publication succeeded and was verified, but staging cleanup failed; residual staging data may remain."
+                },
+                "details": {
+                  "type": "object",
+                  "properties": {
+                    "artifactKind": {
+                      "type": "string",
+                      "enum": [
+                        "file",
+                        "image"
+                      ]
+                    },
+                    "origin": {
+                      "type": "string",
+                      "enum": [
+                        "local",
+                        "host",
+                        "receiver"
+                      ]
+                    },
+                    "filename": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    }
+                  },
+                  "required": [
+                    "artifactKind",
+                    "origin",
+                    "filename"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "code",
+                "severity",
+                "message",
+                "details"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "browserCleanup": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "type": "string",
+                "const": "pending"
+              },
+              "recoveryRequired": {
+                "type": "boolean",
+                "const": true
+              }
+            },
+            "required": [
+              "state",
+              "recoveryRequired"
+            ],
+            "additionalProperties": false
+          },
+          "detached": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "status",
+          "output"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "chatgpt_image",
+      "title": "Generate an image with ChatGPT",
+      "description": "Agent-friendly wrapper for ChatGPT browser image generation. It selects browser mode, enables the image-aware wait/download path, uploads reference files when provided, and returns saved image paths in structuredContent.images.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Image generation prompt."
+          },
+          "files": {
+            "default": [],
+            "description": "Optional reference image/file paths or globs to upload to ChatGPT.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "outputPath": {
+            "description": "Where to save the first generated image. Defaults to a unique file under ORACLE_HOME_DIR/generated/.",
+            "type": "string"
+          },
+          "aspectRatio": {
+            "description": "Optional requested image aspect ratio, e.g. \"1:1\", \"9:16\", or \"16:9\".",
+            "type": "string"
+          },
+          "model": {
+            "description": "Optional ChatGPT/browser model label or alias. Defaults follow Industrious config.",
+            "type": "string"
+          },
+          "browserModelLabel": {
+            "description": "Explicit ChatGPT UI model label to select.",
+            "type": "string"
+          },
+          "browserAttachments": {
+            "description": "How to deliver files. Defaults to \"always\" when files are present so reference images are uploaded.",
+            "type": "string",
+            "enum": [
+              "auto",
+              "never",
+              "always"
+            ]
+          },
+          "browserThinkingTime": {
+            "description": "Set ChatGPT thinking time when supported by the chosen model.",
+            "type": "string",
+            "enum": [
+              "light",
+              "standard",
+              "extended",
+              "extra-high",
+              "pro",
+              "heavy",
+              "instant",
+              "low",
+              "medium",
+              "high",
+              "extra high",
+              "extrahigh",
+              "xhigh"
+            ]
+          },
+          "browserModelStrategy": {
+            "description": "Model picker strategy. Mirrors the consult tool and CLI browser flag.",
+            "type": "string",
+            "enum": [
+              "select",
+              "current",
+              "ignore"
+            ]
+          },
+          "browserArchive": {
+            "description": "Archive completed ChatGPT conversations after local artifacts are saved.",
+            "type": "string",
+            "enum": [
+              "auto",
+              "always",
+              "never"
+            ]
+          },
+          "browserKeepBrowser": {
+            "description": "Keep Chrome running after completion for debugging.",
+            "type": "boolean"
+          },
+          "dryRun": {
+            "description": "Preview the resolved image run without touching the browser.",
+            "type": "boolean"
+          },
+          "slug": {
+            "description": "Optional human-friendly session id.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "prompt"
+        ]
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "output": {
+            "type": "string"
+          },
+          "dryRun": {
+            "type": "boolean"
+          },
+          "resolved": {
+            "type": "object",
+            "properties": {
+              "resolvedEngine": {
+                "type": "string",
+                "enum": [
+                  "api",
+                  "browser"
+                ]
+              },
+              "model": {
+                "type": "string"
+              },
+              "models": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "files": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "followUpCount": {
+                "type": "number"
+              },
+              "browser": {
+                "type": "object",
+                "properties": {
+                  "desiredModel": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "thinkingTime": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "modelStrategy": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "researchMode": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "attachments": {
+                    "type": "string"
+                  },
+                  "bundleFiles": {
+                    "type": "boolean"
+                  },
+                  "bundleFormat": {
+                    "type": "string",
+                    "enum": [
+                      "auto",
+                      "text",
+                      "zip"
+                    ]
+                  },
+                  "keepBrowser": {
+                    "type": "boolean"
+                  },
+                  "manualLogin": {
+                    "type": "boolean"
+                  },
+                  "profileDir": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "chatgptUrl": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "imageOutputPath": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              },
+              "guidance": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "resolvedEngine",
+              "model",
+              "files",
+              "followUpCount",
+              "guidance"
+            ],
+            "additionalProperties": false
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "model": {
+                  "type": "string"
+                },
+                "effectiveModel": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "startedAt": {
+                  "type": "string"
+                },
+                "completedAt": {
+                  "type": "string"
+                },
+                "usage": {
+                  "type": "object",
+                  "properties": {
+                    "inputTokens": {
+                      "type": "number"
+                    },
+                    "outputTokens": {
+                      "type": "number"
+                    },
+                    "reasoningTokens": {
+                      "type": "number"
+                    },
+                    "totalTokens": {
+                      "type": "number"
+                    },
+                    "cost": {
+                      "type": "number"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "response": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "error": {
+                  "type": "object",
+                  "properties": {
+                    "category": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "logPath": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "model",
+                "status"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "transcript",
+                    "deep-research-report",
+                    "image",
+                    "file"
+                  ]
+                },
+                "path": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "mimeType": {
+                  "type": "string"
+                },
+                "sizeBytes": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "kind",
+                "path"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "images": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "image"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "mimeType": {
+                  "type": "string"
+                },
+                "sizeBytes": {
+                  "type": "number"
+                },
+                "alt": {
+                  "type": "string"
+                },
+                "width": {
+                  "type": "number"
+                },
+                "height": {
+                  "type": "number"
+                },
+                "fileId": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "path"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string",
+                  "const": "artifact-staging-cleanup-failed"
+                },
+                "severity": {
+                  "type": "string",
+                  "const": "warning"
+                },
+                "message": {
+                  "type": "string",
+                  "const": "Artifact publication succeeded and was verified, but staging cleanup failed; residual staging data may remain."
+                },
+                "details": {
+                  "type": "object",
+                  "properties": {
+                    "artifactKind": {
+                      "type": "string",
+                      "enum": [
+                        "file",
+                        "image"
+                      ]
+                    },
+                    "origin": {
+                      "type": "string",
+                      "enum": [
+                        "local",
+                        "host",
+                        "receiver"
+                      ]
+                    },
+                    "filename": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    }
+                  },
+                  "required": [
+                    "artifactKind",
+                    "origin",
+                    "filename"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "code",
+                "severity",
+                "message",
+                "details"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "browserCleanup": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "type": "string",
+                "const": "pending"
+              },
+              "recoveryRequired": {
+                "type": "boolean",
+                "const": true
+              }
+            },
+            "required": [
+              "state",
+              "recoveryRequired"
+            ],
+            "additionalProperties": false
+          },
+          "detached": {
+            "type": "boolean"
+          },
+          "requestedOutputPath": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "output",
+          "requestedOutputPath"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "project_sources",
+      "title": "Manage ChatGPT Project Sources",
+      "description": "List or append files to a ChatGPT Project's persistent Sources tab. This is useful for Developer Mode workflows where chats do not share memory, but explicit project sources provide shared context. Destructive delete/replace/sync operations are intentionally not included in v1.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "list",
+              "add"
+            ],
+            "description": "Project Sources operation. v1 intentionally supports only non-destructive list/add."
+          },
+          "chatgptUrl": {
+            "description": "ChatGPT project URL ending in /project. Falls back to browser.chatgptUrl config.",
+            "type": "string"
+          },
+          "files": {
+            "default": [],
+            "description": "Local file paths or globs to add as persistent ChatGPT Project Sources.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "dryRun": {
+            "description": "Validate files and return an upload plan without touching the browser.",
+            "type": "boolean"
+          },
+          "confirmMutation": {
+            "description": "Required for mutating add operations so agents do not modify project state accidentally.",
+            "type": "boolean"
+          },
+          "browserKeepBrowser": {
+            "description": "Keep Chrome running after completion.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "operation"
+        ]
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "dry-run"
+            ]
+          },
+          "operation": {
+            "type": "string",
+            "enum": [
+              "list",
+              "add"
+            ]
+          },
+          "projectUrl": {
+            "type": "string"
+          },
+          "dryRun": {
+            "type": "boolean"
+          },
+          "sourcesBefore": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "index": {
+                  "type": "number"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "ready",
+                    "processing",
+                    "unknown"
+                  ]
+                }
+              },
+              "required": [
+                "name",
+                "index"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "sourcesAfter": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "index": {
+                  "type": "number"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "ready",
+                    "processing",
+                    "unknown"
+                  ]
+                }
+              },
+              "required": [
+                "name",
+                "index"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "plannedUploads": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "displayPath": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "sizeBytes": {
+                  "type": "number"
+                },
+                "batch": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "path",
+                "displayPath",
+                "name",
+                "batch"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "added": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "index": {
+                  "type": "number"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "ready",
+                    "processing",
+                    "unknown"
+                  ]
+                }
+              },
+              "required": [
+                "name",
+                "index"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tookMs": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "status",
+          "operation",
+          "projectUrl",
+          "dryRun",
+          "warnings",
+          "tookMs"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "sessions",
+      "title": "List or fetch industrious sessions",
+      "description": "Inspect Industrious session history stored under `ORACLE_HOME_DIR` (shared with the CLI). List recent sessions or fetch one by id/slug (optionally including metadata + request + log).",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "id": {
+            "description": "Session id or slug. If set, returns a single session (use detail:true to include metadata/request).",
+            "type": "string",
+            "minLength": 1
+          },
+          "hours": {
+            "description": "Look back this many hours when listing sessions (default: 24).",
+            "type": "number"
+          },
+          "limit": {
+            "description": "Maximum sessions to return when listing (default: 100).",
+            "type": "number"
+          },
+          "includeAll": {
+            "description": "Include sessions outside the time window when listing (mirrors `industrious status --all`).",
+            "type": "boolean"
+          },
+          "detail": {
+            "description": "When id is set, include session metadata + stored request + full log text.",
+            "type": "boolean"
+          }
+        }
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "model": {
+                  "type": "string"
+                },
+                "mode": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "createdAt",
+                "status"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "total": {
+            "type": "number"
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "session": {
+            "type": "object",
+            "properties": {
+              "metadata": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              "log": {
+                "type": "string"
+              },
+              "request": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              }
+            },
+            "required": [
+              "metadata",
+              "log"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "wait",
+      "title": "Wait for a Industrious session",
+      "description": "Wait for an existing Industrious session to reach a terminal state without agent-side polling. Omit timeoutMs to wait indefinitely, or set a bounded caller wait. Wait timeout or request cancellation never cancels the Industrious session; call wait again with the same id to continue waiting.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Industrious session id or slug."
+          },
+          "timeoutMs": {
+            "description": "How long to wait for a terminal session state. Omit to wait indefinitely; 0 returns an immediate snapshot. A wait timeout never cancels the Industrious session.",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "waitStatus": {
+            "type": "string",
+            "enum": [
+              "terminal",
+              "timed_out"
+            ]
+          },
+          "timedOut": {
+            "type": "boolean"
+          },
+          "cancelled": {
+            "type": "boolean"
+          },
+          "output": {
+            "type": "string"
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "model": {
+                  "type": "string"
+                },
+                "effectiveModel": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "startedAt": {
+                  "type": "string"
+                },
+                "completedAt": {
+                  "type": "string"
+                },
+                "usage": {
+                  "type": "object",
+                  "properties": {
+                    "inputTokens": {
+                      "type": "number"
+                    },
+                    "outputTokens": {
+                      "type": "number"
+                    },
+                    "reasoningTokens": {
+                      "type": "number"
+                    },
+                    "totalTokens": {
+                      "type": "number"
+                    },
+                    "cost": {
+                      "type": "number"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "response": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "error": {
+                  "type": "object",
+                  "properties": {
+                    "category": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "logPath": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "model",
+                "status"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "transcript",
+                    "deep-research-report",
+                    "image",
+                    "file"
+                  ]
+                },
+                "path": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "mimeType": {
+                  "type": "string"
+                },
+                "sizeBytes": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "kind",
+                "path"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "images": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "image"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "mimeType": {
+                  "type": "string"
+                },
+                "sizeBytes": {
+                  "type": "number"
+                },
+                "alt": {
+                  "type": "string"
+                },
+                "width": {
+                  "type": "number"
+                },
+                "height": {
+                  "type": "number"
+                },
+                "fileId": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "path"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string",
+                  "const": "artifact-staging-cleanup-failed"
+                },
+                "severity": {
+                  "type": "string",
+                  "const": "warning"
+                },
+                "message": {
+                  "type": "string",
+                  "const": "Artifact publication succeeded and was verified, but staging cleanup failed; residual staging data may remain."
+                },
+                "details": {
+                  "type": "object",
+                  "properties": {
+                    "artifactKind": {
+                      "type": "string",
+                      "enum": [
+                        "file",
+                        "image"
+                      ]
+                    },
+                    "origin": {
+                      "type": "string",
+                      "enum": [
+                        "local",
+                        "host",
+                        "receiver"
+                      ]
+                    },
+                    "filename": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    }
+                  },
+                  "required": [
+                    "artifactKind",
+                    "origin",
+                    "filename"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "code",
+                "severity",
+                "message",
+                "details"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "browserCleanup": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "type": "string",
+                "const": "pending"
+              },
+              "recoveryRequired": {
+                "type": "boolean",
+                "const": true
+              }
+            },
+            "required": [
+              "state",
+              "recoveryRequired"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "sessionId",
+          "status",
+          "waitStatus",
+          "timedOut",
+          "cancelled",
+          "output"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

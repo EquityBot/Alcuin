@@ -1,0 +1,10 @@
+{
+  "resourceTemplates": [
+    {
+      "name": "oracle-session",
+      "uriTemplate": "oracle-session://{id}/{kind}",
+      "title": "industrious session resources",
+      "description": "Read stored session metadata, log, or request payload."
+    }
+  ]
+}

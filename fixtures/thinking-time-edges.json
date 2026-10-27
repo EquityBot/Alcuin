@@ -1,0 +1,50 @@
+[
+  {
+    "input": "_pro",
+    "output": null
+  },
+  {
+    "input": "__pro",
+    "output": null
+  },
+  {
+    "input": "pro_",
+    "output": null
+  },
+  {
+    "input": "pro__",
+    "output": null
+  },
+  {
+    "input": "_extra_high",
+    "output": null
+  },
+  {
+    "input": "extra_high_",
+    "output": null
+  },
+  {
+    "input": "extra__high",
+    "output": "extra-high"
+  },
+  {
+    "input": "extra _ high",
+    "output": "extra-high"
+  },
+  {
+    "input": "extra - high",
+    "output": null
+  },
+  {
+    "input": "extra high",
+    "output": "extra-high"
+  },
+  {
+    "input": "﻿pro﻿",
+    "output": "pro"
+  },
+  {
+    "input": "pro",
+    "output": null
+  }
+]
