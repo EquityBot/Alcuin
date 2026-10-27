@@ -1,0 +1,6 @@
+[build]
+jobs = 4
+
+# Tests run real completions; they must never deliver desktop notifications.
+[env]
+ORACLE_DISABLE_NOTIFICATIONS = "1"

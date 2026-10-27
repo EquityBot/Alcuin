@@ -1,0 +1,2105 @@
+// Ported from the reference implementation's DOM expressions.
+(cfg) => {
+/* alcuin-dom:thinking */
+const assertOracleSubmission = () => { if (!oracleTemporaryChat()) throw Error('Verified Temporary Chat required'); if (window !== window.top) throw Error('Top renderer required');
+    const oracleOwnershipId = value => typeof value === 'string' && value.length > 0 && value.length <= 256;
+    const readOracleTargetClaim = () => {
+      const raw = sessionStorage.getItem('oracle:target-claim');
+      if (raw === null) return null;
+      const claim = JSON.parse(raw);
+      const id = oracleOwnershipId;
+      const object = value => value && typeof value === 'object' && !Array.isArray(value);
+      if (!object(claim) || !id(claim.id) || typeof claim.retiring !== 'boolean') throw new Error('Invalid target ownership record.');
+      if (claim.submission !== undefined && (!object(claim.submission) || !id(claim.submission.id) ||
+          !['active', 'releasing', 'clean', 'quarantined'].includes(claim.submission.state) ||
+          !['not-started', 'started', 'acknowledged', 'ambiguous'].includes(claim.submission.dispatch))) throw new Error('Invalid submission ownership record.');
+      if (claim.inspection !== undefined && (!object(claim.inspection) || !id(claim.inspection.token) ||
+          !id(claim.inspection.rendererId) ||
+          !(claim.inspection.parentReservationId === null || id(claim.inspection.parentReservationId)) ||
+          !['active', 'finalising', 'clean', 'quarantined'].includes(claim.inspection.state))) throw new Error('Invalid inspection ownership record.');
+      return claim;
+    };
+    const writeOracleTargetClaim = claim => sessionStorage.setItem('oracle:target-claim', JSON.stringify(claim));
+    const matchesOracleSubmission = (claim, owner) => claim && !claim.retiring &&
+      claim.id === owner.claimId && claim.submission?.id === owner.reservationId;
+   const claim = readOracleTargetClaim(); if (!matchesOracleSubmission(claim, cfg.owner) || claim.submission.state !== 'active') throw Error('Inactive submission'); }; const oracleSubmissionIsActive = () => { try { assertOracleSubmission(); return true; } catch { return false; } };
+return (async () => {
+    if ((cfg.token ?? null) &&
+        !window.__oraclePickerInspections?.get((cfg.token ?? null))?.active)
+      return { status: 'selection_unknown' };
+    function dispatchClickSequence(target, validate = () => true){
+    if(typeof oracleSubmissionIsActive === 'function' && !oracleSubmissionIsActive()) return false;
+    if(!target || !(target instanceof EventTarget)) return false;
+    const types = ['pointerdown','mousedown','pointerup','mouseup','click'];
+    for (const type of types) {
+      if(typeof oracleSubmissionIsActive === 'function' && !oracleSubmissionIsActive()) return false;
+      if(!validate()) return false;
+      const common = { bubbles: true, cancelable: true, view: window };
+      let event;
+      if (type.startsWith('pointer') && 'PointerEvent' in window) {
+        event = new PointerEvent(type, { ...common, pointerId: 1, pointerType: 'mouse' });
+      } else {
+        event = new MouseEvent(type, common);
+      }
+      target.dispatchEvent(event);
+    }
+    return true;
+  }
+
+    const MENU_CONTAINER_SELECTOR = '[role="menu"], [data-radix-collection-root]';
+    const MENU_ITEM_SELECTOR = 'button, [role="menuitem"], [role="menuitemradio"], [data-testid*="model-switcher-"]';
+    const MODEL_BUTTON_SELECTOR = cfg.modelButtonSelector;
+    const TARGET_LEVEL = cfg.level;
+    const INSPECTION_ONLY = cfg.inspectionOnly;
+    const INSPECTION_EVIDENCE = cfg.inspectionEvidence;
+    const TARGET_MODEL_KIND = null;
+    const TARGET_IS_GPT56_MODEL = false;
+    const TARGET_IS_ASTRA_LATEST = true;
+    const OWNED_SELECTION = !INSPECTION_ONLY && true;
+    let ownedInspection = null;
+
+    // Multilingual matchers: English level token + observed localized variants.
+    const LEVEL_TOKENS = {
+      light: ['light', 'instant', 'sofort', 'leicht', '最速', '轻', '极速', '즉시'],
+      standard: ['standard', 'medium', 'mittel', '中程度', '标准', '中', '중간'],
+      extended: ['extended', 'high', 'hoch', 'erweitert', '高い', '扩展', '深度', '加强', '高', '높음'],
+      'extra-high': ['extra high', 'sehr hoch', '非常に高い', '極高', '极高', '매우 높음'],
+      heavy: ['heavy', 'schwer', '重度', '加重'],
+    };
+    // Pro is a tier you can request, but it is also a MODEL name, so it must never
+    // be used to decide whether a control or a menu is an effort owner: a model pill
+    // reading "Pro" would be claimed as the effort pill, and a model menu listing
+    // "Instant"/"Pro" would look like a tier list. Keep it to target matching only.
+    const TARGET_LEVEL_TOKENS = { ...LEVEL_TOKENS, pro: ['pro'] };
+    const targetTokens = TARGET_LEVEL_TOKENS[TARGET_LEVEL] || [TARGET_LEVEL];
+    const normalizeAstraLabel = (value) =>
+      String(value ?? '')
+        .normalize('NFC')
+        .toLowerCase()
+        .split(String.fromCharCode(9)).join(' ')
+        .split(String.fromCharCode(10)).join(' ')
+        .split(String.fromCharCode(13)).join(' ')
+        .split(String.fromCharCode(12)).join(' ')
+        .split(' ').filter(Boolean).join(' ');
+    const isAstraLatestEffortPill = (label) =>
+      TARGET_IS_ASTRA_LATEST &&
+      Object.values(TARGET_LEVEL_TOKENS).some((tokens) =>
+        tokens.some((token) => {
+          // Do not use the generic matcher here: ownership needs an exact
+          // version prefix plus a known localized tier, not token containment.
+          const tier = normalizeAstraLabel(token);
+          const observed = normalizeAstraLabel(label);
+          return observed === '6 ' + tier || observed === '6' + tier;
+        }),
+      );
+    const isSolModelPillForLatest = (label) =>
+      TARGET_IS_ASTRA_LATEST &&
+      ['5.6 pro', '5.6pro', '5 6 pro'].includes(normalizeAstraLabel(label));
+
+    const INITIAL_WAIT_MS = 150;
+    const STEP_WAIT_MS = 200;
+    const MAX_WAIT_MS = 8000;
+    // The "Intelligence" menu renders right after opening the composer pill, so
+    // a short probe is enough; if it's absent this is an older UI and we fall
+    // back to the legacy paths without paying the full MAX_WAIT_MS.
+    const INTELLIGENCE_WAIT_MS = 2500;
+
+    const sleep = async (ms) => {
+      if (ownedInspection) await ownedInspection.sleep(ms);
+      else await new Promise((r) => setTimeout(r, ms));
+      if (ownedInspection && !ownedInspection.active) throw new Error('Alcuin effort selection inspection is inactive.');
+      if (typeof oracleSubmissionIsActive === 'function' && !oracleSubmissionIsActive()) throw new Error('Alcuin effort selection ownership is inactive.');
+    };
+    // Keep CJK characters, including Japanese kana and Hangul, so labels survive
+    // normalization before being matched against LEVEL_TOKENS and picker controls.
+    const normalize = (value) => (value || '')
+      // Compose first so NFD umlauts fold too, then map them onto ASCII before
+      // the strip below would drop them (and split the token in half).
+      .normalize('NFC')
+      .toLowerCase()
+      .replace(/ä/g, 'a')
+      .replace(/ö/g, 'o')
+      .replace(/ü/g, 'u')
+      .replace(/ß/g, 'ss')
+      .replace(/[^a-z0-9\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7af]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const hasToken = (text, token) => normalize(text).split(' ').includes(token);
+    // Whole-word/phrase containment. Latin effort labels are short words that also
+    // occur inside unrelated UI text ("Hochladen", "Ermitteln") and inside their own
+    // row descriptions ("Hoch – für sehr komplexe Aufgaben"), so plain substring
+    // matching misclassifies rows. CJK labels have no word separators, so they keep
+    // substring semantics.
+    const hasPhrase = (text, phrase) => {
+      const haystack = ' ' + normalize(text) + ' ';
+      const needle = normalize(phrase);
+      if (!needle) return false;
+      return /^[a-z0-9 ]+$/.test(needle)
+        ? haystack.includes(' ' + needle + ' ')
+        : haystack.includes(needle);
+    };
+    // ChatGPT's Pro effort tiers are "Pro Extended"/"Pro Erweitert" per UI language.
+    const hasExtendedWord = (text) => hasPhrase(text, 'extended') || hasPhrase(text, 'erweitert');
+    const matchesTokens = (text, tokens) => {
+      const t = normalize(text);
+      if (!t) return false;
+      return tokens.some((tok) => {
+        const token = normalize(tok);
+        if (!token) return false;
+        if (token === 'high') return hasPhrase(t, 'high') && !hasPhrase(t, 'extra high');
+        if (token === 'extra high') return hasPhrase(t, 'extra high');
+        if (token === 'hoch') return hasPhrase(t, 'hoch') && !hasPhrase(t, 'sehr hoch');
+        if (token === 'sehr hoch') return hasPhrase(t, 'sehr hoch');
+        if (token === '높음') return hasPhrase(t, '높음') && !hasPhrase(t, '매우 높음');
+        if (token === '매우 높음') return hasPhrase(t, '매우 높음');
+        if (token === '高い' || token === '非常に高い') {
+          return t === token || hasToken(t, token);
+        }
+        if (token === '极速') {
+          const suffix = t.slice(token.length);
+          return t === token || hasToken(t, token) || /^[0-9]/.test(suffix);
+        }
+        if (['中', '高', '极高'].includes(token)) {
+          return t === token || hasToken(t, token);
+        }
+        if (/^[a-z0-9 ]+$/.test(token)) {
+          return hasPhrase(t, token);
+        }
+        return t === token || hasToken(t, token) || t.includes(token);
+      });
+    };
+    const matchesLevel = (text) => matchesTokens(text, targetTokens);
+    const matchesAnyEffortLevel = (text) =>
+      Object.values(LEVEL_TOKENS).some((tokens) => matchesTokens(text, tokens));
+    const optionIsSelected = (node) => {
+      if (!(node instanceof HTMLElement)) return false;
+      const ariaChecked = node.getAttribute('aria-checked');
+      const ariaSelected = node.getAttribute('aria-selected');
+      const ariaCurrent = node.getAttribute('aria-current');
+      const dataSelected = node.getAttribute('data-selected');
+      const dataState = (node.getAttribute('data-state') || '').toLowerCase();
+      if (ariaChecked === 'true' || ariaSelected === 'true' || ariaCurrent === 'true') return true;
+      return (
+        dataSelected === 'true' ||
+        dataState === 'checked' ||
+        dataState === 'selected' ||
+        dataState === 'on' ||
+        dataState === 'true'
+      );
+    };
+    const closeOpenMenus = () => {
+      if (ownedInspection) return;
+      try {
+        document.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true }),
+        );
+      } catch {}
+    };
+    const dispatchHoverSequence = (target, mayHover = () => true, focusOnHover = true) => {
+      if (!target || !(target instanceof EventTarget)) return false;
+      const types = ['pointerover', 'pointerenter', 'mouseover', 'mouseenter', 'pointermove', 'mousemove'];
+      for (const type of types) {
+        if (!mayHover() || (typeof oracleSubmissionIsActive === 'function' && !oracleSubmissionIsActive())) return false;
+        try {
+          const common = { bubbles: true, cancelable: true, view: window };
+          const event =
+            type.startsWith('pointer') && 'PointerEvent' in window
+              ? new PointerEvent(type, { ...common, pointerId: 1, pointerType: 'mouse' })
+              : new MouseEvent(type, common);
+          target.dispatchEvent(event);
+        } catch {}
+      }
+      if (focusOnHover && mayHover()) {
+        try {
+          target.focus?.();
+        } catch {}
+      }
+      return true;
+    };
+
+    const TRAILING_SELECTOR = '[data-model-picker-thinking-effort-action="true"]';
+    const INTELLIGENCE_MENU_SELECTOR = '[data-testid="composer-intelligence-picker-content"]';
+    const PRO_EFFORT_TRIGGER_SELECTOR = '[data-testid="composer-intelligence-pro-thinking-effort-trigger"]';
+
+    const findModelButton = () => {
+      if (!OWNED_SELECTION) return document.querySelector(MODEL_BUTTON_SELECTOR);
+      const triggers = [...new Set(Array.from(document.querySelectorAll(MODEL_BUTTON_SELECTOR)))].filter(node =>
+        isVisible(node) && !node.closest?.('[role="menu"], [data-radix-collection-root]'));
+      return triggers.length === 1 ? triggers[0] : null;
+    };
+    const findTrailingButtons = () => Array.from(document.querySelectorAll(TRAILING_SELECTOR));
+    const KIND_NOT_FOUND = { kindNotFound: true };
+
+    const isVisible = (node) => {
+      if (!node || node.getAttribute?.('aria-hidden') === 'true') return false;
+      const rect = node.getBoundingClientRect?.();
+      const style = window.getComputedStyle?.(node);
+      return Boolean(rect && rect.width > 0 && rect.height > 0 && style?.display !== 'none' && style?.visibility !== 'hidden');
+    };
+    const redactDiagnosticText = (value, maxLength = 120) =>
+      String(value ?? '')
+        .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[redacted-email]')
+        .replace(/\b[A-Za-z0-9_-]{32,}\b/g, '[redacted]')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, maxLength);
+    const isOptionDisabled = (node) => {
+      if (!node || typeof node.getAttribute !== 'function') return false;
+      // data-disabled is Radix's valueless-presence convention, but an explicit
+      // "false" must not read as disabled: that would refuse a perfectly usable
+      // tier and report it as unavailable.
+      const dataDisabled = node.getAttribute('data-disabled');
+      const dataDisabledOn = dataDisabled !== null && String(dataDisabled).toLowerCase() !== 'false';
+      return (
+        node.getAttribute('aria-disabled') === 'true' ||
+        dataDisabledOn ||
+        (node.getAttribute('data-state') || '').toLowerCase() === 'disabled' ||
+        Boolean(node.disabled) ||
+        node.getAttribute('disabled') !== null
+      );
+    };
+    const describeNode = (el) => {
+      if (!el || typeof el.getAttribute !== 'function') return null;
+      let rect = null;
+      try {
+        const r = el.getBoundingClientRect?.();
+        if (r) {
+          rect = {
+            w: Math.round(r.width),
+            h: Math.round(r.height),
+            visible: r.width > 0 && r.height > 0,
+          };
+        }
+      } catch {}
+      return {
+        tag: el.tagName || null,
+        testid: el.getAttribute('data-testid'),
+        role: el.getAttribute('role'),
+        ariaLabel: redactDiagnosticText(el.getAttribute('aria-label')),
+        ariaExpanded: el.getAttribute('aria-expanded'),
+        ariaChecked: el.getAttribute('aria-checked'),
+        ariaSelected: el.getAttribute('aria-selected'),
+        ariaHaspopup: el.getAttribute('aria-haspopup'),
+        ariaDisabled: el.getAttribute('aria-disabled'),
+        dataDisabled: el.getAttribute('data-disabled'),
+        dataState: el.getAttribute('data-state'),
+        disabled: isOptionDisabled(el),
+        text: redactDiagnosticText(el.textContent, 80),
+        rect,
+      };
+    };
+    const describeMenu = (menu) => {
+      if (!menu || typeof menu.querySelectorAll !== 'function') return null;
+      const items = Array.from(
+        menu.querySelectorAll('[role="menuitem"], [role="menuitemradio"], [role="option"], button, [data-testid]'),
+      )
+        .slice(0, 30)
+        .map(describeNode);
+      return {
+        role: menu.getAttribute?.('role') ?? null,
+        testid: menu.getAttribute?.('data-testid') ?? null,
+        itemCount: items.length,
+        items,
+      };
+    };
+    const collectPickerDiagnostic = () => {
+      try {
+        const trailings = findTrailingButtons();
+        const switchers = Array.from(document.querySelectorAll('[data-testid*="model-switcher"]'));
+        const composerButtons = Array.from(
+          document.querySelectorAll(
+            'form button[aria-haspopup="menu"], [data-testid="model-switcher-dropdown-button"]',
+          ),
+        );
+        const menus = Array.from(document.querySelectorAll(MENU_CONTAINER_SELECTOR)).filter(
+          isVisible,
+        );
+        const modelBtn = findModelButton();
+        return {
+          targetModelKind: TARGET_MODEL_KIND,
+          targetLevel: TARGET_LEVEL,
+          modelButton: describeNode(modelBtn),
+          composerButtons: composerButtons.slice(0, 12).map(describeNode),
+          trailingCount: trailings.length,
+          trailings: trailings.slice(0, 12).map(describeNode),
+          modelSwitcherCount: switchers.length,
+          modelSwitcher: switchers.slice(0, 12).map(describeNode),
+          menuCount: menus.length,
+          menus: menus.slice(0, 4).map(describeMenu),
+        };
+      } catch (err) {
+        return { error: redactDiagnosticText(err && err.message ? err.message : err) };
+      }
+    };
+    const modelKindFromNode = (button) => {
+      const label = normalize(
+        (button?.textContent ?? '') + ' ' + (button?.getAttribute?.('aria-label') ?? ''),
+      );
+      if (hasToken(label, 'pro')) return 'pro';
+      if (hasToken(label, 'thinking')) return 'thinking';
+      if (hasToken(label, 'instant')) return 'instant';
+      return null;
+    };
+    const currentModelKind = () => modelKindFromNode(findModelButton());
+    const effectiveTargetModelKind = () => TARGET_MODEL_KIND || currentModelKind();
+    const isIntelligenceEffortMenu = (menu) => {
+      if (menu?.getAttribute?.('data-testid') === 'composer-intelligence-picker-content') {
+        return true;
+      }
+      if (menu?.querySelector?.(INTELLIGENCE_MENU_SELECTOR)) {
+        return true;
+      }
+      const label = menu?.querySelector?.('.__menu-label, [class*="menu-label"]');
+      // 'intelligen' matches both "Intelligence" and German "Intelligenz".
+      return normalize(label?.textContent ?? '').includes('intelligen');
+    };
+    const failure = (status, extra = {}, diagnosticExtra = {}) => ({
+      status,
+      modelKind: effectiveTargetModelKind(),
+      ...extra,
+      diagnostic: { ...collectPickerDiagnostic(), ...diagnosticExtra },
+    });
+    const findOptionInMenu = (menu, modelKindOverride = null, candidates = null) => {
+      // Container controls reveal other controls; they are not tiers you can pick.
+      // Two shapes exist and both can collide with a tier label: a submenu opener
+      // ("ModelGPT-5.6 Pro" would satisfy a Pro request) and a disclosure toggle
+      // (German "Erweitert" is literally one of the extended tokens, so the
+      // Advanced toggle would satisfy an extended request and be clicked in place
+      // of the tier). Detect them structurally rather than by label: a real tier row
+      // carries a checked state, while a container carries expansion state.
+      const isContainerControl = (node) =>
+        node?.getAttribute?.('aria-haspopup') === 'menu' ||
+        (node?.getAttribute?.('aria-expanded') !== null &&
+          node?.getAttribute?.('aria-checked') === null);
+      const items = (candidates || Array.from(menu.querySelectorAll(MENU_ITEM_SELECTOR))).filter(
+        (item) => !isContainerControl(item),
+      );
+      const modelKind = modelKindOverride || effectiveTargetModelKind();
+      if (modelKind === 'pro') {
+        // GPT-5.6's unified Intelligence picker exposes Pro as the highest
+        // effort radio directly. It no longer has a nested "Pro Extended"
+        // row, so preserve the legacy request semantics by selecting Pro.
+        if (
+          TARGET_LEVEL === 'extended' &&
+          isIntelligenceEffortMenu(menu) &&
+          !document.querySelector(PRO_EFFORT_TRIGGER_SELECTOR)
+        ) {
+          for (const item of items) {
+            const itemText = normalize(
+              (item.textContent ?? '') + ' ' + (item.getAttribute?.('aria-label') ?? ''),
+            );
+            if (itemText === 'pro') return item;
+          }
+        }
+        for (const item of items) {
+          const itemText = normalize(
+            (item.textContent ?? '') + ' ' + (item.getAttribute?.('aria-label') ?? ''),
+          );
+          if (
+            hasToken(itemText, 'pro') &&
+            (matchesLevel(item.textContent ?? '') ||
+              matchesLevel(item.getAttribute?.('aria-label') ?? ''))
+          ) {
+            return item;
+          }
+        }
+        if (isIntelligenceEffortMenu(menu)) {
+          return null;
+        }
+      }
+      // Generic effort-label match for every model/level. GPT-5.6 heavy used to
+      // short-circuit to the Pro row before reaching here; it no longer does, so
+      // a UI without a matching tier (e.g. German, which has no "heavy") falls
+      // through to null and the caller keeps the current selection.
+      for (const item of items) {
+        const itemText = normalize(
+          (item.textContent ?? '') + ' ' + (item.getAttribute?.('aria-label') ?? ''),
+        );
+        // Pro rows are skipped for non-Pro targets so "High" never resolves to
+        // "Pro". Two things lift this: an explicit TARGET_LEVEL of 'pro', and a
+        // legacy Pro-model menu (modelKind === 'pro'), whose rows are all Pro
+        // variants so excluding them would leave nothing to match.
+        if (TARGET_LEVEL !== 'pro' && modelKind !== 'pro' && hasToken(itemText, 'pro')) {
+          continue;
+        }
+        if (
+          matchesLevel(item.textContent ?? '') ||
+          matchesLevel(item.getAttribute?.('aria-label') ?? '')
+        ) {
+          return item;
+        }
+      }
+      if (TARGET_LEVEL === 'extra-high') {
+        // Older Chinese layouts used bare 高 for the highest non-Pro effort.
+        // Keep it only as a second-pass exact fallback so a current 高 row can
+        // never win before the primary 极高 row.
+        for (const item of items) {
+          const itemText = normalize(item.textContent ?? '');
+          const ariaLabel = normalize(item.getAttribute?.('aria-label') ?? '');
+          if (itemText === '高' || ariaLabel === '高') return item;
+        }
+      }
+      return null;
+    };
+    // Menu-shape heuristic only. This reads the whole menu's textContent, where
+    // adjacent row labels concatenate without a separator ("Pro StandardPro
+    // Extended"), so word-boundary matching does not apply here — substring is
+    // deliberate. Row-level classification uses matchesLevel/matchesTokens.
+    const countEffortLevels = (menu) => {
+      const text = normalize(menu?.textContent ?? '');
+      let hits = 0;
+      for (const tokens of Object.values(LEVEL_TOKENS)) {
+        if (tokens.some((token) => text.includes(normalize(token)))) hits += 1;
+      }
+      return hits;
+    };
+    const isEffortMenu = (menu) => {
+      if (!isVisible(menu)) return false;
+      if (menu.getAttribute?.('data-testid') === 'composer-intelligence-picker-content') return true;
+      if (menu.querySelector?.(INTELLIGENCE_MENU_SELECTOR)) return true;
+      // The current picker owns both its model radios and its power slider in one
+      // Radix menu. Tie it to the actual composer trigger before treating it as
+      // an effort control, so another open menu cannot satisfy a Pro request.
+      if (
+        Boolean(findModelButton()?.id) &&
+        menu.getAttribute?.('aria-labelledby') === findModelButton()?.id &&
+        menu.querySelector?.('[data-reasoning-slider]')
+      ) return true;
+      const label = menu.querySelector?.('.__menu-label, [class*="menu-label"]');
+      const labelText = normalize(label?.textContent ?? '');
+      return (
+        labelText.includes('intelligen') ||
+        labelText.includes('thinking time') ||
+        labelText.includes('thinking effort') ||
+        labelText.includes('denkdauer') ||
+        labelText.includes('denkzeit') ||
+        countEffortLevels(menu) >= 2
+      );
+    };
+    const isProEffortMenu = (menu) => {
+      if (!isVisible(menu)) return false;
+      const text = normalize(menu?.textContent ?? '');
+      // Aggregate menu text, so plain substring only (see countEffortLevels).
+      return (
+        text.includes('pro standard') &&
+        (text.includes('pro extended') || text.includes('pro erweitert'))
+      );
+    };
+    const controlledMenu = (trigger) => {
+      const id = trigger?.getAttribute?.('aria-controls');
+      if (!id) return null;
+      const menu = document.getElementById?.(id);
+      return isEffortMenu(menu) ? menu : null;
+    };
+    const findVisibleEffortMenu = (trigger) => {
+      const controlled = controlledMenu(trigger);
+      if (controlled) return controlled;
+      for (const menu of document.querySelectorAll(MENU_CONTAINER_SELECTOR)) {
+        if (isEffortMenu(menu)) return menu;
+      }
+      return null;
+    };
+    const controlledProEffortMenu = (trigger) => {
+      const id = trigger?.getAttribute?.('aria-controls');
+      if (!id) return null;
+      const menu = document.getElementById?.(id);
+      return isProEffortMenu(menu) ? menu : null;
+    };
+    const findVisibleProEffortMenu = (trigger) => {
+      const controlled = controlledProEffortMenu(trigger);
+      if (controlled) return controlled;
+      for (const menu of document.querySelectorAll(MENU_CONTAINER_SELECTOR)) {
+        if (isProEffortMenu(menu)) return menu;
+      }
+      return null;
+    };
+    const matchesProEffortLevel = (node) => {
+      const text = normalize(
+        (node?.textContent ?? '') + ' ' + (node?.getAttribute?.('aria-label') ?? ''),
+      );
+      if (TARGET_LEVEL === 'standard') {
+        return hasPhrase(text, 'pro') && hasPhrase(text, 'standard');
+      }
+      if (TARGET_LEVEL === 'extended') {
+        return hasPhrase(text, 'pro') && hasExtendedWord(text);
+      }
+      return false;
+    };
+    const findProEffortOptionInMenu = (menu) => {
+      for (const item of menu.querySelectorAll(MENU_ITEM_SELECTOR)) {
+        if (matchesProEffortLevel(item)) return item;
+      }
+      return null;
+    };
+    const freshComposerTrigger = (trigger) => {
+      if (!trigger?.matches?.('button.__composer-pill')) return null;
+      // React can replace the composer pill after an effort click. Keep using
+      // the captured node while it is live, but re-query once it is detached so
+      // verification does not read its stale pre-click label.
+      if (trigger.isConnected !== false) return trigger;
+      return findComposerEffortPill() || findModelButton() || trigger;
+    };
+    const currentProEffortPillMatchesTarget = (trigger, modelKindOverride = null) => {
+      const button = freshComposerTrigger(trigger) || findModelButton();
+      if ((modelKindOverride || TARGET_MODEL_KIND || modelKindFromNode(button)) !== 'pro') {
+        return false;
+      }
+      const label = normalize(button?.textContent ?? '');
+      if (TARGET_LEVEL === 'standard') {
+        return hasToken(label, 'pro') && !hasExtendedWord(label);
+      }
+      if (TARGET_LEVEL === 'extended') {
+        return hasToken(label, 'pro') && hasExtendedWord(label);
+      }
+      return false;
+    };
+    const currentEffortPillMatchesTarget = (trigger, modelKindOverride = null) => {
+      if (currentProEffortPillMatchesTarget(trigger, modelKindOverride)) return true;
+      const button = freshComposerTrigger(trigger) || findModelButton();
+      const normalizedLabel = normalize(
+        (button?.textContent ?? '') + ' ' + (button?.getAttribute?.('aria-label') ?? ''),
+      );
+      // No 5.6-heavy "a Pro pill counts as heavy" shortcut here: that would also
+      // make post-click verification pass on an unchanged Pro pill. selectAndVerify
+      // handles the already-on-Pro case explicitly before any click.
+      if ((modelKindOverride || TARGET_MODEL_KIND || modelKindFromNode(button)) === 'pro') {
+        return false;
+      }
+      return matchesLevel(normalizedLabel);
+    };
+    const nonEmptyNotice = (value) => {
+      const text = redactDiagnosticText(value, 160);
+      return text || null;
+    };
+    // The notice must be ROW-OWNED, and preferably this hover's own.
+    //
+    // NOTE: no backticks in this comment — it lives inside the injected template
+    // literal, where a backtick would terminate the string.
+    //
+    // A document-wide role=tooltip scan is what this must never become: novelty is
+    // not causality, and an unrelated control with an armed open-delay can mount its
+    // tooltip inside this hover's window. Every pass below is anchored on the row.
+    //
+    // Preference order, strongest provenance first:
+    //   1. an id this hover ADDED whose target is role=tooltip — Radix keeps an
+    //      application-supplied description and APPENDS its tooltip id when opening,
+    //      so the delta is what separates the real notice from a permanent blurb;
+    //   2. any other id this hover added;
+    //   3. an already-associated role=tooltip target, for a tooltip that was open
+    //      before the probe arrived;
+    //   4. the row's static title, only once the poll has expired.
+    //
+    // Passes 3 and 4 are row-owned but NOT causal: a page that permanently points a
+    // disabled row at generic role=tooltip help, or gives it a generic title, will
+    // have that text reported. That is accepted deliberately — the value is an opaque
+    // notice for a human or a caller to interpret, not a parsed reset time — and the
+    // verified live target has neither at rest.
+    const describedIds = (option) =>
+      (option?.getAttribute?.('aria-describedby') || '').split(/\s+/).filter(Boolean);
+    const isTooltipNode = (node) => node?.getAttribute?.('role') === 'tooltip';
+    const readDisabledNotice = (option, priorIds, allowTitle) => {
+      const ids = describedIds(option);
+      const prior = priorIds instanceof Set ? priorIds : new Set();
+      const fresh = ids.filter((id) => !prior.has(id));
+      for (const pass of [
+        fresh.filter((id) => isTooltipNode(document.getElementById?.(id))),
+        fresh,
+        ids.filter((id) => isTooltipNode(document.getElementById?.(id))),
+      ]) {
+        for (const id of pass) {
+          const notice = nonEmptyNotice(document.getElementById?.(id)?.textContent);
+          if (notice) return notice;
+        }
+      }
+      if (!allowTitle) return null;
+      return nonEmptyNotice(option?.getAttribute?.('title'));
+    };
+    const waitForDisabledNotice = async (option, priorIds) => {
+      const deadline = performance.now() + 400;
+      while (performance.now() < deadline) {
+        const notice = readDisabledNotice(option, priorIds, false);
+        if (notice) return notice;
+        await sleep(50);
+      }
+      // Only now may a static title speak: the association had its full window.
+      return readDisabledNotice(option, priorIds, true);
+    };
+    // Opening a tooltip stacks another Radix dismissable layer over the menu, and
+    // the topmost layer eats the Escape. One blind Escape therefore leaves the
+    // effort menu open, which matters for the non-strict caller that goes on to
+    // submit. Dismiss, let the layer unmount, and only Escape again while a menu is
+    // still there — never two unconditional Escapes, which could close an unrelated
+    // outer surface.
+    const closeMenusAfterTooltip = async () => {
+      closeOpenMenus();
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        await sleep(50);
+        if (!Array.from(document.querySelectorAll(MENU_CONTAINER_SELECTOR)).some(isVisible)) return;
+        closeOpenMenus();
+      }
+    };
+    const selectAndVerify = async (trigger, findOption, modelKindOverride = null) => {
+      const triggerModelKind =
+        modelKindOverride ||
+        TARGET_MODEL_KIND ||
+        modelKindFromNode(trigger) ||
+        effectiveTargetModelKind();
+      const option = findOption();
+      if (!option && TARGET_IS_GPT56_MODEL && TARGET_LEVEL === 'heavy') {
+        // GPT-5.6 has no "heavy" tier: Pro is the closest thing. Accept a pill that
+        // is already on Pro as satisfying the request, but never click Pro to get
+        // there, and never let this stand in for post-click verification.
+        const pill = freshComposerTrigger(trigger) || findModelButton();
+        const pillLabel = normalize(
+          (pill?.textContent ?? '') + ' ' + (pill?.getAttribute?.('aria-label') ?? ''),
+        );
+        if (
+          hasToken(pillLabel, 'pro') ||
+          currentEffortPillMatchesTarget(trigger, triggerModelKind)
+        ) {
+          closeOpenMenus();
+          return { status: 'already-selected', label: trigger.textContent?.trim?.() || null };
+        }
+      }
+      if (!option) return failure('option-not-found', { modelKind: triggerModelKind });
+      const label = option.textContent?.trim?.() || null;
+      if (isOptionDisabled(option)) {
+        // Captured BEFORE the hover: the ids already here describe the row for other
+        // reasons and cannot be this hover's reason.
+        const priorIds = new Set(describedIds(option));
+        dispatchHoverSequence(option);
+        const notice = await waitForDisabledNotice(option, priorIds);
+        const result = failure('option-disabled', {
+          // The label is page text that reaches logs and diagnostics, so it is
+          // redacted like every other reported string.
+          label: redactDiagnosticText(option.textContent, 80) || null,
+          notice,
+          modelKind: triggerModelKind,
+        });
+        await closeMenusAfterTooltip();
+        return result;
+      }
+      if (optionIsSelected(option)) {
+        closeOpenMenus();
+        return { status: 'already-selected', label };
+      }
+
+      dispatchClickSequence(option);
+      await sleep(STEP_WAIT_MS);
+      const refreshed = findOption();
+      if (refreshed && optionIsSelected(refreshed)) {
+        closeOpenMenus();
+        return { status: 'switched', label: refreshed.textContent?.trim?.() || label };
+      }
+      if (currentEffortPillMatchesTarget(trigger, triggerModelKind)) {
+        closeOpenMenus();
+        return { status: 'switched', label };
+      }
+
+      const reopenTrigger = freshComposerTrigger(trigger) || trigger;
+      if (!refreshed && reopenTrigger?.getAttribute?.('aria-expanded') !== 'true') {
+        dispatchClickSequence(reopenTrigger);
+        await sleep(INITIAL_WAIT_MS);
+      }
+      const deadline = performance.now() + 2000;
+      while (performance.now() < deadline) {
+        const selected = findOption();
+        if (selected && optionIsSelected(selected)) {
+          closeOpenMenus();
+          return { status: 'switched', label: selected.textContent?.trim?.() || label };
+        }
+        if (currentEffortPillMatchesTarget(trigger, triggerModelKind)) {
+          closeOpenMenus();
+          return { status: 'switched', label };
+        }
+        await sleep(100);
+      }
+      const result = failure('selection-unverified', { modelKind: triggerModelKind });
+      closeOpenMenus();
+      return result;
+    };
+    const selectProEffortFromSubmenu = async () => {
+      if (TARGET_MODEL_KIND !== 'pro' || (TARGET_LEVEL !== 'standard' && TARGET_LEVEL !== 'extended')) {
+        return null;
+      }
+      const trigger = document.querySelector(PRO_EFFORT_TRIGGER_SELECTOR);
+      if (!trigger) {
+        return null;
+      }
+      dispatchHoverSequence(trigger);
+      if (trigger.getAttribute?.('aria-expanded') !== 'true') {
+        dispatchClickSequence(trigger);
+      }
+      const deadline = performance.now() + MAX_WAIT_MS;
+      while (performance.now() < deadline) {
+        const menu = findVisibleProEffortMenu(trigger);
+        if (menu) {
+          return selectAndVerify(trigger, () => {
+            const currentMenu = findVisibleProEffortMenu(trigger);
+            return currentMenu ? findProEffortOptionInMenu(currentMenu) : null;
+          });
+        }
+        await sleep(100);
+      }
+      return null;
+    };
+
+    // ---------- Unified Intelligence picker: Advanced -> Effort submenu ----------
+    // A newer ChatGPT layout replaces the flat effort rows with a "power" slider
+    // (simple view) plus an "Advanced" view holding two submenu openers: Model and
+    // Effort. The tier rows only exist inside the Effort submenu, so the flat scan
+    // of the top-level menu finds nothing and we must expand and descend.
+    const ADVANCED_VIEW_SELECTOR = '[data-testid="composer-model-picker-slider-advanced-view"]';
+    const SUBMENU_OPENER_SELECTOR = '[role="menuitem"][aria-haspopup="menu"]';
+    const nodeLabel = (node) =>
+      normalize((node?.getAttribute?.('aria-label') ?? '') + ' ' + (node?.textContent ?? ''));
+    // Row labels in this menu concatenate without separators ("EffortHigh"), so
+    // token matching cannot be used here — substring is deliberate, as in
+    // countEffortLevels above.
+    const ADVANCED_WORDS = [
+      'advanced', 'erweitert', '高级', '詳細設定', '詳細表示', '고급',
+      'avanzado', 'avancado', 'avance',
+    ];
+    const EFFORT_WORDS = [
+      'effort', 'aufwand', '强度', '努力', '推論レベル', '思考量', '추론 수준',
+      'esfuerzo', 'esforco', 'sforzo', 'inspanning', 'wysilek',
+    ];
+    const containsAny = (label, words) => words.some((word) => label.includes(word));
+    const findAdvancedToggle = (menu) => {
+      for (const item of (menu || document).querySelectorAll('[role="menuitem"]')) {
+        if (!isVisible(item)) continue;
+        if (containsAny(nodeLabel(item), ADVANCED_WORDS)) return item;
+      }
+      return null;
+    };
+    // Verify the shape rather than trusting the selector: a tier row must never be
+    // mistaken for the opener, or hovering it would silently change the effort.
+    const isSubmenuOpener = (node) =>
+      node?.getAttribute?.('aria-haspopup') === 'menu' &&
+      (node?.getAttribute?.('role') ?? '') === 'menuitem';
+    // The Effort opener's label is the word "Effort" plus the tier it currently sits
+    // on ("EffortHigh"). Positive identification only: the sibling Model opener has
+    // the identical shape and can read "ModelGPT-5.6 Pro", so guessing from tier
+    // words would pick it and then click model rows as if they were efforts. An
+    // unrecognised language yields no opener, and the caller fails instead of
+    // gambling on the wrong control.
+    const findEffortSubmenuOpener = (menu) => {
+      const scope = menu?.querySelector?.(ADVANCED_VIEW_SELECTOR) || menu || document;
+      for (const item of scope.querySelectorAll(SUBMENU_OPENER_SELECTOR)) {
+        if (!isVisible(item) || !isSubmenuOpener(item)) continue;
+        if (containsAny(nodeLabel(item), EFFORT_WORDS)) return item;
+      }
+      return null;
+    };
+    // countEffortLevels reads aggregate menu text, where one "Extra High" row scores
+    // twice (once as "high", once as "extra high"). Count distinct levels across
+    // distinct rows instead, so ">= 2" really means two selectable tiers.
+    const countDistinctTierRows = (menu) => {
+      if (!menu) return 0;
+      const matched = new Set();
+      for (const row of menu.querySelectorAll(MENU_ITEM_SELECTOR)) {
+        if (isSubmenuOpener(row)) continue;
+        const text = nodeLabel(row);
+        for (const [level, tokens] of Object.entries(LEVEL_TOKENS)) {
+          if (matchesTokens(text, tokens)) matched.add(level);
+        }
+      }
+      return matched.size;
+    };
+    const resolveSubmenuFor = (opener, parentMenu) => {
+      const id = opener?.getAttribute?.('aria-controls');
+      if (id) {
+        const node = document.getElementById?.(id);
+        if (isVisible(node) && countDistinctTierRows(node) >= 2) return node;
+      }
+      let best = null;
+      for (const menu of document.querySelectorAll(MENU_CONTAINER_SELECTOR)) {
+        if (menu === parentMenu || menu.contains?.(opener) || !isVisible(menu)) continue;
+        const hits = countDistinctTierRows(menu);
+        if (hits >= 2 && (!best || hits > best.hits)) best = { menu, hits };
+      }
+      return best?.menu ?? null;
+    };
+    const selectEffortFromAdvancedSubmenu = async (parentMenu, modelKindOverride = null) => {
+      if (!parentMenu) return null;
+      // React can mount the advanced view well after the click under load, so poll
+      // for the opener to the same deadline the submenu gets instead of assuming it
+      // rendered within one STEP_WAIT_MS. Re-expand if the toggle collapses again.
+      let opener = null;
+      const openerDeadline = performance.now() + MAX_WAIT_MS;
+      while (!opener && performance.now() < openerDeadline) {
+        const toggle = findAdvancedToggle(parentMenu);
+        if (toggle && toggle.getAttribute?.('aria-expanded') === 'false') {
+          dispatchClickSequence(toggle);
+          await sleep(STEP_WAIT_MS);
+        }
+        opener = findEffortSubmenuOpener(parentMenu);
+        if (opener) break;
+        await sleep(100);
+      }
+      if (!opener) return null;
+      dispatchHoverSequence(opener);
+      if (opener.getAttribute?.('aria-expanded') !== 'true') {
+        dispatchClickSequence(opener);
+      }
+      const deadline = performance.now() + MAX_WAIT_MS;
+      while (performance.now() < deadline) {
+        const submenu = resolveSubmenuFor(opener, parentMenu);
+        if (submenu) {
+          return selectAndVerify(
+            opener,
+            () => {
+              const current = resolveSubmenuFor(opener, parentMenu);
+              return current ? findOptionInMenu(current, modelKindOverride) : null;
+            },
+            modelKindOverride,
+          );
+        }
+        await sleep(100);
+      }
+      return null;
+    };
+
+    // The direct-slider rollout removes the Effort submenu entirely. Its keyboard
+    // owner announces the actual tier via aria-describedby; neither the pill nor
+    // the slider's maximum position alone proves that Pro was selected.
+    const resolveDirectEffortSlider = (menu) => {
+      const simpleView = () => {
+        const legacyView = menu.querySelector?.('[data-model-selection-view="true"]');
+        return legacyView?.querySelector?.('[data-testid="composer-model-picker-slider-simple-view"]') ??
+          menu.querySelector?.('[data-model-picker-view="simple"]') ?? menu.querySelector?.('[data-reasoning-slider]');
+      };
+      const isActiveSimple = (node) =>
+        node?.getAttribute('data-active') === 'true' ||
+        node?.getAttribute('data-model-picker-view') === 'simple' || node?.getAttribute('data-reasoning-slider') != null;
+      const simple = simpleView();
+      if (!simple || !isActiveSimple(simple) || !isVisible(simple)) return undefined;
+      if (!simple.querySelector('[data-model-reasoning-effort-slider], [data-model-picker-power-slider], [data-reasoning-slider]') &&
+          simple.getAttribute('data-reasoning-slider') === null && simple.querySelector('[role="menuitemradio"]')) return undefined;
+      // Selecting GPT-6's top Power step, labelled Pro, also checks the Pro model radio
+      // (observed 27 October 2026). That radio is accepted only for a Pro target, and only
+      // while the slider itself reads Pro.
+      let proModel = false;
+      if (OWNED_SELECTION || TARGET_IS_ASTRA_LATEST) {
+        const scopes = Array.from(menu.querySelectorAll('[data-model-picker-view="models"], [data-model-picker-view="advanced"], [data-model-picker-view="simple"]')).filter(scope =>
+          isVisible(scope) && (scope.getAttribute('data-model-picker-view') !== 'simple' ||
+            Array.from(scope.querySelectorAll('[role="menuitemradio"]')).some(row =>
+              isVisible(row) && /^(?:GPT-[0-9]|Latest$|最新$|최신$)/u.test((row.textContent || '').trim()))));
+        const checked = [...new Set(scopes.flatMap(scope => Array.from(scope.querySelectorAll('[role="menuitemradio"][aria-checked="true"]'))))].filter(isVisible);
+        if (checked.length > 1) return 'ambiguous-model';
+        if (scopes.length) {
+          const label = (checked[0]?.textContent ?? '').trim();
+          proModel = checked.length === 1 && TARGET_IS_ASTRA_LATEST && TARGET_LEVEL === 'pro' && label === 'Pro';
+          if (checked.length !== 1 || !proModel && !(TARGET_IS_ASTRA_LATEST ? ['GPT-6', 'Latest', '最新', '최신'].includes(label) : label === 'GPT-5.6 Sol')) return 'wrong-model';
+        } else if (TARGET_IS_ASTRA_LATEST && !isAstraLatestEffortPill(findModelButton()?.textContent ?? '')) {
+          return 'wrong-model';
+        }
+      }
+      const resolve = () => {
+        const currentSimple = simpleView();
+        if (!isActiveSimple(currentSimple)) return null;
+        const slider = currentSimple.querySelector('[data-model-reasoning-effort-slider]') ??
+          currentSimple.querySelector('[data-model-picker-power-slider]') ?? (currentSimple.getAttribute('data-reasoning-slider') != null ? currentSimple : null);
+        const control = slider?.closest?.('[role="menuitem"]');
+        const thumb = slider?.querySelector?.('[role="slider"]');
+        if (INSPECTION_ONLY && (!control || !thumb)) return 'pending';
+        if (!control || !thumb || !isVisible(control)) return null;
+        const levels = ['light', 'standard', 'extended', 'extra-high', 'pro'];
+        // The selected label leads localized aria-describedby prose, while punctuation
+        // and ordinal grammar vary by locale. Match only that leading label and let
+        // the thumb's numeric ARIA state independently prove its position.
+        const readLeadingLevel = (description) => {
+          const value = (description ?? '').normalize('NFC').trim();
+          if (!value) return null;
+          const matches = levels.flatMap((level, index) => {
+            const token = [...TARGET_LEVEL_TOKENS[level]]
+              .sort((left, right) => right.length - left.length)
+              .find((candidate) => {
+                const normalizedCandidate = candidate.normalize('NFC');
+                const prefix = value.slice(0, normalizedCandidate.length);
+                if (normalize(prefix) !== normalize(normalizedCandidate)) return false;
+                // normalize() erases Unicode letters and marks; inspect the boundary intact.
+                const suffix = value.slice(prefix.length);
+                return !suffix || /^[\s\p{P}]/u.test(suffix);
+              });
+            return token
+              ? [{ level, index, label: value.slice(0, token.normalize('NFC').length) }]
+              : [];
+          });
+          return matches.length === 1 ? matches[0] : null;
+        };
+        const ids = describedIds(control);
+        if (INSPECTION_ONLY && (!ids.length || ids.some((id) => !document.getElementById?.(id)?.textContent?.trim()))) return 'pending';
+        const selections = ids
+          .map((id) => readLeadingLevel(document.getElementById?.(id)?.textContent ?? ''))
+          .filter(Boolean);
+        if (selections.length !== 1) return null;
+        const { label, level } = selections[0];
+        // Current pickers expose three, four, or five tiers. Require an observed
+        // range and matching label/index before trusting either.
+        const maximum = thumb.getAttribute('aria-valuemax');
+        if (thumb.getAttribute('aria-valuemin') !== '0' || !['2', '3', '4'].includes(maximum)) return null;
+        const maximumNumber = Number(maximum);
+        const levelOrder = maximumNumber === 2
+          ? ['light', 'standard', 'extended']
+          : ['light', 'standard', 'extended', 'extra-high', 'pro'].slice(0, maximumNumber + 1);
+        const position = levelOrder.indexOf(level);
+        if (position < 0 || thumb.getAttribute('aria-valuenow') !== String(position)) return null;
+        return { simple: currentSimple, slider, thumb, control, label, index: position, level, maximum: maximumNumber, levelOrder };
+      };
+      const observation = resolve();
+      return proModel && observation && typeof observation === 'object' && observation.level !== 'pro' ? 'wrong-model' : observation;
+    };
+    const selectDirectEffortSlider = async (menu) => {
+      const initial = resolveDirectEffortSlider(menu);
+      if (initial === undefined) return null;
+      if (initial === 'wrong-model' || initial === 'ambiguous-model') return failure(OWNED_SELECTION ? 'selection-invalid' : 'selection-unverified');
+      let retained = null;
+      let invalid = false;
+      const resolve = () => {
+        if (ownedInspection && (!ownedInspection.active || ownedInspection.root() !== menu || ownedInspection.ambiguous)) {
+          invalid = true; return null;
+        }
+        const observation = resolveDirectEffortSlider(menu);
+        if (observation === 'wrong-model' || observation === 'ambiguous-model') invalid = true;
+        if (!observation || typeof observation !== 'object') return null;
+        if (retained && ['simple', 'slider', 'thumb', 'control'].some(key => observation[key] !== retained[key])) {
+          invalid = true; return null;
+        }
+        retained ??= observation;
+        if (!menu.contains(observation.simple) || !observation.simple.contains(observation.control) ||
+            !observation.control.contains(observation.slider) || !observation.slider.contains(observation.thumb)) {
+          invalid = true; return null;
+        }
+        return observation;
+      };
+      let current = resolve();
+      const finish = (result) => { closeOpenMenus(); return result; };
+      // The picker can expose its simple view before the keyboard owner is mounted or visible.
+      const readyDeadline = performance.now() + MAX_WAIT_MS;
+      while (!current && !invalid && performance.now() < readyDeadline) {
+        await sleep(100);
+        current = resolve();
+      }
+      if (!current) return finish(failure(invalid ? 'selection-invalid' : 'selection-unverified'));
+      // Preserve the legacy Pro-model + extended contract on unified pickers.
+      const target = TARGET_MODEL_KIND === 'pro' && TARGET_LEVEL === 'extended' ? 'pro' : TARGET_LEVEL;
+      const targetIndex = current.levelOrder.indexOf(target);
+      const targetLabel = target === 'extra-high'
+        ? 'Extra High'
+        : target.slice(0, 1).toUpperCase() + target.slice(1);
+      const unavailable = () => finish(failure('option-disabled', {
+        label: targetLabel,
+        ...(OWNED_SELECTION && TARGET_IS_ASTRA_LATEST && target === 'pro'
+          ? { unavailableModel: 'GPT-6' }
+          : {}),
+        notice: current.maximum === 3
+          ? 'the available four-tier effort slider does not include Pro'
+          : 'the available effort slider does not include ' + targetLabel,
+      }));
+      if (targetIndex < 0) {
+        const knownIndex = ['light', 'standard', 'extended', 'extra-high', 'pro'].indexOf(target);
+        if (knownIndex > current.maximum) return unavailable();
+        if (TARGET_IS_GPT56_MODEL && TARGET_LEVEL === 'heavy' && current.level === 'pro') {
+          return finish({ status: 'already-selected', label: current.label });
+        }
+        return finish(failure('option-not-found'));
+      }
+      if (targetIndex > current.maximum) return unavailable();
+      if (current.level === target) return finish({ status: 'already-selected', label: current.label });
+      const deadline = performance.now() + MAX_WAIT_MS;
+      for (let attempt = 0; attempt < 4 && performance.now() < deadline; attempt += 1) {
+        if (isOptionDisabled(current.control)) return finish(failure('option-disabled', { label: current.label }));
+        const previousIndex = current.index;
+        const key = targetIndex > previousIndex ? 'ArrowRight' : 'ArrowLeft';
+        current.control.focus?.();
+        const afterFocus = resolve();
+        if (invalid || !afterFocus || afterFocus.control !== current.control) return finish(failure('selection-invalid'));
+        if (typeof oracleSubmissionIsActive === 'function' && !oracleSubmissionIsActive()) return finish(failure('selection-invalid'));
+        current.control.dispatchEvent(new KeyboardEvent('keydown', { key, code: key, bubbles: true, cancelable: true }));
+        current = null;
+        while (!invalid && performance.now() < deadline) {
+          await sleep(100);
+          const next = resolve();
+          if (next && next.index !== previousIndex) { current = next; break; }
+        }
+        if (!current) return finish(failure(invalid ? 'selection-invalid' : 'selection-unverified'));
+        if (targetIndex > current.maximum) return unavailable();
+        if (current.level === target) return finish({ status: 'switched', label: current.label });
+      }
+      return finish(failure('selection-unverified'));
+    };
+
+    // Current ChatGPT exposes a standalone Pro or Thinking composer pill whose
+    // controlled menu contains the effort levels. Prefer this ownership boundary
+    // before probing older model-picker layouts.
+    const COMPOSER_EFFORT_PILL_SELECTORS = [
+      'form[data-chatgpt-composer] button[aria-label="Select ChatGPT model"]',
+      'form button.__composer-pill',
+      '[data-testid="composer-footer-actions"] button.__composer-pill',
+      '.__composer-pill-composite button.__composer-pill',
+    ];
+    const findComposerEffortPill = () => {
+      const currentAstraTrigger = findModelButton();
+      if (
+        TARGET_IS_ASTRA_LATEST &&
+        currentAstraTrigger?.matches?.('button[data-codex-intelligence-trigger="true"]') &&
+        isVisible(currentAstraTrigger)
+      ) return currentAstraTrigger;
+      const seen = new Set();
+      let gpt56Fallback = null;
+      for (const selector of COMPOSER_EFFORT_PILL_SELECTORS) {
+        for (const button of document.querySelectorAll(selector)) {
+          if (seen.has(button) || !isVisible(button)) continue;
+          if (button.getAttribute('aria-label') === 'Select ChatGPT model' && button.closest('form[data-chatgpt-composer]')) return button;
+          seen.add(button);
+          if (button.getAttribute?.('data-testid') === 'model-switcher-dropdown-button') continue;
+          // A 5.6 Pro model pill is not Astra Latest's 6-prefixed effort owner.
+          // Keep this rejection ahead of the generic compatibility matcher.
+          if (isSolModelPillForLatest(button.textContent ?? '')) continue;
+          const label = normalize(
+            (button.getAttribute?.('aria-label') ?? '') + ' ' +
+            (button.getAttribute?.('data-testid') ?? '') + ' ' +
+            (button.textContent ?? ''),
+          );
+          if (
+            (TARGET_MODEL_KIND === 'pro' && hasToken(label, 'pro') && !hasToken(label, 'thinking')) ||
+            (TARGET_MODEL_KIND === 'thinking' && hasToken(label, 'thinking') && !hasToken(label, 'pro')) ||
+            (!TARGET_MODEL_KIND && hasToken(label, 'thinking')) ||
+            // Astra Latest prefixes a supported effort label with "6" (for
+            // example, "6 Pro" or textContent-concatenated "6Pro"). This is
+            // recognized only for the exact Latest target; selection still
+            // requires the direct slider's leading label and numeric ARIA proof.
+            isAstraLatestEffortPill(button.textContent ?? '') ||
+            (button.matches?.('button.__composer-pill') && matchesAnyEffortLevel(label))
+          ) {
+            return button;
+          }
+          if (
+            TARGET_IS_GPT56_MODEL &&
+            button.matches?.('button.__composer-pill') &&
+            normalize(button.textContent ?? '') === 'pro'
+          ) {
+            gpt56Fallback ||= button;
+          }
+        }
+      }
+      return gpt56Fallback;
+    };
+
+    // Inspection opens only owned picker/view/submenu controls. It never invokes
+    // selection helpers, model radios, effort rows or slider keyboard controls.
+    if (INSPECTION_ONLY || OWNED_SELECTION) {
+      const trigger = OWNED_SELECTION ? findModelButton() : findComposerEffortPill() || findModelButton();
+      if (!isVisible(trigger)) return OWNED_SELECTION ? { status: 'selection-invalid', reason: 'composer trigger is missing or ambiguous' } : { status: 'pending' };
+      if (!trigger.id && !trigger.getAttribute('aria-controls')) return OWNED_SELECTION ? { status: 'selection-invalid', reason: 'composer trigger has no picker binding' } : { status: 'selection_unknown' };
+      function createPickerInspection(trigger, resolveTrigger, candidates, visible, click, additionalCleanupComplete = () => true) {
+    const token = cfg.token ?? null;
+    const record = token ? window.__oraclePickerInspections?.get(token) : null;
+    const active = () => !token || record?.active === true;
+    const cleanupClick = target => {
+      if (!record?.finalising) return click(target);
+      const oracleSubmissionIsActive = () => {
+        try {
+
+    const oracleOwnershipId = value => typeof value === 'string' && value.length > 0 && value.length <= 256;
+    const readOracleTargetClaim = () => {
+      const raw = sessionStorage.getItem('oracle:target-claim');
+      if (raw === null) return null;
+      const claim = JSON.parse(raw);
+      const id = oracleOwnershipId;
+      const object = value => value && typeof value === 'object' && !Array.isArray(value);
+      if (!object(claim) || !id(claim.id) || typeof claim.retiring !== 'boolean') throw new Error('Invalid target ownership record.');
+      if (claim.submission !== undefined && (!object(claim.submission) || !id(claim.submission.id) ||
+          !['active', 'releasing', 'clean', 'quarantined'].includes(claim.submission.state) ||
+          !['not-started', 'started', 'acknowledged', 'ambiguous'].includes(claim.submission.dispatch))) throw new Error('Invalid submission ownership record.');
+      if (claim.inspection !== undefined && (!object(claim.inspection) || !id(claim.inspection.token) ||
+          !id(claim.inspection.rendererId) ||
+          !(claim.inspection.parentReservationId === null || id(claim.inspection.parentReservationId)) ||
+          !['active', 'finalising', 'clean', 'quarantined'].includes(claim.inspection.state))) throw new Error('Invalid inspection ownership record.');
+      return claim;
+    };
+    const writeOracleTargetClaim = claim => sessionStorage.setItem('oracle:target-claim', JSON.stringify(claim));
+    const matchesOracleSubmission = (claim, owner) => claim && !claim.retiring &&
+      claim.id === owner.claimId && claim.submission?.id === owner.reservationId;
+
+          const claim = readOracleTargetClaim();
+          const gate = claim?.inspection;
+          return gate?.token === token && gate.rendererId === window.__oracleOwnershipRendererId &&
+            gate.parentReservationId === (record.parent?.reservationId ?? null) && gate.state === 'finalising' &&
+            (record.parent ? matchesOracleSubmission(claim, record.parent) &&
+              ['active', 'releasing', 'quarantined'].includes(claim.submission.state) : !claim.submission);
+        } catch { return false; }
+      };
+      function dispatchOwnedCleanup(target, validate = () => true){
+    if(typeof oracleSubmissionIsActive === 'function' && !oracleSubmissionIsActive()) return false;
+    if(!target || !(target instanceof EventTarget)) return false;
+    const types = ['pointerdown','mousedown','pointerup','mouseup','click'];
+    for (const type of types) {
+      if(typeof oracleSubmissionIsActive === 'function' && !oracleSubmissionIsActive()) return false;
+      if(!validate()) return false;
+      const common = { bubbles: true, cancelable: true, view: window };
+      let event;
+      if (type.startsWith('pointer') && 'PointerEvent' in window) {
+        event = new PointerEvent(type, { ...common, pointerId: 1, pointerType: 'mouse' });
+      } else {
+        event = new MouseEvent(type, common);
+      }
+      target.dispatchEvent(event);
+    }
+    return true;
+  }
+      return dispatchOwnedCleanup(target);
+    };
+    const timers = new Map();
+    const sleep = (ms, finalising = false) => {
+      if (!token) return new Promise(resolve => setTimeout(resolve, ms));
+      return new Promise(resolve => {
+        if (!(finalising ? record?.finalising === true : active())) return resolve();
+        let handle;
+        let fired = false;
+        handle = setTimeout(() => { fired = true; timers.delete(handle); resolve(); }, ms);
+        if (!fired) timers.set(handle, resolve);
+      });
+    };
+    const stop = () => {
+      for (const [handle, resolve] of timers) { clearTimeout(handle); resolve(); }
+      timers.clear();
+    };
+    if (record) record.stop = stop;
+    const ownerKey = trigger?.id || trigger?.getAttribute('aria-controls') || null;
+    const initialId = trigger?.id || null;
+    const initialControls = trigger?.getAttribute('aria-controls') || null;
+    const before = new Set(candidates().filter(visible));
+    const controlledNodes = controls => controls ? Array.from(document.querySelectorAll('[id]'))
+      .filter(node => node.id === controls && visible(node)) : [];
+    const opened = [];
+    let rootNode = null;
+    let rootId = null;
+    let rootLabel = null;
+    const bindRoot = node => {
+      if (rootNode && (node !== rootNode || (node.id || null) !== rootId ||
+          (node.getAttribute('aria-labelledby') || null) !== rootLabel)) {
+        rootAmbiguous = ambiguous = true;
+        return null;
+      }
+      rootNode = node;
+      rootId = node.id || null;
+      rootLabel = node.getAttribute('aria-labelledby') || null;
+      return node;
+    };
+    let causalRoot = false;
+    let rootClicked = false;
+    let openedControls = null;
+    let rootClosing = false;
+    let ambiguous = !ownerKey;
+    let rootAmbiguous = !ownerKey;
+    const currentTrigger = () => {
+      const current = resolveTrigger();
+      if (!current || current !== trigger || (current.id || null) !== initialId) return null;
+      const controls = current.getAttribute('aria-controls') || null;
+      if (controls === initialControls) {
+        if (openedControls && rootNode && visible(rootNode) && !rootClosing) return null;
+        return current;
+      }
+      if (initialControls || !rootClicked || !initialId || current !== trigger || !controls) return null;
+      const linked = controlledNodes(controls);
+      if (linked.length !== 1 || linked[0].getAttribute('aria-labelledby') !== initialId || before.has(linked[0]) ||
+          (rootNode && linked[0] !== rootNode) || (openedControls && controls !== openedControls)) return null;
+      openedControls = controls;
+      return current;
+    };
+    const root = () => {
+      const current = currentTrigger();
+      if (!current) rootAmbiguous = ambiguous = true;
+      if (!current || rootAmbiguous) return null;
+      const menus = candidates().filter(visible);
+      const controls = openedControls || initialControls;
+      if (controlledNodes(controls).length > 1) {
+        rootAmbiguous = ambiguous = true;
+        return null;
+      }
+      const linked = menus.filter(menu =>
+        (initialControls && menu.id === initialControls) ||
+        (initialId && menu.getAttribute('aria-labelledby') === initialId));
+      if (linked.length > 1 || linked.some(menu =>
+        (initialControls && menu.id !== initialControls) ||
+        (menu.getAttribute('aria-labelledby') && menu.getAttribute('aria-labelledby') !== initialId))) {
+        rootAmbiguous = ambiguous = true;
+        return null;
+      }
+      if (linked.length === 1) {
+        if (rootNode && linked[0] !== rootNode) {
+          rootAmbiguous = ambiguous = true;
+          return null;
+        }
+        return bindRoot(linked[0]);
+      }
+      if (initialControls) return null;
+      if (causalRoot) {
+        return menus.includes(rootNode) ? bindRoot(rootNode) : null;
+      }
+      if (!rootClicked) return null;
+      const fresh = menus.filter(menu => !before.has(menu) &&
+        (!menu.getAttribute('aria-labelledby') || menu.getAttribute('aria-labelledby') === initialId));
+      if (fresh.length > 1) rootAmbiguous = ambiguous = true;
+      if (fresh.length !== 1) return null;
+      if (rootNode && fresh[0] !== rootNode) {
+        rootAmbiguous = ambiguous = true;
+        return null;
+      }
+      if (!bindRoot(fresh[0])) return null;
+      causalRoot = true;
+      return rootNode;
+    };
+    const openRoot = () => {
+      if (!active()) return;
+      if (root()) return;
+      const current = currentTrigger();
+      if (!current || rootAmbiguous || rootClicked) return;
+      const controlled = initialControls ? document.getElementById(initialControls) : null;
+      const labelledBy = controlled?.getAttribute('aria-labelledby');
+      if (labelledBy && labelledBy !== initialId) {
+        rootAmbiguous = ambiguous = true;
+        return;
+      }
+      if (current.getAttribute('aria-expanded') === 'true') {
+        if (!initialControls) rootAmbiguous = ambiguous = true;
+        return;
+      }
+      rootClicked = true;
+      if (active()) click(current);
+    };
+    const selectable = node => ['aria-checked', 'aria-selected', 'aria-current', 'data-selected']
+      .some(name => node.getAttribute(name) !== null) ||
+      ['checked', 'unchecked', 'selected', 'unselected', 'on', 'off', 'true', 'false'].includes(node.getAttribute('data-state')) ||
+      ['radio', 'menuitemradio', 'option', 'checkbox', 'menuitemcheckbox'].includes(node.getAttribute('role'));
+    const disclosure = (node, kind) => {
+      if (!node || !visible(node) || selectable(node) || node.disabled ||
+          node.getAttribute('aria-disabled') === 'true') return false;
+      const expanded = node.getAttribute('aria-expanded');
+      if (kind === 'advanced') return node.getAttribute('data-model-picker-view-toggle') === 'true' ||
+        expanded === 'true' || expanded === 'false';
+      return node.getAttribute('role') === 'menuitem' && node.getAttribute('aria-haspopup') === 'menu' &&
+        (Boolean(node.getAttribute('aria-controls')) || expanded === 'true' || expanded === 'false');
+    };
+    const openSurface = (opener, surfaces, kind, contained = false, qualifies = () => true, closedSemantically = () => false) => {
+      if (!active()) return () => null;
+      const parent = root();
+      if (!parent || !parent.contains(opener) || !disclosure(opener, kind) || !qualifies(opener)) {
+        ambiguous = true;
+        return () => null;
+      }
+      const id = opener.id || null;
+      const controls = opener.getAttribute('aria-controls') || null;
+      const initial = new Set(surfaces().filter(visible));
+      const resolveOpener = () => {
+        const parent = root();
+        if (!parent) return null;
+        if (id) {
+          const matches = Array.from(parent.querySelectorAll('[id]')).filter(node => node.id === id);
+          if (matches.length !== 1 || matches[0] !== opener || matches[0].getAttribute('aria-controls') !== controls) {
+            ambiguous = true;
+            return null;
+          }
+          return matches[0];
+        }
+        if (!parent.contains(opener) || opener.getAttribute('aria-controls') !== controls) {
+          ambiguous = true;
+          return null;
+        }
+        return opener;
+      };
+      let surface = null;
+      let surfaceId = null;
+      let surfaceLabel = null;
+      const bindSurface = node => {
+        if (surface && (node !== surface || (surface.id || null) !== surfaceId ||
+            (surface.getAttribute('aria-labelledby') || null) !== surfaceLabel)) {
+          ambiguous = true;
+          return null;
+        }
+        if (!surface) {
+          surface = node;
+          surfaceId = node.id || null;
+          surfaceLabel = node.getAttribute('aria-labelledby') || null;
+        }
+        return surface;
+      };
+      const resolveSurface = () => {
+        if (ambiguous) return null;
+        if (!resolveOpener()) return null;
+        const controlled = controlledNodes(controls);
+        if (controlled.length > 1 || (surface && controlled.some(node => node !== surface))) {
+          ambiguous = true;
+          return null;
+        }
+        const all = surfaces().filter(node => visible(node) && (!contained || root()?.contains(node)));
+        if (all.some(node => (controls && node.id === controls || contained && root()?.contains(node) || !initial.has(node)) &&
+            node.getAttribute('aria-labelledby') && node.getAttribute('aria-labelledby') !== id)) {
+          ambiguous = true;
+          return null;
+        }
+        const linked = all.filter(node => (controls && node.id === controls) ||
+          (id && node.getAttribute('aria-labelledby') === id));
+        if (linked.length > 1 || linked.some(node =>
+          (controls && node.id !== controls) ||
+          (node.getAttribute('aria-labelledby') && node.getAttribute('aria-labelledby') !== id))) {
+          ambiguous = true;
+          return null;
+        }
+        if (linked.length === 1) return bindSurface(linked[0]);
+        if (controls) return null;
+        if (contained && all.length === 1) return bindSurface(all[0]);
+        if (surface) return all.includes(surface) ? bindSurface(surface) : null;
+        const fresh = all.filter(node => !initial.has(node));
+        if (fresh.length > 1) ambiguous = true;
+        return fresh.length === 1 ? bindSurface(fresh[0]) : null;
+      };
+      if (resolveSurface()) return resolveSurface;
+      if (opener.getAttribute('aria-expanded') === 'true') return resolveSurface;
+      if (contained && controls) {
+        const controlled = document.getElementById(controls);
+        if (controlled && !parent.contains(controlled)) {
+          ambiguous = true;
+          return () => null;
+        }
+      }
+      opened.push({ resolveOpener, resolveSurface, surfaces, kind, qualifies, closedSemantically,
+        getSurface: () => surface, getSurfaceId: () => surfaceId, getSurfaceLabel: () => surfaceLabel });
+      if (active()) click(opener);
+      return resolveSurface;
+    };
+    let cleanupRun = null;
+    let cleaned = false;
+    let rootClosed = false;
+    const rootGone = () => {
+      if (!rootNode) return false;
+      const controls = openedControls || initialControls;
+      const menus = candidates().filter(visible);
+      const current = resolveTrigger();
+      const currentControls = current?.getAttribute('aria-controls') || null;
+      if (current !== trigger || (current?.id || null) !== initialId ||
+          ((rootNode.id || null) !== rootId) || (rootNode.getAttribute('aria-labelledby') || null) !== rootLabel ||
+          (currentControls !== (openedControls || initialControls) &&
+            !(currentControls === initialControls || !currentControls && !visible(rootNode) && current?.getAttribute('aria-expanded') === 'false'))) {
+        rootAmbiguous = ambiguous = true;
+      }
+      if (controlledNodes(controls).some(node => node !== rootNode) || menus.some(menu => menu !== rootNode &&
+          ((controls && menu.id === controls) || (initialId && menu.getAttribute('aria-labelledby') === initialId))))
+        rootAmbiguous = ambiguous = true;
+      return !rootAmbiguous && (rootNode.isConnected === false || !visible(rootNode));
+    };
+    const observeAdditionalCleanup = async (finalising, until) => {
+      const allowed = () => !token || (finalising ? record?.finalising === true : active());
+      if (!allowed() || ambiguous) return false;
+      if (additionalCleanupComplete() === true) return true;
+      const deadline = until ?? performance.now() + 2000;
+      while (allowed() && !ambiguous && performance.now() < deadline) {
+        await sleep(25, finalising);
+        if (!allowed() || ambiguous || performance.now() >= deadline) return false;
+        if (additionalCleanupComplete() === true) return true;
+      }
+      return false;
+    };
+    const cleanupOwned = async (finalising) => {
+      let complete = true;
+      const until = performance.now() + 2000;
+      const allowed = () => (!token || (finalising ? record?.finalising === true : active())) && performance.now() < until;
+      const waitClosed = async test => {
+        while (allowed() && !ambiguous && !test()) await sleep(25, finalising);
+        return allowed() && !ambiguous && test();
+      };
+      for (const entry of opened.slice().reverse()) {
+        if (entry.closed) continue;
+        if (!allowed()) return false;
+        const retained = entry.getSurface();
+        if (rootGone()) {
+          const id = entry.getSurfaceId();
+          const label = entry.getSurfaceLabel();
+          if (!retained || (retained.id || null) !== id || (retained.getAttribute('aria-labelledby') || null) !== label ||
+              controlledNodes(id).some(node => node !== retained) ||
+              entry.surfaces().some(node => visible(node) && (node === retained || id && node.id === id || label && node.getAttribute('aria-labelledby') === label))) return false;
+          entry.closed = true;
+          continue;
+        }
+        if (!root()) return false;
+        const opener = entry.resolveOpener();
+        if (!opener || !disclosure(opener, entry.kind) || !entry.qualifies(opener)) {
+          complete = false;
+          continue;
+        }
+        let original = entry.closingSurface || entry.getSurface();
+        let current = entry.closingSurface || entry.resolveSurface();
+        while (finalising && !original && allowed() && !ambiguous) {
+          await sleep(25, true);
+          current = entry.resolveSurface();
+          original = entry.getSurface();
+        }
+        if (!original) { if (finalising) complete = false; continue; }
+        const stillVisible = () => {
+          const id = entry.getSurfaceId();
+          const nodes = controlledNodes(id);
+          if (nodes.some(node => node !== original) || (visible(original) &&
+              ((original.id || null) !== id || (original.getAttribute('aria-labelledby') || null) !== entry.getSurfaceLabel()))) ambiguous = true;
+          if (!ambiguous && entry.kind === 'advanced' && entry.closingSurface === original &&
+              root()?.contains(original) && entry.closedSemantically(original) &&
+              !entry.surfaces().some(node => node === original && visible(node))) {
+            if (entry.surfaces().some(node => node !== original && visible(node))) ambiguous = true;
+            else return false;
+          }
+          return original && ((original.isConnected !== false && visible(original)) || nodes.length > 0);
+        };
+        if (!stillVisible()) { entry.closed = true; continue; }
+        if (current !== original) {
+          complete = false;
+          continue;
+        }
+        if (!allowed()) return false;
+        if (!entry.closingSurface) {
+          entry.closingSurface = original;
+          cleanupClick(opener);
+        }
+        if (await waitClosed(() => !stillVisible())) entry.closed = true;
+        else complete = false;
+      }
+      let picker = rootGone() ? null : root();
+      while (finalising && rootClicked && !rootClosed && !rootNode && !picker && allowed() && !rootAmbiguous) {
+        await sleep(25, true);
+        picker = root();
+      }
+      if (finalising && rootClicked && !rootClosed && !rootNode && !picker) complete = false;
+      if (rootClicked && !rootClosed && rootNode) {
+        if (!rootGone()) {
+          if (!rootClosing) {
+            const current = currentTrigger();
+            if (!current || picker !== rootNode || rootAmbiguous || !allowed()) return false;
+            rootClosing = true;
+            cleanupClick(current);
+          }
+          if (await waitClosed(rootGone)) rootClosed = true;
+          else complete = false;
+        } else rootClosed = true;
+      }
+      const structuralComplete = complete && !ambiguous;
+      cleaned = structuralComplete && (!rootClicked || rootClosed) && opened.every(entry => entry.closed);
+      return structuralComplete && await observeAdditionalCleanup(finalising, until);
+    };
+    const cleanup = async (finalising = false) => {
+      if (cleanupRun) await cleanupRun;
+      cleanupRun = cleaned ? observeAdditionalCleanup(finalising) : cleanupOwned(finalising);
+      try {
+        return await cleanupRun;
+      }
+      finally { cleanupRun = null; }
+    };
+    if (record) record.cleanup = cleanup;
+    return { ownerKey, root, rootGone, openRoot, disclosure, openSurface, cleanup, sleep,
+      get active() { return active(); },
+      get ambiguous() { return ambiguous; } };
+  }
+      const inspectionTrigger = () => OWNED_SELECTION ? findModelButton() : findComposerEffortPill() || findModelButton();
+      const candidateMenus = () => {
+        const menus = Array.from(document.querySelectorAll(MENU_CONTAINER_SELECTOR));
+        const id = inspectionTrigger()?.getAttribute('aria-controls');
+        const controlled = id ? document.getElementById(id) : null;
+        if (controlled && !menus.includes(controlled)) menus.push(controlled);
+        return menus.filter(isEffortMenu);
+      };
+      const tooltipBindings = [];
+      const observedTooltipIds = new Set();
+      let tooltipOwner = null;
+      let tooltipObservationAmbiguous = false;
+      const nodesWithId = id => Array.from(document.querySelectorAll('[id]')).filter(node => node.id === id);
+      const currentFreshTooltipIds = () => tooltipOwner
+        ? [...new Set(describedIds(tooltipOwner.row))].filter(id => !tooltipOwner.priorIds.has(id)) : [];
+      const readFreshTooltips = () => {
+        if (tooltipObservationAmbiguous) return [];
+        const freshIds = currentFreshTooltipIds();
+        for (const id of freshIds) if (!observedTooltipIds.has(id)) {
+          if (observedTooltipIds.size >= 8) { tooltipObservationAmbiguous = true; return []; }
+          observedTooltipIds.add(id);
+        }
+        const fresh = freshIds.flatMap(id => nodesWithId(id).filter(isTooltipNode).map(node => ({ id, node })));
+        for (const binding of fresh) if (!tooltipBindings.some(held => held.node === binding.node && held.id === binding.id)) {
+          if (tooltipBindings.length >= 8) { tooltipObservationAmbiguous = true; return []; }
+          tooltipBindings.push(binding);
+        }
+        return fresh;
+      };
+      const tooltipCleanupComplete = () => {
+        readFreshTooltips();
+        return !tooltipObservationAmbiguous && currentFreshTooltipIds().every(id => nodesWithId(id).length === 1) &&
+          tooltipBindings.every(({ id, node }) => node.id === id && isTooltipNode(node) &&
+            (node.isConnected === false || !isVisible(node)) && nodesWithId(id).every(current => current === node));
+      };
+      const inspection = createPickerInspection(trigger, inspectionTrigger, candidateMenus, isVisible, dispatchClickSequence,
+        tooltipCleanupComplete);
+      if (OWNED_SELECTION) ownedInspection = inspection;
+      const effortRows = scope => Array.from(scope.querySelectorAll('[role="menuitemradio"], [role="radio"], [role="option"]')).filter(row =>
+        isVisible(row) && !row.closest?.('[data-model-picker-view="models"], [data-model-picker-view="advanced"], [data-testid="composer-intelligence-picker-advanced"]') &&
+        !/^(?:gpt [0-9]|latest$|最新$|최신$)/.test(normalize(row.textContent || '')));
+      const matchingEffortRows = scope => {
+        const matches = effortRows(scope).filter(row => findOptionInMenu(scope, TARGET_MODEL_KIND || 'versioned', [row]) === row);
+        const primary = matches.filter(row => matchesLevel(row.textContent || '') || matchesLevel(row.getAttribute('aria-label') || ''));
+        return TARGET_LEVEL === 'extra-high' && primary.length ? primary : matches;
+      };
+      const selectOwnedOption = async (scope, resolveScope) => {
+        const rows = effortRows(scope);
+        const checked = rows.filter(optionIsSelected);
+        if (checked.length > 1) return failure('selection-invalid');
+        const candidates = matchingEffortRows(scope);
+        if (candidates.length > 1) return failure('selection-invalid');
+        const option = candidates[0];
+        if (!option) return null;
+        if (resolveScope() !== scope || inspection.ambiguous || !inspection.active) return failure('selection-invalid');
+        const readModelControls = () => {
+          const parent = inspection.root();
+          const scopes = Array.from(parent?.querySelectorAll('[data-model-picker-view="models"]') || []);
+          const rows = scopes.flatMap(modelScope => Array.from(modelScope.querySelectorAll('[role="menuitemradio"], [role="radio"]')))
+            .filter(row => isVisible(row) && optionIsSelected(row));
+          const openers = Array.from(parent?.querySelectorAll(SUBMENU_OPENER_SELECTOR) || []).filter(node =>
+            isVisible(node) && nodeLabel(node).startsWith('model') && !containsAny(nodeLabel(node), EFFORT_WORDS));
+          return [trigger, ...rows, ...openers].map(node => ({ node,
+            label: node.textContent || '', ariaLabel: node.getAttribute('aria-label'),
+            id: node.id || null, role: node.getAttribute('role'), testId: node.getAttribute('data-testid'),
+            checked: node.getAttribute('aria-checked'), controls: node.getAttribute('aria-controls') }));
+        };
+        if (isOptionDisabled(option)) {
+          const root = inspection.root();
+          const optionId = option.id || null;
+          const optionLabel = option.textContent || '';
+          const optionAriaLabel = option.getAttribute('aria-label');
+          const modelControls = readModelControls();
+          const selectedModels = modelControls.filter(value => value.checked === 'true' &&
+            value.node.matches('[role="menuitemradio"], [role="radio"]'));
+          const selectedModelLabel = selectedModels.length === 1 ? selectedModels[0].label.normalize('NFC').trim() : '';
+          const quotaModel = ['GPT-6', 'Latest', '最新', '최신'].includes(selectedModelLabel) ? 'GPT-6'
+            : selectedModelLabel === 'GPT-5.6 Sol' ? 'GPT-5.6 Sol' : null;
+          const stable = () => {
+            const currentModels = readModelControls();
+            const currentRows = matchingEffortRows(scope);
+            return inspection.active && !inspection.ambiguous && inspection.root() === root &&
+              resolveScope() === scope && scope.contains(option) && isVisible(option) && isOptionDisabled(option) &&
+              (option.id || null) === optionId && (option.textContent || '') === optionLabel &&
+              option.getAttribute('aria-label') === optionAriaLabel && currentRows.length === 1 && currentRows[0] === option &&
+              effortRows(scope).filter(optionIsSelected).length <= 1 &&
+              currentModels.length === modelControls.length && currentModels.every((value, index) => {
+                const before = modelControls[index];
+                return value.node === before.node && value.label === before.label && value.ariaLabel === before.ariaLabel &&
+                  value.checked === before.checked && value.controls === before.controls;
+              });
+          };
+          const priorIds = new Set(describedIds(option));
+          tooltipOwner = { row: option, priorIds };
+          const unavailable = (notice, rawText = null) => failure('option-disabled', {
+            label: redactDiagnosticText(optionLabel, 80) || null, notice,
+            ...(TARGET_LEVEL === 'pro' && quotaModel === 'GPT-6' &&
+                'GPT-6' === 'GPT-6'
+              ? { unavailableModel: 'GPT-6' } : {}),
+            ...(TARGET_LEVEL === 'pro' && quotaModel === 'GPT-6' &&
+                quotaModel && typeof rawText === 'string' && rawText.length > 0 && rawText.length <= 2048
+              ? { quotaSample: { model: quotaModel, notice: rawText } } : {}),
+          }, notice ? { disabledReason: { source: 'fresh-row-tooltip', ownerKey: redactDiagnosticText(inspection.ownerKey) } } : {});
+          if (!stable()) return failure('selection-invalid');
+          if (priorIds.size > 8) return unavailable(null);
+          const hovered = dispatchHoverSequence(option, () => {
+            readFreshTooltips();
+            return stable() && !tooltipObservationAmbiguous;
+          }, false);
+          readFreshTooltips();
+          if (!hovered || tooltipObservationAmbiguous) return failure('selection-invalid');
+          const deadline = performance.now() + 400;
+          while (performance.now() < deadline) {
+            const fresh = readFreshTooltips();
+            if (!stable() || tooltipObservationAmbiguous) return failure('selection-invalid');
+            if (fresh.length > 1 || fresh.some(({ id }) => nodesWithId(id).length !== 1)) return unavailable(null);
+            if (fresh.length === 1 && isVisible(fresh[0].node)) {
+              const rawText = fresh[0].node.textContent;
+              const notice = nonEmptyNotice(rawText);
+              if (notice) return stable() ? unavailable(notice, rawText) : failure('selection-invalid');
+            }
+            await inspection.sleep(50);
+          }
+          return stable() ? unavailable(null) : failure('selection-invalid');
+        }
+        const root = inspection.root();
+        const identity = { id: option.id || null, label: option.textContent || '', ariaLabel: option.getAttribute('aria-label'),
+          role: option.getAttribute('role'), testId: option.getAttribute('data-testid') };
+        const modelControls = readModelControls();
+        const stableEnabled = (afterClick = false) => {
+          const matches = matchingEffortRows(scope);
+          const currentModels = readModelControls();
+          return inspection.active && !inspection.ambiguous && inspection.root() === root && resolveScope() === scope &&
+            scope.contains(option) && isVisible(option) && !isOptionDisabled(option) &&
+            (option.id || null) === identity.id && (option.textContent || '') === identity.label &&
+            option.getAttribute('aria-label') === identity.ariaLabel && option.getAttribute('role') === identity.role &&
+            option.getAttribute('data-testid') === identity.testId && matches.length === 1 && matches[0] === option &&
+            effortRows(scope).filter(optionIsSelected).length <= 1 && currentModels.length === modelControls.length &&
+            currentModels.every((value, index) => {
+              const before = modelControls[index];
+              return value.node === before.node && value.id === before.id && value.role === before.role &&
+                value.testId === before.testId && value.checked === before.checked && value.controls === before.controls &&
+                ((afterClick && value.node === trigger) || (value.label === before.label && value.ariaLabel === before.ariaLabel));
+            });
+        };
+        if (!stableEnabled()) return failure('selection-invalid');
+        if (optionIsSelected(option)) return checked.length === 1 && checked[0] === option
+          ? { status: 'already-selected', label: identity.label } : failure('selection-invalid');
+        if (!dispatchClickSequence(option, () => stableEnabled())) return failure('selection-invalid');
+        await sleep(100);
+        if (inspection.rootGone()) return { status: 'pending', selectionIssued: true };
+        if (!stableEnabled(true) || !optionIsSelected(option)) return failure('selection-invalid');
+        const after = effortRows(scope).filter(optionIsSelected);
+        if (after.length !== 1 || after[0] !== option) return failure('selection-invalid');
+        return { status: 'switched', label: option.textContent || null };
+      };
+      const inspectMenu = (menu) => {
+        const slider = resolveDirectEffortSlider(menu);
+        if (slider === 'pending') return { status: 'pending' };
+        if (slider === 'wrong-model' || slider === 'ambiguous-model') return { status: 'selection_unknown' };
+        if (slider === null) return { status: 'selection_unknown' };
+        if (slider) {
+          const target = TARGET_MODEL_KIND === 'pro' && TARGET_LEVEL === 'extended' ? 'pro' : TARGET_LEVEL;
+          if (['light', 'standard', 'extended', 'extra-high', 'pro'].includes(target) &&
+              !slider.levelOrder.includes(target)) return { status: 'capability_unavailable', ...(INSPECTION_EVIDENCE ? {
+                selectedLevel: slider.level, basis: 'slider-range', capabilityKey: 'range:' + slider.maximum,
+              } : {}) };
+          if (isOptionDisabled(slider.control)) return { status: 'capability_unavailable', ...(INSPECTION_EVIDENCE ? {
+            selectedLevel: slider.level, basis: 'disabled-slider', capabilityKey: 'disabled:' + slider.maximum,
+          } : {}) };
+          const compatible = slider.level === target || (TARGET_IS_GPT56_MODEL && TARGET_LEVEL === 'heavy' && slider.level === 'pro');
+          return { status: compatible ? 'ready' : 'selection_unknown', ...(INSPECTION_EVIDENCE ? {
+            selectedLevel: slider.level, basis: 'slider-label-and-index', capabilityKey: 'slider:' + slider.maximum,
+          } : {}) };
+        }
+        const candidates = matchingEffortRows(menu);
+        if (candidates.length > 1) return { status: 'selection_unknown' };
+        const option = candidates[0];
+        if (!option) return null;
+        if (isOptionDisabled(option)) return { status: 'capability_unavailable', ...(INSPECTION_EVIDENCE ? {
+          basis: 'disabled-tier-row', capabilityKey: 'disabled-row:' + normalize(option.textContent || ''),
+        } : {}) };
+        const selected = effortRows(menu).filter(optionIsSelected);
+        const selectedText = selected.length === 1 ? normalize(selected[0].textContent || '') : '';
+        const levels = Object.entries(TARGET_LEVEL_TOKENS).filter(([, tokens]) => tokens.some((token) => normalize(token) === selectedText));
+        return { status: selected.length === 1 && selected[0] === option ? 'ready' : 'selection_unknown', ...(INSPECTION_EVIDENCE ? {
+          selectedLevel: levels.length === 1 ? levels[0][0] : null, basis: 'checked-tier-row', capabilityKey: 'row:' + TARGET_LEVEL,
+        } : {}) };
+      };
+      const evidence = (result, parent) => {
+        if (!INSPECTION_EVIDENCE) return result;
+        const modelTrigger = findModelButton();
+        const root = modelTrigger === trigger ? parent : null;
+        const checked = Array.from(root?.querySelectorAll?.('[role="menuitemradio"][aria-checked="true"]') || [])
+          .filter((row) => isVisible(row) && /\d+\.\d+/.test(row.textContent || ''));
+        const opener = Array.from(root?.querySelectorAll?.(SUBMENU_OPENER_SELECTOR) || []).find((item) =>
+          isVisible(item) && isSubmenuOpener(item) && nodeLabel(item).startsWith('model') && !containsAny(nodeLabel(item), EFFORT_WORDS));
+        const modelText = checked.length === 1 ? checked[0].textContent || '' : '';
+        const versionsIn = (text) => [...new Set(text.match(/\d+\.\d+/g) || [])];
+        const versions = versionsIn(modelText);
+        const canonicalVersion = versions.length === 1 ? versions[0] : null;
+        // A tier named Instant or Pro alone never establishes a model variant.
+        const variantRows = Array.from(root?.querySelectorAll?.('[aria-label="Model options"]') || [])
+          .filter((scope) => isVisible(scope))
+          .flatMap((scope) => Array.from(scope.querySelectorAll('[role="radio"][aria-checked="true"]')))
+          .filter((row) => isVisible(row));
+        const variantFrom = (text, versionlessRadio = false) => {
+          const label = text.replace(/thinking effort/gi, '').replace(/thinking time/gi, '');
+          const thinking = /\bthinking\b/i.test(label);
+          const instant = /\binstant\b/i.test(label);
+          if (thinking === instant) return null;
+          const versions = versionsIn(label);
+          if (!canonicalVersion || (versions.length === 0 ? !versionlessRadio :
+              versions.length !== 1 || versions[0] !== canonicalVersion)) return null;
+          return { kind: thinking ? 'thinking' : 'instant', version: canonicalVersion };
+        };
+        const sources = [
+          (trigger.getAttribute('aria-label') || '') + ' ' + (trigger.innerText || trigger.textContent || ''),
+          opener?.textContent || '', modelText,
+        ];
+        const hasVariantWord = (text) => /\b(?:thinking|instant)\b/i.test(
+          text.replace(/thinking effort/gi, '').replace(/thinking time/gi, ''));
+        const semanticSource = sources.find(hasVariantWord) || '';
+        const variant = variantRows.length ?
+          (variantRows.length === 1 ? variantFrom(variantRows[0].textContent || '', true) : null) :
+          variantFrom(semanticSource);
+        return { ...result, ownerKey: trigger.id || trigger.getAttribute('aria-controls') || null,
+          canonicalVersion, variantCanonicalVersion: variant?.version || null,
+          observedModelKind: variant?.kind || null };
+      };
+      const inspect = async () => {
+        inspection.openRoot();
+        const deadline = performance.now() + MAX_WAIT_MS;
+        let menu = inspection.root();
+        while (!menu && inspection.active && !inspection.ambiguous && performance.now() < deadline) { await inspection.sleep(100); if (inspection.active) menu = inspection.root(); }
+        if (!inspection.active) return { status: 'selection_unknown' };
+        if (inspection.ambiguous) return { status: 'selection_unknown' };
+        if (!menu) return { status: 'pending' };
+        if (OWNED_SELECTION) {
+          const result = await selectDirectEffortSlider(menu);
+          if (result) return result;
+          const selected = await selectOwnedOption(menu, () => inspection.root());
+          if (selected) return selected;
+        }
+        const direct = inspectMenu(menu);
+        if (direct) return evidence(direct, menu);
+        let view = menu.querySelector(ADVANCED_VIEW_SELECTOR);
+        if (!isVisible(view)) {
+          const toggles = Array.from(menu.querySelectorAll('[role="menuitem"], [data-model-picker-view-toggle="true"]'))
+            .filter(node => isVisible(node) && containsAny(nodeLabel(node), ADVANCED_WORDS) && inspection.disclosure(node, 'advanced'));
+          if (toggles.length !== 1) return { status: 'selection_unknown' };
+          const resolveView = inspection.openSurface(toggles[0],
+            () => Array.from(inspection.root()?.querySelectorAll(ADVANCED_VIEW_SELECTOR) || []), 'advanced', true,
+            node => containsAny(nodeLabel(node), ADVANCED_WORDS));
+          view = resolveView();
+          while (!view && inspection.active && !inspection.ambiguous && performance.now() < deadline) {
+            await inspection.sleep(100); if (inspection.active) view = resolveView();
+          }
+          if (!inspection.active) return { status: 'selection_unknown' };
+          if (inspection.ambiguous) return { status: 'selection_unknown' };
+          if (!view) return { status: 'pending' };
+        }
+        const findOwnedOpener = () => {
+          const root = inspection.root();
+          if (!root || !root.contains(view)) return null;
+          const openers = Array.from(view.querySelectorAll(SUBMENU_OPENER_SELECTOR)).filter(node =>
+            isVisible(node) && containsAny(nodeLabel(node), EFFORT_WORDS) && inspection.disclosure(node, 'submenu'));
+          return openers.length === 1 ? openers[0] : null;
+        };
+        let opener = findOwnedOpener();
+        while (!opener && inspection.active && performance.now() < deadline) {
+          await inspection.sleep(100); if (inspection.active) opener = findOwnedOpener();
+        }
+        if (!inspection.active) return { status: 'selection_unknown' };
+        if (!opener) return { status: 'pending' };
+        const resolveSubmenu = inspection.openSurface(opener, () => {
+          const candidates = Array.from(document.querySelectorAll(MENU_CONTAINER_SELECTOR));
+          const id = opener.getAttribute('aria-controls');
+          const controlled = id ? document.getElementById(id) : null;
+          if (controlled && !candidates.includes(controlled)) candidates.push(controlled);
+          return candidates.filter(node => node !== inspection.root() && countDistinctTierRows(node) >= 2);
+        }, 'submenu', false, node => containsAny(nodeLabel(node), EFFORT_WORDS));
+        let submenu = resolveSubmenu();
+        while (!submenu && inspection.active && !inspection.ambiguous && performance.now() < deadline) {
+          await inspection.sleep(100); if (inspection.active) submenu = resolveSubmenu();
+        }
+        if (!inspection.active) return { status: 'selection_unknown' };
+        if (inspection.ambiguous) return { status: 'selection_unknown' };
+        if (!submenu) return { status: 'pending' };
+        if (OWNED_SELECTION) {
+          return await selectOwnedOption(submenu, resolveSubmenu) || failure('selection-invalid');
+        }
+        return evidence(inspectMenu(submenu) || { status: 'selection_unknown' }, menu);
+      };
+      try {
+        const observed = await inspect();
+        const result = await inspection.cleanup() ? observed : { status: 'selection_unknown' };
+        return OWNED_SELECTION && !['already-selected', 'switched', 'option-disabled', 'pending'].includes(result.status)
+          ? { status: 'selection-invalid', reason: result.status } : result;
+      } catch (error) {
+        await inspection.cleanup().catch(() => false);
+        throw error;
+      }
+    }
+    let composerEffortPill = findComposerEffortPill();
+    let modelBtn = findModelButton();
+    const modelKindFromLegacyTrailing = (trailing) => {
+      const row = trailing.closest?.(
+        '[role="menuitem"], [role="menuitemradio"], [data-radix-collection-item]',
+      );
+      const idText = normalize(
+        (row?.getAttribute?.('data-testid') ?? '') + ' ' +
+        (trailing.getAttribute?.('data-testid') ?? '')
+      );
+      if (!idText.includes('model switcher')) return null;
+      const modelPart = normalize(idText.replace(/\bthinking effort\b.*$/, ''));
+      if (hasToken(modelPart, 'pro')) return 'pro';
+      if (hasToken(modelPart, 'thinking')) return 'thinking';
+      if (hasToken(modelPart, 'instant')) return 'instant';
+      return null;
+    };
+    const legacyEffortOwnerIsReady = () => {
+      if (
+        TARGET_MODEL_KIND === 'pro' &&
+        TARGET_LEVEL === 'extended' &&
+        isVisible(document.querySelector(INTELLIGENCE_MENU_SELECTOR))
+      ) {
+        return true;
+      }
+      const expectedKind = TARGET_MODEL_KIND || modelKindFromNode(modelBtn);
+      return Boolean(
+        expectedKind &&
+        findTrailingButtons().some(
+          (button) => isVisible(button) && modelKindFromLegacyTrailing(button) === expectedKind,
+        ),
+      );
+    };
+    let attemptedModelButton =
+      modelBtn?.getAttribute?.('aria-expanded') === 'true' ? modelBtn : null;
+    const effortOwnerDeadline = performance.now() + MAX_WAIT_MS;
+    while (!composerEffortPill && performance.now() < effortOwnerDeadline) {
+      if (
+        modelBtn &&
+        attemptedModelButton !== modelBtn &&
+        modelBtn.getAttribute?.('aria-expanded') !== 'true'
+      ) {
+        dispatchClickSequence(modelBtn);
+        attemptedModelButton = modelBtn;
+        await sleep(INITIAL_WAIT_MS);
+      }
+      if (modelBtn && legacyEffortOwnerIsReady()) break;
+      await sleep(100);
+      composerEffortPill = findComposerEffortPill();
+      modelBtn = findModelButton();
+      if (modelBtn?.getAttribute?.('aria-expanded') === 'true') {
+        attemptedModelButton = modelBtn;
+      }
+    }
+    if (composerEffortPill) {
+      if (attemptedModelButton && attemptedModelButton !== composerEffortPill) closeOpenMenus();
+      // In the unified Intelligence picker the composer pill shows the current
+      // EFFORT ("Pro", "High"), not the model. Reading a Pro *model* out of it would
+      // lift the Pro-row exclusion in findOptionInMenu and let a lower-tier request
+      // settle on Pro. Only a pill naming a tier and nothing else qualifies: legacy
+      // pills read "Pro Extended" (model + effort) and must keep naming their model,
+      // or a Pro Extended user asking for extended would be moved down to High.
+      const pillLabel = normalize(
+        (composerEffortPill.getAttribute?.('aria-label') ?? '') +
+          ' ' +
+          (composerEffortPill.textContent ?? ''),
+      );
+      const pillIsBareEffortTier = Object.values(TARGET_LEVEL_TOKENS).some((tokens) =>
+        tokens.some((token) => normalize(token) === pillLabel),
+      );
+      const pillNamesEffortNotModel =
+        TARGET_IS_ASTRA_LATEST ||
+        TARGET_IS_GPT56_MODEL ||
+        (pillIsBareEffortTier && Boolean(document.querySelector(INTELLIGENCE_MENU_SELECTOR)));
+      const composerModelKind =
+        TARGET_MODEL_KIND ||
+        (pillNamesEffortNotModel ? 'versioned' : modelKindFromNode(composerEffortPill));
+      if (composerEffortPill.getAttribute?.('aria-expanded') !== 'true') {
+        dispatchClickSequence(composerEffortPill);
+        await sleep(INITIAL_WAIT_MS);
+      }
+      const deadline = performance.now() + MAX_WAIT_MS;
+      while (performance.now() < deadline) {
+        const menu = findVisibleEffortMenu(composerEffortPill);
+        if (menu) {
+          const sliderResult = await selectDirectEffortSlider(menu);
+          if (sliderResult) return sliderResult;
+          const proEffortResult = await selectProEffortFromSubmenu();
+          if (proEffortResult) {
+            return proEffortResult;
+          }
+          // Flat rows win when present; only descend into Advanced -> Effort when
+          // this menu has no matching tier of its own (the slider layout).
+          if (!findOptionInMenu(menu, composerModelKind)) {
+            const advancedResult = await selectEffortFromAdvancedSubmenu(menu, composerModelKind);
+            if (advancedResult) {
+              return advancedResult;
+            }
+          }
+          return selectAndVerify(
+            composerEffortPill,
+            () => {
+              const currentMenu = findVisibleEffortMenu(composerEffortPill);
+              return currentMenu ? findOptionInMenu(currentMenu, composerModelKind) : null;
+            },
+            composerModelKind,
+          );
+        }
+        await sleep(100);
+      }
+      const result = failure('menu-not-found', {
+        modelKind: composerModelKind,
+      });
+      closeOpenMenus();
+      return result;
+    }
+
+    // Older ChatGPT layouts attach effort controls to rows inside the model
+    // picker. Keep these compatibility paths after the standalone pill owner.
+    const findEffortRow = (node) => {
+      let current = node instanceof HTMLElement ? node.parentElement : null;
+      while (current && current !== document.body) {
+        if (current.getAttribute?.('data-model-picker-thinking-effort-row') === 'true') {
+          return current;
+        }
+        current = current.parentElement;
+      }
+      return null;
+    };
+    const rowIsSelected = (row) => {
+      if (!(row instanceof HTMLElement)) return false;
+      const modelItem = row.querySelector('[data-model-picker-thinking-effort-menu-item="true"], [role="menuitemradio"]');
+      if (optionIsSelected(modelItem)) return true;
+      return Boolean(
+        row.querySelector(
+          '[aria-checked="true"], [aria-selected="true"], [aria-current="true"], [data-selected="true"], [data-state="checked"], [data-state="selected"], [data-state="on"]',
+        ),
+      );
+    };
+    const rowForTrailing = (trailing) =>
+      trailing.closest('[role="menuitem"], [role="menuitemradio"], [data-radix-collection-item]');
+    const rowTextForTrailing = (trailing) => {
+      const row = rowForTrailing(trailing) || findEffortRow(trailing);
+      return normalize(
+        (row?.getAttribute?.('aria-label') ?? '') + ' ' +
+        (row?.getAttribute?.('data-testid') ?? '') + ' ' +
+        (row?.textContent ?? '') + ' ' +
+        (trailing.getAttribute?.('aria-label') ?? '') + ' ' +
+        (trailing.getAttribute?.('data-testid') ?? '')
+      );
+    };
+    const modelKindFromTrailing = modelKindFromLegacyTrailing;
+    const trailingMatchesTargetModelKind = (trailing) => {
+      if (!TARGET_MODEL_KIND) return false;
+      const idKind = modelKindFromTrailing(trailing);
+      if (idKind) return idKind === TARGET_MODEL_KIND;
+      const text = rowTextForTrailing(trailing);
+      if (TARGET_MODEL_KIND === 'pro') {
+        return hasToken(text, 'pro') && !hasToken(text, 'thinking');
+      }
+      if (TARGET_MODEL_KIND === 'thinking') {
+        return hasToken(text, 'thinking') && !hasToken(text, 'pro');
+      }
+      if (TARGET_MODEL_KIND === 'instant') {
+        return hasToken(text, 'instant') && !hasToken(text, 'thinking') && !hasToken(text, 'pro');
+      }
+      return false;
+    };
+    const pickSingleStableTrailing = (trailings) => {
+      const visible = trailings.filter((trailing) => isVisible(trailing));
+      return visible.length === 1 ? visible[0] : null;
+    };
+    const pickTrailingForCurrentModel = () => {
+      const trailings = findTrailingButtons();
+      if (trailings.length === 0) return null;
+      if (trailings.length === 1) return trailings[0];
+      // Prefer the trailing button whose model row is currently selected.
+      for (const t of trailings) {
+        const row = findEffortRow(t);
+        if (rowIsSelected(row)) return t;
+      }
+      if (TARGET_MODEL_KIND) {
+        const targetTrailings = trailings.filter((t) => trailingMatchesTargetModelKind(t));
+        return pickSingleStableTrailing(targetTrailings) || KIND_NOT_FOUND;
+      }
+      return null;
+    };
+
+    const modelButtonDeadline = performance.now() + MAX_WAIT_MS;
+    while (!modelBtn && performance.now() < modelButtonDeadline) {
+      await sleep(100);
+      modelBtn = findModelButton();
+    }
+    if (!modelBtn) {
+      return failure('chip-not-found');
+    }
+    // Open model menu (idempotent — leaves it open if already open).
+    if (
+      modelBtn.getAttribute('aria-expanded') !== 'true' &&
+      !legacyEffortOwnerIsReady()
+    ) {
+      dispatchClickSequence(modelBtn);
+      await sleep(INITIAL_WAIT_MS);
+    }
+
+    // ---------- COMPATIBILITY UI: unified "Intelligence" effort picker ----------
+    // One observed ChatGPT layout replaced the per-model trailing buttons with a single
+    // "Intelligence" menu ([data-testid="composer-intelligence-picker-content"]),
+    // whose role="menuitemradio" rows are the effort tiers. We verify the checked
+    // radio instead of trusting the composer-pill label; non-Pro targets also
+    // explicitly skip Pro rows before matching effort labels.
+    if (TARGET_MODEL_KIND === 'pro' && TARGET_LEVEL === 'extended') {
+      const matchesProExtended = (node) => {
+        const text = normalize(
+          (node?.textContent ?? '') + ' ' + (node?.getAttribute?.('aria-label') ?? ''),
+        );
+        return hasPhrase(text, 'pro') && hasExtendedWord(text);
+      };
+      const findProExtendedOption = () => {
+        const menu = document.querySelector(INTELLIGENCE_MENU_SELECTOR);
+        if (!isVisible(menu)) return null;
+        for (const item of menu.querySelectorAll(
+          '[role="menuitemradio"], [role="menuitem"], [role="option"]',
+        )) {
+          if (matchesProExtended(item)) return item;
+        }
+        return null;
+      };
+      let proExtended = null;
+      const intelligenceDeadline = performance.now() + INTELLIGENCE_WAIT_MS;
+      while (performance.now() < intelligenceDeadline) {
+        proExtended = findProExtendedOption();
+        if (proExtended) break;
+        await sleep(100);
+      }
+      if (proExtended) {
+        return selectAndVerify(modelBtn, findProExtendedOption);
+      }
+      // Intelligence menu absent (older UI) or its Pro Extended row is missing:
+      // fall through to the legacy trailing-button path below.
+    }
+
+    let trailing = null;
+    const trailingDeadline = performance.now() + MAX_WAIT_MS;
+    while (performance.now() < trailingDeadline) {
+      trailing = pickTrailingForCurrentModel();
+      if (trailing) break;
+      await sleep(100);
+    }
+    if (!trailing) {
+      const result = failure('chip-not-found');
+      closeOpenMenus();
+      return result;
+    }
+    if (trailing.kindNotFound) {
+      const result = failure('model-kind-not-found', { modelKind: TARGET_MODEL_KIND });
+      closeOpenMenus();
+      return result;
+    }
+
+    dispatchClickSequence(trailing);
+    await sleep(STEP_WAIT_MS);
+
+    // Resolve the effort submenu via aria-controls when ChatGPT exposes it,
+    // otherwise fall back to scanning newly opened menus for our level tokens.
+    const resolveEffortMenu = () => {
+      const id = trailing.getAttribute('aria-controls');
+      if (id) {
+        const node = document.getElementById?.(id);
+        if (isEffortMenu(node)) return node;
+      }
+      const menus = document.querySelectorAll(MENU_CONTAINER_SELECTOR);
+      let best = null;
+      for (const menu of menus) {
+        if (menu === modelBtn || menu.contains(trailing)) continue;
+        if (!isVisible(menu)) continue;
+        const hits = countEffortLevels(menu);
+        if (hits >= 2 && (!best || hits > best.hits)) best = { menu, hits };
+      }
+      return best?.menu ?? null;
+    };
+
+    let effortMenu = null;
+    const effortDeadline = performance.now() + MAX_WAIT_MS;
+    while (performance.now() < effortDeadline) {
+      effortMenu = resolveEffortMenu();
+      if (effortMenu) break;
+      await sleep(100);
+    }
+    if (!effortMenu) {
+      const result = failure('menu-not-found');
+      closeOpenMenus();
+      return result;
+    }
+
+    return selectAndVerify(trailing, () => {
+      const currentMenu = resolveEffortMenu();
+      return currentMenu ? findOptionInMenu(currentMenu) : null;
+    });
+  })();
+}

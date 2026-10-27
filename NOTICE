@@ -1,0 +1,59 @@
+Alcuin
+Copyright 2026 Ryan Duguid (https://github.com/ryanduguid)
+
+Ryan Duguid's contributions are licensed under the Functional Source
+License, Version 1.1, ALv2 Future License (FSL-1.1-ALv2); see LICENSE.
+Retained third-party material remains under its own licence, as stated below.
+
+For each version licensed under FSL-1.1-ALv2, an additional licence under the
+Apache License, Version 2.0 becomes effective on the second anniversary of the
+date that version was made available.
+
+Redistribution under FSL-1.1-ALv2 requires including its terms or a link to
+them and keeping the copyright notices supplied with the software.
+Redistribution under another applicable licence follows that licence's
+conditions.
+
+Alcuin is a Rust port of a Node tool derived from Oracle
+(https://github.com/steipete/oracle) by Peter Steinberger. Portions from Oracle remain under
+the MIT License:
+
+MIT License
+
+Copyright (c) 2026 Peter Steinberger
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Third-party material included in this repository:
+
+- chrome-launcher 1.2.1 (https://github.com/GoogleChrome/chrome-launcher),
+  Copyright 2016 Google Inc., Apache License 2.0. The Chrome discovery in
+  src/browser_desktop.rs and src/browser_macos.rs is adapted from it and modified.
+  Licence: data/LICENSE.chrome-launcher.
+- hyper 1.12.0 (https://github.com/hyperium/hyper), Copyright (c) 2014-2026 Sean McArthur,
+  MIT License. Vendored in vendor/hyper with 4 modified files listed in
+  vendor/hyper/PATCH.json. Licence: vendor/hyper/LICENSE.
+- gpt-tokenizer 4.0.0 (https://github.com/niieani/gpt-tokenizer), Copyright (c) 2023-2024
+  Bazyli Brzoska, MIT License. src/tokenizer.rs follows its o200k_base split pattern.
+  Licence: data/LICENSE.gpt-tokenizer.
+- o200k_base.tiktoken, the o200k_base encoding published with tiktoken
+  (https://github.com/openai/tiktoken), Copyright (c) 2022 OpenAI, Shantanu Jain,
+  MIT License. data/o200k_base.tiktoken matches tiktoken's published SHA-256
+  446a9538cb6c348e3516120d7c08b09f57c36495e2acfffe59a5bf8b0cfb1a2d.
+  Licence: data/LICENSE.tiktoken.

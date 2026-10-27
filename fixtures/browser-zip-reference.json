@@ -1,0 +1,79 @@
+{
+  "sourceRevision": "8b9eaf68e7612448fb3bf43eab0d63a42e73c325",
+  "compiledModuleSha256": "23275578b4dc47c84964763fe65e5ee598f21fdca0bb3ba83602a906082ed975",
+  "cases": [
+    {
+      "name": "empty",
+      "entries": [],
+      "expectedBase64": "UEsFBgAAAAAAAAAAAAAAAAAAAAAAAA=="
+    },
+    {
+      "name": "ascii",
+      "entries": [
+        {
+          "path": "public.txt",
+          "contentBase64": "UFVCTElDIGZpeHR1cmUK"
+        }
+      ],
+      "expectedBase64": "UEsDBBQAAAgAAAAAIQAbdmFYDwAAAA8AAAAKAAAAcHVibGljLnR4dFBVQkxJQyBmaXh0dXJlClBLAQIUABQAAAgAAAAAIQAbdmFYDwAAAA8AAAAKAAAAAAAAAAAAAAAAAAAAAABwdWJsaWMudHh0UEsFBgAAAAABAAEAOAAAADcAAAAAAA=="
+    },
+    {
+      "name": "binary",
+      "entries": [
+        {
+          "path": "public.bin",
+          "contentBase64": "AAGA/v8="
+        }
+      ],
+      "expectedBase64": "UEsDBBQAAAgAAAAAIQBGqJY4BQAAAAUAAAAKAAAAcHVibGljLmJpbgABgP7/UEsBAhQAFAAACAAAAAAhAEaoljgFAAAABQAAAAoAAAAAAAAAAAAAAAAAAAAAAHB1YmxpYy5iaW5QSwUGAAAAAAEAAQA4AAAALQAAAAAA"
+    },
+    {
+      "name": "unicode_and_collisions",
+      "entries": [
+        {
+          "path": "C:\\PUBLIC\\folder\\café.txt",
+          "contentBase64": "UFVCTElDIGNhZsOpIPCfpoA="
+        },
+        {
+          "path": "/PUBLIC/./folder/../café.txt",
+          "contentBase64": "UFVCTElDIHNlY29uZA=="
+        },
+        {
+          "path": "../",
+          "contentBase64": ""
+        }
+      ],
+      "expectedBase64": "UEsDBBQAAAgAAAAAIQBb3RfDEQAAABEAAAAXAAAAUFVCTElDL2ZvbGRlci9jYWbDqS50eHRQVUJMSUMgY2Fmw6kg8J+mgFBLAwQUAAAIAAAAACEA6+LHtQ0AAAANAAAAGQAAAFBVQkxJQy9mb2xkZXIvY2Fmw6ktMi50eHRQVUJMSUMgc2Vjb25kUEsDBBQAAAgAAAAAIQAAAAAAAAAAAAAAAAAKAAAAZmlsZS0zLnR4dFBLAQIUABQAAAgAAAAAIQBb3RfDEQAAABEAAAAXAAAAAAAAAAAAAAAAAAAAAABQVUJMSUMvZm9sZGVyL2NhZsOpLnR4dFBLAQIUABQAAAgAAAAAIQDr4se1DQAAAA0AAAAZAAAAAAAAAAAAAAAAAEYAAABQVUJMSUMvZm9sZGVyL2NhZsOpLTIudHh0UEsBAhQAFAAACAAAAAAhAAAAAAAAAAAAAAAAAAoAAAAAAAAAAAAAAAAAigAAAGZpbGUtMy50eHRQSwUGAAAAAAMAAwDEAAAAsgAAAAAA"
+    },
+    {
+      "name": "case_and_dot_paths",
+      "entries": [
+        {
+          "path": "a.b/file",
+          "contentBase64": "UFVCTElDIG9uZQ=="
+        },
+        {
+          "path": "a.b/file",
+          "contentBase64": "UFVCTElDIHR3bw=="
+        },
+        {
+          "path": ".public",
+          "contentBase64": "UFVCTElDIHRocmVl"
+        },
+        {
+          "path": ".public",
+          "contentBase64": "UFVCTElDIGZvdXI="
+        },
+        {
+          "path": "PUBLIC.txt",
+          "contentBase64": "UFVCTElDIGZpdmU="
+        },
+        {
+          "path": "public.txt",
+          "contentBase64": "UFVCTElDIHNpeA=="
+        }
+      ],
+      "expectedBase64": "UEsDBBQAAAgAAAAAIQB6uVOYCgAAAAoAAAAIAAAAYS5iL2ZpbGVQVUJMSUMgb25lUEsDBBQAAAgAAAAAIQDttfXzCgAAAAoAAAAKAAAAYS0yLmIvZmlsZVBVQkxJQyB0d29QSwMEFAAACAAAAAAhAHdW1CgMAAAADAAAAAcAAAAucHVibGljUFVCTElDIHRocmVlUEsDBBQAAAgAAAAAIQDqA0nqCwAAAAsAAAAJAAAALnB1YmxpYy0yUFVCTElDIGZvdXJQSwMEFAAACAAAAAAhAFypOkYLAAAACwAAAAoAAABQVUJMSUMudHh0UFVCTElDIGZpdmVQSwMEFAAACAAAAAAhAHAZKKEKAAAACgAAAAoAAABwdWJsaWMudHh0UFVCTElDIHNpeFBLAQIUABQAAAgAAAAAIQB6uVOYCgAAAAoAAAAIAAAAAAAAAAAAAAAAAAAAAABhLmIvZmlsZVBLAQIUABQAAAgAAAAAIQDttfXzCgAAAAoAAAAKAAAAAAAAAAAAAAAAADAAAABhLTIuYi9maWxlUEsBAhQAFAAACAAAAAAhAHdW1CgMAAAADAAAAAcAAAAAAAAAAAAAAAAAYgAAAC5wdWJsaWNQSwECFAAUAAAIAAAAACEA6gNJ6gsAAAALAAAACQAAAAAAAAAAAAAAAACTAAAALnB1YmxpYy0yUEsBAhQAFAAACAAAAAAhAFypOkYLAAAACwAAAAoAAAAAAAAAAAAAAAAAxQAAAFBVQkxJQy50eHRQSwECFAAUAAAIAAAAACEAcBkooQoAAAAKAAAACgAAAAAAAAAAAAAAAAD4AAAAcHVibGljLnR4dFBLBQYAAAAABgAGAEoBAAAqAQAAAAA="
+    }
+  ]
+}

@@ -1,0 +1,86 @@
+[
+  {
+    "input": null,
+    "output": null
+  },
+  {
+    "input": "",
+    "output": null
+  },
+  {
+    "input": "light",
+    "output": "light"
+  },
+  {
+    "input": "instant",
+    "output": "light"
+  },
+  {
+    "input": "low",
+    "output": "light"
+  },
+  {
+    "input": "standard",
+    "output": "standard"
+  },
+  {
+    "input": "medium",
+    "output": "standard"
+  },
+  {
+    "input": "extended",
+    "output": "extended"
+  },
+  {
+    "input": "high",
+    "output": "extended"
+  },
+  {
+    "input": "heavy",
+    "output": "heavy"
+  },
+  {
+    "input": "pro",
+    "output": "pro"
+  },
+  {
+    "input": "extra-high",
+    "output": "extra-high"
+  },
+  {
+    "input": "extra high",
+    "output": "extra-high"
+  },
+  {
+    "input": "extra   high",
+    "output": "extra-high"
+  },
+  {
+    "input": "extra__high",
+    "output": "extra-high"
+  },
+  {
+    "input": "EXTRA\tHIGH",
+    "output": "extra-high"
+  },
+  {
+    "input": "extrahigh",
+    "output": "extra-high"
+  },
+  {
+    "input": "xhigh",
+    "output": "extra-high"
+  },
+  {
+    "input": "unknown",
+    "output": null
+  },
+  {
+    "input": "﻿pro﻿",
+    "output": "pro"
+  },
+  {
+    "input": "pro",
+    "output": null
+  }
+]

@@ -1,0 +1,568 @@
+[
+  {
+    "command": "perf-summary <traces...>",
+    "about": "Summarise numeric browser phases from explicitly selected trace files.",
+    "options": [
+      {
+        "flags": "--json",
+        "description": "Print numeric counts and statistics as JSON."
+      }
+    ],
+    "children": []
+  },
+  {
+    "command": "browser-health",
+    "about": "Inspect login and current model/effort in a fresh tab without selecting or submitting.",
+    "options": [
+      {
+        "flags": "--json",
+        "description": "Print the advisory health result as JSON."
+      }
+    ],
+    "children": []
+  },
+  {
+    "command": "recover-native",
+    "about": "Save a completed native ChatGPT reply matched to a saved request.",
+    "options": [
+      {
+        "flags": "--request <path>",
+        "description": "Request JSON containing chatId, label and optional turnId."
+      },
+      {
+        "flags": "--write-output <path>",
+        "description": "Required new Markdown answer file; existing files are preserved."
+      }
+    ],
+    "children": []
+  },
+  {
+    "command": "serve",
+    "about": "Run Alcuin browser automation as a remote service for other machines.",
+    "options": [
+      {
+        "flags": "--host <address>",
+        "description": "Interface to bind (default 0.0.0.0)."
+      },
+      {
+        "flags": "--port <number>",
+        "description": "Port to listen on (default random)."
+      },
+      {
+        "flags": "--token <value>",
+        "description": "Access token clients must provide (random if omitted)."
+      },
+      {
+        "flags": "--max-concurrent-runs <count>",
+        "description": "Opt into concurrent runs and FIFO queueing; clamped to the host browser tab cap (default remains single-flight HTTP 409)."
+      },
+      {
+        "flags": "--max-queued-runs <count>",
+        "description": "Waiting requests in opt-in queue mode (default 8; 0 disables waiting)."
+      },
+      {
+        "flags": "--manual-login",
+        "description": "Use a dedicated Chrome profile for manual login (recommended when cookie sync is unavailable). (default: false)"
+      },
+      {
+        "flags": "--manual-login-profile-dir <path>",
+        "description": "Chrome profile directory for manual login (default ~/.oracle/browser-profile)."
+      },
+      {
+        "flags": "--browser-cookie-sync",
+        "description": "Copy cookies from this host's live Chrome profile instead of using the dedicated profile. (default: false)"
+      }
+    ],
+    "children": []
+  },
+  {
+    "command": "recover-remote <run-id>",
+    "about": "Retrieve a saved remote result into a fresh session without submitting the prompt again.",
+    "options": [
+      {
+        "flags": "--host <host:port>",
+        "description": "The alcuin serve endpoint holding the saved run."
+      },
+      {
+        "flags": "--token <value>",
+        "description": "Access token for the remote service."
+      }
+    ],
+    "children": []
+  },
+  {
+    "command": "project-sources",
+    "about": "Manage ChatGPT Project Sources as explicit shared project context.",
+    "options": [
+      {
+        "flags": "--chatgpt-url <url>",
+        "description": "ChatGPT project URL ending in /project (or browser.chatgptUrl config)."
+      },
+      {
+        "flags": "--browser-manual-login",
+        "description": "Reuse a persistent signed-in Chrome profile."
+      },
+      {
+        "flags": "--browser-manual-login-profile-dir <path>",
+        "description": "Persistent Chrome profile directory."
+      },
+      {
+        "flags": "--browser-timeout <duration>",
+        "description": "Overall browser timeout (e.g. 10m, 1h)."
+      },
+      {
+        "flags": "--browser-input-timeout <duration>",
+        "description": "Timeout waiting for the Project Sources UI."
+      },
+      {
+        "flags": "--browser-profile-lock-timeout <duration>",
+        "description": "Timeout waiting for profile launch lock."
+      },
+      {
+        "flags": "--browser-reuse-wait <duration>",
+        "description": "Wait for an existing shared Chrome to appear."
+      },
+      {
+        "flags": "--browser-max-concurrent-tabs <n>",
+        "description": "Concurrent tabs allowed for the shared profile."
+      },
+      {
+        "flags": "--browser-cookie-wait <duration>",
+        "description": "Wait before retrying cookie sync."
+      },
+      {
+        "flags": "--browser-chrome-profile <profile>",
+        "description": "Chrome profile name for cookie sync."
+      },
+      {
+        "flags": "--browser-chrome-path <path>",
+        "description": "Chrome/Chromium executable path."
+      },
+      {
+        "flags": "--browser-cookie-path <path>",
+        "description": "Explicit Chrome cookie DB path."
+      },
+      {
+        "flags": "--browser-inline-cookies <json>",
+        "description": "Inline ChatGPT cookies JSON."
+      },
+      {
+        "flags": "--browser-inline-cookies-file <path>",
+        "description": "File containing ChatGPT cookies JSON."
+      },
+      {
+        "flags": "--browser-cookie-sync",
+        "description": "Copy cookies from live Chrome (opt-in; token rotation may invalidate that session)."
+      },
+      {
+        "flags": "--browser-no-cookie-sync",
+        "description": "Skip copying cookies from Chrome."
+      },
+      {
+        "flags": "--browser-keep-browser",
+        "description": "Keep Chrome running after completion. (default: false)"
+      },
+      {
+        "flags": "--browser-hide-window",
+        "description": "Hide Chrome window after launch; no effect on Windows or Linux (macOS only). (default: false)"
+      },
+      {
+        "flags": "--browser-allow-cookie-errors",
+        "description": "Continue when cookie sync fails. (default: false)"
+      },
+      {
+        "flags": "--max-file-size-bytes <bytes>",
+        "description": "Reject uploads larger than this many bytes."
+      },
+      {
+        "flags": "--json",
+        "description": "Print structured JSON. (default: false)"
+      },
+      {
+        "flags": "-v, --verbose",
+        "description": "Enable verbose browser logging. (default: false)"
+      }
+    ],
+    "children": [
+      {
+        "command": "list",
+        "about": "List sources already attached to a ChatGPT Project.",
+        "options": [],
+        "children": []
+      },
+      {
+        "command": "add",
+        "about": "Upload files into a ChatGPT Project's persistent Sources tab.",
+        "options": [
+          {
+            "flags": "-f, --file <paths...>",
+            "description": "Files/directories or globs to add as project sources. (default: [])"
+          },
+          {
+            "flags": "--dry-run",
+            "description": "Validate files and show the upload plan without touching the browser. (default: false)"
+          }
+        ],
+        "children": []
+      }
+    ]
+  },
+  {
+    "command": "bridge",
+    "about": "Bridge a Windows-hosted ChatGPT session to Linux clients.",
+    "options": [],
+    "children": [
+      {
+        "command": "host",
+        "about": "Start a secure alcuin serve host (optionally with an SSH reverse tunnel).",
+        "options": [
+          {
+            "flags": "--bind <host:port>",
+            "description": "Local bind address for the host service (default 127.0.0.1:9473)."
+          },
+          {
+            "flags": "--token <token|auto>",
+            "description": "Service access token (default auto)."
+          },
+          {
+            "flags": "--write-connection <path>",
+            "description": "Write a connection artifact JSON (default ~/.oracle/bridge-connection.json)."
+          },
+          {
+            "flags": "--ssh <user@host>",
+            "description": "Maintain an SSH reverse tunnel to the Linux host (ssh -N -R ...)."
+          },
+          {
+            "flags": "--ssh-remote-port <port>",
+            "description": "Remote port to bind on the Linux host (default matches --bind port)."
+          },
+          {
+            "flags": "--ssh-identity <path>",
+            "description": "SSH identity file (ssh -i)."
+          },
+          {
+            "flags": "--ssh-extra-args <args>",
+            "description": "Extra args passed to ssh (quoted string)."
+          },
+          {
+            "flags": "--background",
+            "description": "Run the host in the background and write pid/log files. (default: false)"
+          },
+          {
+            "flags": "--foreground",
+            "description": "Run the host in the foreground (default). (default: false)"
+          },
+          {
+            "flags": "--respawn",
+            "hidden": true
+          },
+          {
+            "flags": "--print",
+            "description": "Print the client connection string (includes token). (default: false)"
+          },
+          {
+            "flags": "--print-token",
+            "description": "Print only the token. (default: false)"
+          }
+        ],
+        "children": []
+      },
+      {
+        "command": "client",
+        "about": "Configure this machine to use a remote alcuin serve host.",
+        "options": [
+          {
+            "flags": "--connect <connection>",
+            "description": "Connection string or path to bridge-connection.json."
+          },
+          {
+            "flags": "--config <path>",
+            "description": "Override the config file location (default ~/.oracle/config.json)."
+          },
+          {
+            "flags": "--no-write-config",
+            "description": "Do not write ~/.oracle/config.json (just validate)."
+          },
+          {
+            "flags": "--no-test",
+            "description": "Skip remote /health check."
+          },
+          {
+            "flags": "--print-env",
+            "description": "Print env var exports (includes token). (default: false)"
+          }
+        ],
+        "children": []
+      },
+      {
+        "command": "doctor",
+        "about": "Diagnose bridge connectivity and browser engine prerequisites.",
+        "options": [
+          {
+            "flags": "--verbose",
+            "description": "Show extra diagnostics. (default: false)"
+          }
+        ],
+        "children": []
+      },
+      {
+        "command": "codex-config",
+        "about": "Print a Codex CLI MCP server config snippet for alcuin-mcp.",
+        "options": [
+          {
+            "flags": "--print-token",
+            "description": "Include ORACLE_REMOTE_TOKEN in the snippet. (default: false)"
+          },
+          {
+            "flags": "--local-browser",
+            "description": "Print configuration for a local signed-in Chrome profile instead of a remote bridge. (default: false)"
+          },
+          {
+            "flags": "--oracle-home-dir <path>",
+            "description": "Override ORACLE_HOME_DIR in local browser configuration."
+          },
+          {
+            "flags": "--browser-profile-dir <path>",
+            "description": "Override ORACLE_BROWSER_PROFILE_DIR in local browser configuration."
+          }
+        ],
+        "children": []
+      },
+      {
+        "command": "claude-config",
+        "about": "Print a Claude Code MCP config snippet (.mcp.json) for alcuin-mcp.",
+        "options": [
+          {
+            "flags": "--print-token",
+            "description": "Include ORACLE_REMOTE_TOKEN in the snippet. (default: false)"
+          },
+          {
+            "flags": "--local-browser",
+            "description": "Use a local signed-in Chrome profile instead of a remote bridge. (default: false)"
+          },
+          {
+            "flags": "--oracle-home-dir <path>",
+            "description": "Override ORACLE_HOME_DIR in the generated snippet."
+          },
+          {
+            "flags": "--browser-profile-dir <path>",
+            "description": "Override ORACLE_BROWSER_PROFILE_DIR in the generated snippet."
+          }
+        ],
+        "children": []
+      }
+    ]
+  },
+  {
+    "command": "tui",
+    "about": "Launch the interactive terminal UI for humans (no automation).",
+    "options": [],
+    "children": []
+  },
+  {
+    "command": "doctor",
+    "about": "Diagnose Alcuin API provider readiness and routing.",
+    "options": [
+      {
+        "flags": "--providers",
+        "description": "Inspect API provider keys and route choices. (default: false)"
+      },
+      {
+        "flags": "--models <models>",
+        "description": "Comma-separated API model list to inspect."
+      },
+      {
+        "flags": "-m, --model <model>",
+        "description": "Single API model to inspect."
+      },
+      {
+        "flags": "--provider <provider>",
+        "description": "Choose API provider routing: auto, openai, or azure. (choices: \"auto\", \"openai\", \"azure\", default: \"auto\")"
+      },
+      {
+        "flags": "--no-azure",
+        "description": "Disable Azure OpenAI routing for this inspection."
+      },
+      {
+        "flags": "--azure-endpoint <url>",
+        "description": "Azure OpenAI Endpoint."
+      },
+      {
+        "flags": "--azure-deployment <name>",
+        "description": "Azure OpenAI Deployment Name."
+      },
+      {
+        "flags": "--azure-api-version <version>",
+        "description": "Azure OpenAI API Version."
+      },
+      {
+        "flags": "--base-url <url>",
+        "description": "Override OpenAI-compatible base URL."
+      },
+      {
+        "flags": "--json",
+        "description": "Print structured JSON. (default: false)"
+      }
+    ],
+    "children": []
+  },
+  {
+    "command": "docs",
+    "about": "Documentation maintenance utilities.",
+    "options": [],
+    "children": [
+      {
+        "command": "check",
+        "about": "Check documented CLI flags against the captured CLI help metadata.",
+        "options": [
+          {
+            "flags": "--docs-path <file...>",
+            "description": "Markdown files to check (default core shipped docs)."
+          },
+          {
+            "flags": "--json",
+            "description": "Print structured JSON. (default: false)"
+          }
+        ],
+        "children": []
+      }
+    ]
+  },
+  {
+    "command": "session [id]",
+    "about": "Attach to a stored session or list recent sessions when no ID is provided.",
+    "options": [
+      {
+        "flags": "--hours <hours>",
+        "description": "Look back this many hours when listing sessions (default 24). (default: 24)"
+      },
+      {
+        "flags": "--limit <count>",
+        "description": "Maximum sessions to show when listing (max 1000). (default: 100)"
+      },
+      {
+        "flags": "--all",
+        "description": "Include all stored sessions regardless of age. (default: false)"
+      },
+      {
+        "flags": "--clear",
+        "description": "Delete stored sessions older than the provided window (24h default). (default: false)"
+      },
+      {
+        "flags": "--hide-prompt",
+        "description": "Hide stored prompt when displaying a session. (default: false)"
+      },
+      {
+        "flags": "--render",
+        "description": "Render completed session output as markdown (rich TTY only). (default: false)"
+      },
+      {
+        "flags": "--render-markdown",
+        "description": "Alias for --render. (default: false)"
+      },
+      {
+        "flags": "--model <name>",
+        "description": "Filter sessions/output for a specific model. (default: \"\")"
+      },
+      {
+        "flags": "--path",
+        "description": "Print the stored session paths instead of attaching. (default: false)"
+      },
+      {
+        "flags": "--harvest",
+        "description": "Re-read the bound browser tab and print/save the latest assistant output. (default: false)"
+      },
+      {
+        "flags": "--live",
+        "description": "Tail the live browser tab for this session until it completes, stalls, or detaches. (default: false)"
+      },
+      {
+        "flags": "--write-output <path>",
+        "description": "Write harvested browser output to this file (requires --harvest or --live)."
+      },
+      {
+        "flags": "--browser-tab <ref>",
+        "description": "Override the browser tab ref used for harvesting/live tail (current, target id, URL, or title substring)."
+      },
+      {
+        "flags": "--no-recover",
+        "description": "Do not relaunch Chrome to reopen the saved conversation URL when --harvest/--live finds no live tab."
+      },
+      {
+        "flags": "--clean",
+        "hidden": true
+      }
+    ],
+    "children": []
+  },
+  {
+    "command": "status [id]",
+    "about": "List recent sessions (24h window by default) or attach to a session when an ID is provided.",
+    "options": [
+      {
+        "flags": "--hours <hours>",
+        "description": "Look back this many hours (default 24). (default: 24)"
+      },
+      {
+        "flags": "--limit <count>",
+        "description": "Maximum sessions to show (max 1000). (default: 100)"
+      },
+      {
+        "flags": "--all",
+        "description": "Include all stored sessions regardless of age. (default: false)"
+      },
+      {
+        "flags": "--clear",
+        "description": "Delete stored sessions older than the provided window (24h default). (default: false)"
+      },
+      {
+        "flags": "--render",
+        "description": "Render completed session output as markdown (rich TTY only). (default: false)"
+      },
+      {
+        "flags": "--render-markdown",
+        "description": "Alias for --render. (default: false)"
+      },
+      {
+        "flags": "--model <name>",
+        "description": "Filter sessions/output for a specific model. (default: \"\")"
+      },
+      {
+        "flags": "--hide-prompt",
+        "description": "Hide stored prompt when displaying a session. (default: false)"
+      },
+      {
+        "flags": "--browser-tabs",
+        "description": "List live ChatGPT browser tabs and known Alcuin session linkage. (default: false)"
+      },
+      {
+        "flags": "--clean",
+        "hidden": true
+      }
+    ],
+    "children": []
+  },
+  {
+    "command": "restart <id>",
+    "about": "Re-run a stored session as a new session (clones options).",
+    "options": [
+      {
+        "flags": "--wait",
+        "description": "Wait for the run to finish in this terminal instead of detaching."
+      },
+      {
+        "flags": "--no-wait",
+        "hidden": true
+      },
+      {
+        "flags": "--remote-host <host:port>",
+        "description": "Delegate browser runs to a remote `alcuin serve` instance."
+      },
+      {
+        "flags": "--remote-token <token>",
+        "description": "Access token for the remote `alcuin serve` instance."
+      }
+    ],
+    "children": []
+  }
+]

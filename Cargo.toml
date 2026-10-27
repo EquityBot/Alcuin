@@ -1,0 +1,86 @@
+[package]
+name = "alcuin"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "FSL-1.1-ALv2 AND MIT"
+description = "Source-backed consultations with durable sessions and guarded browser recovery"
+
+[lib]
+name = "alcuin"
+path = "src/lib.rs"
+
+[[bin]]
+name = "alcuin"
+path = "src/main.rs"
+
+[[bin]]
+name = "alcuin-mcp"
+path = "src/bin/alcuin-mcp.rs"
+
+[dependencies]
+aes = "0.9.3"
+aes-gcm = { version = "0.11.1", default-features = false, features = ["aes", "alloc", "zeroize"] }
+anyhow = "1.0.104"
+base64 = "0.23.1"
+bytes = "1.12.1"
+cbc = { version = "0.2.1", features = ["zeroize"] }
+chrono = { version = "0.4.45", features = ["serde"] }
+clap = { version = "4.6.7", features = ["derive", "env", "string"] }
+futures-util = "0.3.34"
+globset = "0.4.20"
+ignore = "0.4.33"
+http-body-util = "0.1.5"
+hyper = { version = "1.12.0", features = ["http1", "server"] }
+hyper-util = { version = "0.1.21", features = ["tokio"] }
+json5 = "1.3.1"
+pbkdf2 = "0.13.0"
+regex = "1.13.1"
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "json", "stream"] }
+rmcp = { version = "3.5.1", features = ["server", "transport-io"] }
+schemars = "1.2.3"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.154", features = ["preserve_order", "arbitrary_precision", "float_roundtrip", "raw_value"] }
+ryu-js = "1.0.3"
+rusqlite = { version = "0.40.2", default-features = false, features = ["bundled", "hooks", "limits"] }
+sha1 = "0.11.0"
+sha2 = "0.11.1"
+tiktoken-rs = "0.12.1"
+tokio = { version = "1.53.2", features = ["full"] }
+tokio-util = { version = "0.7.20", features = ["rt"] }
+tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-webpki-roots"] }
+uuid = { version = "1.28.0", features = ["v4", "serde"] }
+zip = { version = "9.0.2", default-features = false, features = ["deflate"] }
+zeroize = "1.9.1"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.190"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+secret-service = { version = "5.2.0", default-features = false, features = ["rt-tokio-crypto-rust"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3.7.0"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_Pipes", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_Graphics_Dwm", "Win32_UI_HiDpi", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
+tokio = { version = "1.53.2", features = ["test-util"] }
+
+[profile.release]
+lto = "thin"
+strip = true
+debug = 0
+
+[profile.dev]
+debug = 0
+incremental = false
+
+[profile.test]
+debug = 0
+incremental = false
+
+[patch.crates-io]
+hyper = { path = "vendor/hyper" }

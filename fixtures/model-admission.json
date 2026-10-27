@@ -1,0 +1,113 @@
+[
+  {
+    "input": null,
+    "accepted": true
+  },
+  {
+    "input": "",
+    "accepted": true
+  },
+  {
+    "input": " ",
+    "accepted": true
+  },
+  {
+    "input": "latest",
+    "accepted": true
+  },
+  {
+    "input": "Latest",
+    "accepted": true
+  },
+  {
+    "input": "openai/latest",
+    "accepted": false,
+    "error": "Alcuin only permits Latest (GPT-6) for new dispatch. Pro is first; verified Extra High fallback remains on GPT-6."
+  },
+  {
+    "input": "gpt6",
+    "accepted": true
+  },
+  {
+    "input": "gpt-6",
+    "accepted": true
+  },
+  {
+    "input": "GPT_6",
+    "accepted": true
+  },
+  {
+    "input": "gpt 6",
+    "accepted": true
+  },
+  {
+    "input": "gpt6-pro",
+    "accepted": true
+  },
+  {
+    "input": "gpt_6_astra",
+    "accepted": true
+  },
+  {
+    "input": "openai/GPT-6-Pro",
+    "accepted": true
+  },
+  {
+    "input": "gpt--6",
+    "accepted": false,
+    "error": "Alcuin only permits Latest (GPT-6) for new dispatch. Pro is first; verified Extra High fallback remains on GPT-6."
+  },
+  {
+    "input": "gpt-6--pro",
+    "accepted": false,
+    "error": "Alcuin only permits Latest (GPT-6) for new dispatch. Pro is first; verified Extra High fallback remains on GPT-6."
+  },
+  {
+    "input": "gpt-6-sol",
+    "accepted": false,
+    "error": "Alcuin only permits Latest (GPT-6) for new dispatch. Pro is first; verified Extra High fallback remains on GPT-6."
+  },
+  {
+    "input": "gpt-6-luna",
+    "accepted": false,
+    "error": "Alcuin only permits Latest (GPT-6) for new dispatch. Pro is first; verified Extra High fallback remains on GPT-6."
+  },
+  {
+    "input": "gpt-5.6",
+    "accepted": false,
+    "error": "Alcuin only permits Latest (GPT-6) for new dispatch. Pro is first; verified Extra High fallback remains on GPT-6."
+  },
+  {
+    "input": "gpt-5.6-sol",
+    "accepted": false,
+    "error": "Alcuin only permits Latest (GPT-6) for new dispatch. Pro is first; verified Extra High fallback remains on GPT-6."
+  },
+  {
+    "input": "GPT-5.6 Sol",
+    "accepted": false,
+    "error": "Alcuin only permits Latest (GPT-6) for new dispatch. Pro is first; verified Extra High fallback remains on GPT-6."
+  },
+  {
+    "input": "openai/gpt-5.6-sol",
+    "accepted": false,
+    "error": "Alcuin only permits Latest (GPT-6) for new dispatch. Pro is first; verified Extra High fallback remains on GPT-6."
+  },
+  {
+    "input": "gemini-3.5-flash",
+    "accepted": false,
+    "error": "Alcuin only permits Latest (GPT-6) for new dispatch. Pro is first; verified Extra High fallback remains on GPT-6."
+  },
+  {
+    "input": " gpt-6-pro ",
+    "accepted": true
+  },
+  {
+    "input": "﻿gpt-6-pro﻿",
+    "accepted": true
+  },
+  {
+    "input": "gpt-6-pro",
+    "accepted": false,
+    "error": "Alcuin only permits Latest (GPT-6) for new dispatch. Pro is first; verified Extra High fallback remains on GPT-6."
+  }
+]

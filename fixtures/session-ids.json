@@ -1,0 +1,78 @@
+[
+  {
+    "input": "abc",
+    "accepted": true
+  },
+  {
+    "input": "a.b",
+    "accepted": true
+  },
+  {
+    "input": "a_b",
+    "accepted": true
+  },
+  {
+    "input": "a-b",
+    "accepted": true
+  },
+  {
+    "input": "a.",
+    "accepted": false
+  },
+  {
+    "input": "../x",
+    "accepted": false
+  },
+  {
+    "input": "..",
+    "accepted": false
+  },
+  {
+    "input": "/x",
+    "accepted": false
+  },
+  {
+    "input": "x/y",
+    "accepted": false
+  },
+  {
+    "input": "x\\y",
+    "accepted": false
+  },
+  {
+    "input": ".x",
+    "accepted": false
+  },
+  {
+    "input": "CON",
+    "accepted": true
+  },
+  {
+    "input": "nul",
+    "accepted": true
+  },
+  {
+    "input": "x:y",
+    "accepted": false
+  },
+  {
+    "input": "x\u0000y",
+    "accepted": false
+  },
+  {
+    "input": "1",
+    "accepted": true
+  },
+  {
+    "input": " A",
+    "accepted": false
+  },
+  {
+    "input": "Ａ",
+    "accepted": false
+  },
+  {
+    "input": "x..y",
+    "accepted": true
+  }
+]
