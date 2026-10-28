@@ -26,11 +26,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest]
-        threads: [1, 2]
-        attempt: [1, 2, 3]
+        os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 120
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -39,13 +37,13 @@ jobs:
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      # Real-time scanning can hold newly written files, so atomic renames retry past the tests'
+      # durable-write budgets. The runner is disposable.
       - if: runner.os == 'Windows'
         shell: pwsh
-        run: |
-          Set-MpPreference -DisableRealtimeMonitoring $true
-          (Get-MpPreference).DisableRealtimeMonitoring
+        run: Set-MpPreference -DisableRealtimeMonitoring $true
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --locked -- -D warnings
       # Timing-bounded tests (1 s and 5 s durable-write and retirement budgets) fail closed when the
       # runner is contended: Windows runs them serially, Linux on two threads.
-      - run: cargo test --locked -- --test-threads=${{ matrix.threads }}
+      - run: cargo test --locked -- --test-threads=${{ matrix.os == 'windows-latest' && 1 || 2 }}
