@@ -173,7 +173,7 @@ pub(super) fn read_database(
     source.verify()?;
     let mut snapshot = Snapshot::create(&source.database, temporary, deadline, cancel)?;
     let result = (|| {
-        let connection = Connection::open_with_flags(
+        let mut connection = Connection::open_with_flags(
             &snapshot.path,
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;

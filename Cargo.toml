@@ -42,7 +42,7 @@ schemars = "1.2.3"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["preserve_order", "arbitrary_precision", "float_roundtrip", "raw_value"] }
 ryu-js = "1.0.3"
-rusqlite = { version = "0.40.2", default-features = false, features = ["bundled", "hooks", "limits"] }
+rusqlite = { version = "0.41.0", default-features = false, features = ["bundled", "hooks", "limits"] }
 sha1 = "0.11.0"
 sha2 = "0.11.1"
 tiktoken-rs = "0.12.1"
