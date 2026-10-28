@@ -797,12 +797,14 @@ impl Parent {
             ensure!(require_captured(&self.store,current,&self.store.require(child_id)?,cancel,witness.recovery_deadline())?==markdown,"Captured adoption changed before parent publication");
             ensure!(evidence(&self.store,&self.store.require(child_id)?)?==child_evidence,"Attempt changed before parent publication");
             let mut changes=json!({});
-            let output=current["options"]["writeOutputPath"].as_str().map(|path|cwd.join(path));
             let mut rows=current["artifacts"].as_array().cloned().unwrap_or_default();
-            if let Some(output)=&output {
+            // Exports go beside the saved answer's canonical path, not the requested spelling.
+            let mut output=None;
+            if let Some(requested)=current["options"]["writeOutputPath"].as_str().map(|path|cwd.join(path)) {
                 let save = if resume { crate::browser_output::resume_answer } else { crate::browser_output::save_answer };
-                let required=save(&self.store,output,&markdown,&crate::browser_output::answer_heading(current),cancel)?;
+                let required=save(&self.store,&requested,&markdown,&crate::browser_output::answer_heading(current),cancel)?;
                 rows.push(json!({"kind":"output","path":required["file"],"bytes":required["bytes"],"sha256":required["sha256"]}));
+                output=Some(PathBuf::from(required["file"].as_str().context("Saved answer path missing")?));
                 changes["requiredTextOutput"]=required;
             }
             if current["options"]["writeArtifacts"]==true {
