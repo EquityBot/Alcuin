@@ -4459,16 +4459,19 @@ async fn cookie_bootstrap_precedes_navigation_and_zero_writes_never_navigate_or_
             .iter()
             .position(|request| request["method"] == "Page.navigate");
         if !matches!(fault, Fault::CookieBootstrap) {
-            assert!(result.unwrap_err().to_string().contains(
-                if matches!(fault, Fault::CookieCancelled) {
-                    "cancelled"
-                } else {
-                    "No inline cookies were applied; aborting before navigation."
-                }
-            ));
+            let error = result.unwrap_err().to_string();
+            assert!(error.contains(if matches!(fault, Fault::CookieCancelled) {
+                "cancelled"
+            } else {
+                "No inline cookies were applied; aborting before navigation."
+            }));
             assert!(navigation.is_none());
             assert_eq!(f.sends.load(Ordering::SeqCst), 0);
-            assert_eq!(meta["recoveryRequired"], !retired);
+            assert_eq!(
+                meta["recoveryRequired"], !retired,
+                "{fault:?} keep={keep} close={close:?}: {error}; {}",
+                meta["browser"]["runtime"]
+            );
             assert_eq!(
                 f.closes.load(Ordering::SeqCst),
                 usize::from(retired || matches!(fault, Fault::CookieJournalFailure))
@@ -5692,6 +5695,7 @@ async fn completed_close_retries_resume_only_the_exact_durable_marker() {
             let creator = &completed["browser"]["runtime"]["ownedRecoveryTarget"]["creator"];
             let record = journal.read(&creator["allocationId"]).unwrap();
             let marker = journal.retirement_id(creator, &record["commit"]).unwrap();
+            let mut recovery = String::new();
             if explicit {
                 let result = recover_existing(
                     &f.store,
@@ -5708,6 +5712,7 @@ async fn completed_close_retries_resume_only_the_exact_durable_marker() {
                     matches!(fault, Fault::CloseRefusedTwice),
                     "{fault:?}: {result:?}"
                 );
+                recovery = format!("{result:?}");
             } else {
                 crate::browser_retirement::reconcile(&f.store, &f.cdp, &f.endpoint)
                     .await
@@ -5718,7 +5723,9 @@ async fn completed_close_retries_resume_only_the_exact_durable_marker() {
             let closed = matches!(fault, Fault::CloseRefusedTwice);
             assert_eq!(
                 after["disposition"]["decision"],
-                if closed { "retired" } else { "retained" }
+                if closed { "retired" } else { "retained" },
+                "{fault:?} explicit={explicit}: {} {recovery}",
+                after["disposition"]
             );
             assert_eq!(f.closes.load(Ordering::SeqCst), if closed { 3 } else { 1 });
             assert_eq!(f.sends.load(Ordering::SeqCst), 1);

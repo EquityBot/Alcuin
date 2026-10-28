@@ -719,7 +719,7 @@ async fn creatorless_retirement_closes_only_after_fresh_authority_and_exact_mark
                 case,
                 "present" | "last-page" | "uncertain-close" | "kept" | "retry"
             ),
-            "{case}"
+            "{case}: {result:?}"
         );
         assert_eq!(
             seen.iter().any(|request| request["params"]["expression"]
@@ -1500,6 +1500,7 @@ async fn legacy_creator_completion_retries_the_hinted_idle_launcher() {
         .unwrap()
         .unwrap();
     assert_eq!(completed.session["status"], "completed");
-    let disposal = &store.stored_for_update(&owner).unwrap()["browser"]["runtime"]["persistentBrowserDisposal"];
-    assert_eq!(disposal["disposition"], "retained", "{disposal}");
+    let runtime = &store.stored_for_update(&owner).unwrap()["browser"]["runtime"];
+    let disposal = &runtime["persistentBrowserDisposal"];
+    assert_eq!(disposal["disposition"], "retained", "{runtime}");
 }
