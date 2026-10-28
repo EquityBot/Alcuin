@@ -1,4 +1,11 @@
-# Industrious
+<p align="center">
+  <picture>
+    <source media="(max-width: 600px) and (prefers-color-scheme: light)" srcset=".github/assets/banner-phone-light.svg">
+    <source media="(max-width: 600px)" srcset=".github/assets/banner-phone.svg">
+    <source media="(prefers-color-scheme: light)" srcset=".github/assets/banner-light.svg">
+    <img src=".github/assets/banner.svg" width="100%" alt="Industrious: Ask ChatGPT about your code; keep every answer. Pixel art of a domed straw beehive beside the Industrious wordmark in slab-serif block letters.">
+  </picture>
+</p>
 
 Industrious sends a question and the source files you choose to ChatGPT, or to the OpenAI or Azure OpenAI API, and saves the answer as a durable session. It runs as a CLI (`industrious`) and a stdio MCP server (`industrious-mcp`) on Windows and Linux.
 
@@ -70,3 +77,9 @@ Read [SECURITY.md](SECURITY.md) before attaching files: everything you attach go
 ## Licence
 
 FSL-1.1-ALv2 (Functional Source License, Version 1.1, ALv2 Future License); see [LICENSE](LICENSE). Each version also becomes available under Apache-2.0 two years after its release. Oracle's MIT notice and third-party notices are in [NOTICE](NOTICE).
+
+The banner's lettering and emblem are drawn from Cascadia Mono glyphs (SIL OFL 1.1).
+
+---
+
+<p align="center"><sub>Made by <a href="https://github.com/EquityBot">EquityBot</a>. <i>Ad gloriam eius, non meam.</i></sub></p>
