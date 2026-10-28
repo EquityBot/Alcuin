@@ -7,7 +7,14 @@ updates:
     # vendor/hyper is patched; upgrading hyper means reapplying vendor/hyper/PATCH.json.
     ignore:
       - dependency-name: hyper
+    # One weekly PR for minor and patch updates (0.x to 0.y counts as minor); majors stay separate.
+    groups:
+      cargo:
+        update-types: [minor, patch]
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
