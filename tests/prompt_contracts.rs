@@ -718,7 +718,9 @@ fn credential_files_are_skipped_in_expansion_and_refused_by_name() {
         ".env.example",
         "id_rsa",
         "id_rsa.pub",
+        "id_ed25519_sk",
         "cert.PEM",
+        "server.ppk",
         ".npmrc",
         "ok.rs",
     ] {
@@ -727,7 +729,7 @@ fn credential_files_are_skipped_in_expansion_and_refused_by_name() {
     // A dot pattern opts dotfiles into expansion; credential names stay out.
     let files = prompts::resolve_files(&["*".into(), ".*".into()], root, 1024, true).unwrap();
     assert_eq!(names(&files), [".env.example", "id_rsa.pub", "ok.rs"]);
-    for literal in [".env", "ID_RSA", "cert.PEM"] {
+    for literal in [".env", "ID_RSA", "cert.PEM", "server.ppk", "id_ed25519_sk"] {
         let error = prompts::resolve_files(&[literal.into(), "ok.rs".into()], root, 1024, true)
             .unwrap_err();
         assert!(
@@ -741,4 +743,81 @@ fn credential_files_are_skipped_in_expansion_and_refused_by_name() {
         let error = prompts::resolve_files(&["public.txt".into()], root, 1024, true).unwrap_err();
         assert!(format!("{error:#}").contains("public.txt"), "{error:#}");
     }
+}
+
+#[test]
+fn ignore_rules_come_from_the_repository_holding_each_selected_path() {
+    let repository = tempfile::tempdir().unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    let root = repository.path();
+    fs::create_dir(root.join(".git")).unwrap();
+    fs::create_dir_all(root.join("sub/secret")).unwrap();
+    fs::write(root.join(".gitignore"), "secret/\n").unwrap();
+    fs::write(root.join("sub/secret/a.rs"), "PUBLIC ignored").unwrap();
+    fs::write(root.join("sub/ok.rs"), "PUBLIC kept").unwrap();
+    let sub = root.join("sub");
+    // Selected by absolute path from an unrelated working directory.
+    for input in [
+        root.to_string_lossy().into_owned(),
+        sub.to_string_lossy().into_owned(),
+        sub.join("**/*.rs").to_string_lossy().replace('\\', "/"),
+    ] {
+        let files =
+            prompts::resolve_files(std::slice::from_ref(&input), elsewhere.path(), 1024, true)
+                .unwrap();
+        // Temporary folder names can start with a dot, which opts dotfiles in; only the ignore
+        // rule is under test here.
+        let selected: Vec<_> = files
+            .iter()
+            .filter(|file| file.path.extension().is_some_and(|e| e == "rs"))
+            .collect();
+        assert!(
+            selected.len() == 1 && selected[0].path.ends_with("sub/ok.rs"),
+            "{input}: {:?}",
+            names(&files)
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_broken_git_link_does_not_hide_the_enclosing_repository_rules() {
+    let home = tempfile::tempdir().unwrap();
+    let root = home.path();
+    fs::create_dir(root.join(".git")).unwrap();
+    fs::create_dir_all(root.join("sub/secret")).unwrap();
+    fs::write(root.join(".gitignore"), "secret/\n").unwrap();
+    std::os::unix::fs::symlink(root.join("PUBLIC-missing"), root.join("sub/.git")).unwrap();
+    fs::write(root.join("sub/secret/a.rs"), "PUBLIC ignored").unwrap();
+    fs::write(root.join("sub/ok.rs"), "PUBLIC kept").unwrap();
+    let files = prompts::resolve_files(&["**/*.rs".into()], &root.join("sub"), 1024, true).unwrap();
+    assert_eq!(names(&files), ["ok.rs"]);
+}
+
+#[test]
+fn a_text_bundle_refuses_files_that_are_not_utf8_and_zip_keeps_their_bytes() {
+    use industrious::browser_prompt::{BrowserPrompt, discover};
+    let home = tempfile::tempdir().unwrap();
+    let root = home.path();
+    fs::write(root.join("public.txt"), b"PUBLIC\xff").unwrap();
+    fs::write(root.join("ok.txt"), "PUBLIC").unwrap();
+    let files = discover(&["public.txt".into(), "ok.txt".into()], root, None).unwrap();
+    let parent = tempfile::tempdir().unwrap();
+    let assemble = |format: &str| {
+        BrowserPrompt::assemble(
+            &files,
+            "PUBLIC prompt",
+            None,
+            &json!({"browserBundleFiles": true, "browserBundleFormat": format}),
+            parent.path(),
+        )
+    };
+    for format in ["text", "auto"] {
+        let error = assemble(format).err().expect(format);
+        assert!(
+            format!("{error:#}").contains("public.txt") && !format!("{error:#}").contains("ok.txt"),
+            "{format}: {error:#}"
+        );
+    }
+    assert!(assemble("zip").is_ok());
 }

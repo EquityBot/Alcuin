@@ -30,9 +30,12 @@ const SENSITIVE_NAMES: &[&str] = &[
     "id_rsa",
     "id_dsa",
     "id_ecdsa",
+    "id_ecdsa_sk",
     "id_ed25519",
+    "id_ed25519_sk",
 ];
-const SENSITIVE_EXTENSIONS: &[&str] = &["pem", "key", "p12", "pfx", "jks", "keystore", "kdbx"];
+const SENSITIVE_EXTENSIONS: &[&str] =
+    &["pem", "key", "ppk", "p12", "pfx", "jks", "keystore", "kdbx"];
 const ENV_TEMPLATES: &[&str] = &[".env.example", ".env.sample", ".env.template", ".env.dist"];
 fn sensitive_name(path: &Path) -> bool {
     let Some(name) = path.file_name() else {
@@ -52,13 +55,6 @@ fn sensitive_name(path: &Path) -> bool {
 /// A link is judged by its target too, so an innocuous name cannot alias a credential file.
 fn sensitive(path: &Path) -> bool {
     sensitive_name(path) || fs::canonicalize(path).is_ok_and(|target| sensitive_name(&target))
-}
-/// Git rules apply from the enclosing repository root, or from the working directory outside one.
-fn rules_root(cwd: &Path) -> PathBuf {
-    cwd.ancestors()
-        .find(|directory| fs::symlink_metadata(directory.join(".git")).is_ok())
-        .unwrap_or(cwd)
-        .to_owned()
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -182,7 +178,6 @@ pub(crate) fn absolute(cwd: &Path, value: &str) -> PathBuf {
 }
 struct FileWalker<'a> {
     cwd: &'a Path,
-    root: &'a Path,
     literal: &'a [PathBuf],
     directories: &'a [PathBuf],
     excludes: &'a [GlobMatcher],
@@ -240,15 +235,29 @@ impl FileWalker<'_> {
             format!("Cannot apply {}", path.display())
         })?))
     }
+    /// Git rules apply from the repository enclosing a path, or from the working directory for a
+    /// path inside it that no repository encloses.
+    fn rules_root<'p>(&'p self, path: &'p Path) -> Option<&'p Path> {
+        path.ancestors()
+            .skip(1)
+            .find(|directory| {
+                // A broken or unusual .git entry does not mark a repository.
+                fs::metadata(directory.join(".git")).is_ok_and(|m| m.is_dir() || m.is_file())
+            })
+            .or_else(|| path.starts_with(self.cwd).then_some(self.cwd))
+    }
     fn ancestor_rules(&self, path: &Path) -> Result<Vec<ignore::gitignore::Gitignore>> {
         let mut directories = vec![];
+        let Some(root) = self.rules_root(path) else {
+            return Ok(vec![]);
+        };
         let mut parent = path.parent();
         while let Some(directory) = parent {
-            if !directory.starts_with(self.root) {
+            if !directory.starts_with(root) {
                 break;
             }
             directories.push(directory);
-            if directory == self.root {
+            if directory == root {
                 break;
             }
             parent = directory.parent();
@@ -317,15 +326,18 @@ impl FileWalker<'_> {
     }
     fn literal_ignored(&self, path: &Path) -> Result<bool> {
         let rules = self.ancestor_rules(path)?;
+        let Some(root) = self.rules_root(path) else {
+            return Ok(false);
+        };
         let mut ancestor = path.parent();
         while let Some(directory) = ancestor {
-            if !directory.starts_with(self.root) {
+            if !directory.starts_with(root) {
                 break;
             }
             if Self::git_ignored(directory, true, &rules) {
                 return Ok(true);
             }
-            if directory == self.root {
+            if directory == root {
                 break;
             }
             ancestor = directory.parent();
@@ -400,10 +412,8 @@ fn resolve_files_with(
                 .split('/')
                 .any(|s| s.starts_with('.') && s.len() > 1)
         });
-    let root = rules_root(cwd);
     let walker = FileWalker {
         cwd,
-        root: &root,
         literal: &literal,
         directories: &directories,
         excludes: &excludes,
