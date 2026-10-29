@@ -716,7 +716,7 @@ fn credential_files_are_skipped_in_expansion_and_refused_by_name() {
         ".env",
         ".env.local",
         ".env.example",
-        "id_rsa",
+        "ID_RSA",
         "id_rsa.pub",
         "id_ed25519_sk",
         "cert.PEM",
