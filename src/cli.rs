@@ -728,6 +728,7 @@ async fn run_command(args: Vec<OsString>) -> Result<i32> {
                         "host",
                         "port",
                         "token",
+                        "token-file",
                         "max-concurrent-runs",
                         "max-queued-runs",
                         "manual-login",
@@ -802,9 +803,15 @@ async fn run_command(args: Vec<OsString>) -> Result<i32> {
                 } else {
                     configured.clone()
                 });
-                let token = text(sub, "token")
-                    .map(str::to_owned)
-                    .unwrap_or_else(crate::remote_service::access_token);
+                let supplied = match (text(sub, "token"), text(sub, "token-file")) {
+                    (Some(_), Some(_)) => anyhow::bail!("Use --token or --token-file, not both."),
+                    (token, None) => token.map(str::to_owned),
+                    (None, Some(path)) => {
+                        Some(crate::remote_service::read_token_file(Path::new(path))?)
+                    }
+                };
+                let generated = supplied.is_none();
+                let token = supplied.unwrap_or_else(crate::remote_service::access_token);
                 let options = crate::remote_host::HostOptions {
                     address,
                     token,
@@ -815,6 +822,7 @@ async fn run_command(args: Vec<OsString>) -> Result<i32> {
                 Box::pin(crate::remote_service::serve(
                     store,
                     options,
+                    generated,
                     browser,
                     env,
                     cwd,

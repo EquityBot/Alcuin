@@ -620,3 +620,125 @@ fn partial_mode_is_saved_with_the_run_options() {
     let request = execution::resolve(&input, &json!({}), &Environment::new(), root.path()).unwrap();
     assert_eq!(request.options["partialMode"], "ok");
 }
+
+fn names(files: &[prompts::PromptFile]) -> Vec<&str> {
+    files
+        .iter()
+        .map(|file| file.display_path.as_str())
+        .collect()
+}
+
+#[test]
+fn repository_root_ignore_rules_apply_from_a_subdirectory() {
+    let home = tempfile::tempdir().unwrap();
+    let root = home.path();
+    let cwd = root.join("sub");
+    fs::create_dir_all(cwd.join("secret")).unwrap();
+    fs::write(root.join(".gitignore"), "secret/\n").unwrap();
+    fs::write(cwd.join("secret/a.rs"), "PUBLIC ignored").unwrap();
+    fs::write(cwd.join("ok.rs"), "PUBLIC kept").unwrap();
+    let select = || prompts::resolve_files(&["**/*.rs".into()], &cwd, 1024, true).unwrap();
+    // Outside a repository the working directory stays the boundary.
+    assert_eq!(names(&select()), ["ok.rs", "secret/a.rs"]);
+    // A .git directory or a worktree's .git file marks the repository root.
+    fs::create_dir(root.join(".git")).unwrap();
+    assert_eq!(names(&select()), ["ok.rs"]);
+    fs::remove_dir(root.join(".git")).unwrap();
+    fs::write(root.join(".git"), "gitdir: PUBLIC elsewhere").unwrap();
+    assert_eq!(names(&select()), ["ok.rs"]);
+    // A directory input is pruned by the same rule.
+    assert!(
+        prompts::resolve_files(&["secret".into(), "ok.rs".into()], &cwd, 1024, true)
+            .unwrap()
+            .iter()
+            .all(|file| file.display_path == "ok.rs")
+    );
+}
+
+#[test]
+fn rule_files_that_cannot_be_applied_fail_the_selection() {
+    let home = tempfile::tempdir().unwrap();
+    let root = home.path();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src/a.rs"), "PUBLIC").unwrap();
+    fs::write(root.join("src/.gitignore"), "[z-a]\n").unwrap();
+    let error = prompts::resolve_files(&["src/**/*.rs".into()], root, 1024, true).unwrap_err();
+    assert!(format!("{error:#}").contains(".gitignore"), "{error:#}");
+    fs::remove_file(root.join("src/.gitignore")).unwrap();
+    fs::create_dir(root.join("src/.gitignore")).unwrap();
+    let error = prompts::resolve_files(&["src/**/*.rs".into()], root, 1024, true).unwrap_err();
+    assert!(
+        format!("{error:#}").contains("not a regular file"),
+        "{error:#}"
+    );
+    #[cfg(unix)]
+    {
+        fs::remove_dir(root.join("src/.gitignore")).unwrap();
+        fs::write(root.join("rules"), "*.rs\n").unwrap();
+        std::os::unix::fs::symlink(root.join("rules"), root.join("src/.gitignore")).unwrap();
+        let error = prompts::resolve_files(&["src/**/*.rs".into()], root, 1024, true).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("not a regular file"),
+            "{error:#}"
+        );
+    }
+}
+
+#[test]
+fn files_that_are_not_utf8_are_refused_and_all_listed() {
+    let home = tempfile::tempdir().unwrap();
+    let root = home.path();
+    fs::write(root.join("a.bin.txt"), b"PUBLIC \xff").unwrap();
+    fs::write(root.join("b.txt"), b"\xfe\xff\x00P").unwrap();
+    fs::write(root.join("ok.txt"), "PUBLIC café").unwrap();
+    let error = prompts::resolve_files(&["*.txt".into()], root, 1024, true).unwrap_err();
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("a.bin.txt") && message.contains("b.txt"),
+        "{message}"
+    );
+    assert!(!message.contains("ok.txt"), "{message}");
+    // Listing files without reading them, as browser uploads do, is unchanged: browser uploads
+    // and ZIP bundles send the original bytes (pinned in fixtures/browser-prompt-reference.json).
+    assert_eq!(
+        prompts::resolve_files(&["*.txt".into()], root, 1024, false)
+            .unwrap()
+            .len(),
+        3
+    );
+}
+
+#[test]
+fn credential_files_are_skipped_in_expansion_and_refused_by_name() {
+    let home = tempfile::tempdir().unwrap();
+    let root = home.path();
+    for name in [
+        ".env",
+        ".env.local",
+        ".env.example",
+        "id_rsa",
+        "id_rsa.pub",
+        "cert.PEM",
+        ".npmrc",
+        "ok.rs",
+    ] {
+        fs::write(root.join(name), "PUBLIC").unwrap();
+    }
+    // A dot pattern opts dotfiles into expansion; credential names stay out.
+    let files = prompts::resolve_files(&["*".into(), ".*".into()], root, 1024, true).unwrap();
+    assert_eq!(names(&files), [".env.example", "id_rsa.pub", "ok.rs"]);
+    for literal in [".env", "ID_RSA", "cert.PEM"] {
+        let error = prompts::resolve_files(&[literal.into(), "ok.rs".into()], root, 1024, true)
+            .unwrap_err();
+        assert!(
+            format!("{error:#}").contains("Refusing"),
+            "{literal} {error:#}"
+        );
+    }
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(root.join(".env"), root.join("public.txt")).unwrap();
+        let error = prompts::resolve_files(&["public.txt".into()], root, 1024, true).unwrap_err();
+        assert!(format!("{error:#}").contains("public.txt"), "{error:#}");
+    }
+}
