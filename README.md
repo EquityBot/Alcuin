@@ -7,6 +7,14 @@
   </picture>
 </p>
 
+<div align="center">
+
+[![tests](https://img.shields.io/github/actions/workflow/status/EquityBot/Industrious/ci.yml?branch=main&label=tests&labelColor=000000&style=flat)](https://github.com/EquityBot/Industrious/actions/workflows/ci.yml) [![CodeQL](https://img.shields.io/github/actions/workflow/status/EquityBot/Industrious/codeql.yml?branch=main&label=CodeQL&labelColor=000000&style=flat)](https://github.com/EquityBot/Industrious/actions/workflows/codeql.yml)<br>
+[![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/EquityBot/Industrious?label=Scorecard&labelColor=000000&style=flat)](https://scorecard.dev/viewer/?uri=github.com/EquityBot/Industrious)<br>
+[![rust: 1.99+](https://img.shields.io/badge/rust-1.99%2B-66023C?labelColor=000000&style=flat&color=66023C)](https://www.rust-lang.org/) [![licence: FSL-1.1-ALv2](https://img.shields.io/badge/licence-FSL--1.1--ALv2-66023C?labelColor=000000&style=flat&color=66023C)](LICENSE)
+
+</div>
+
 Industrious sends a question and the source files you choose to ChatGPT, or to the OpenAI or Azure OpenAI API, and saves the answer as a durable session. It runs as a CLI (`industrious`) and a stdio MCP server (`industrious-mcp`) on Windows and Linux.
 
 It is a Rust port of Calvino, a maintained fork of [Oracle](https://github.com/steipete/oracle) by Peter Steinberger.

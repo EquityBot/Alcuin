@@ -1,0 +1,23 @@
+# Industrious
+
+> A CLI and stdio MCP server that sends a question and chosen source files to ChatGPT,
+> or to the OpenAI or Azure OpenAI API, and saves each answer as a durable session.
+> Windows and Linux only; model labels in ChatGPT do not prove which backend model answered.
+
+Version 0.1.0 (unreleased). Needs Rust 1.99 or later; install from a checkout with
+`cargo install --locked --path .`. Browser runs also need Google Chrome.
+
+## Start
+
+- [README](https://github.com/EquityBot/Industrious#readme): install, use, settings and known limitations.
+- [SECURITY.md](https://github.com/EquityBot/Industrious/blob/main/SECURITY.md): what Industrious can reach and how to report a vulnerability.
+
+## Docs
+
+- [CHANGELOG.md](https://github.com/EquityBot/Industrious/blob/main/CHANGELOG.md): changes in each release.
+- [NOTICE](https://github.com/EquityBot/Industrious/blob/main/NOTICE): licence terms and Oracle's retained MIT notice.
+
+## Related
+
+- [EquityBot](https://github.com/EquityBot): other EquityBot tools.
+- [Oracle](https://github.com/steipete/oracle): the upstream project Calvino, and through it Industrious, derives from.
