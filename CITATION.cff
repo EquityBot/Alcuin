@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+message: "If you use this work, cite it with this metadata and the release tag or commit you used."
+title: "Alcuin"
+type: software
+authors:
+  - name: "EquityBot"
+abstract: "Ask ChatGPT, or the OpenAI or Azure OpenAI API, about your source files from a CLI or MCP server, and keep each answer as a durable session. A Rust port of a maintained Oracle fork."
+repository-code: "https://github.com/EquityBot/Alcuin"
+license-url: "https://github.com/EquityBot/Alcuin/blob/main/LICENSE"
+keywords:
+  - azure-openai
+  - chatgpt
+  - cli
+  - developer-tools
+  - mcp
+  - openai
+  - rust
+references:
+  - type: software
+    title: "Oracle"
+    authors:
+      - family-names: Steinberger
+        given-names: Peter
+    repository-code: "https://github.com/steipete/oracle"
