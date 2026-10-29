@@ -18,6 +18,26 @@ pub fn access_token() -> String {
     }
     crate::artifacts::sha256(&entropy)[..32].into()
 }
+/// Reads a serve token file: one trailing line ending is allowed, nothing else may break a line.
+pub fn read_token_file(path: &Path) -> Result<String> {
+    let raw = std::fs::read_to_string(path)
+        .with_context(|| format!("Cannot read token file {}", path.display()))?;
+    let token = raw
+        .strip_suffix("\r\n")
+        .or_else(|| raw.strip_suffix('\n'))
+        .unwrap_or(&raw);
+    ensure!(
+        !token.contains(['\r', '\n']),
+        "Token file {} must hold the token on one line",
+        path.display()
+    );
+    ensure!(
+        !crate::policy::trim(token).is_empty(),
+        "Token file {} is empty",
+        path.display()
+    );
+    Ok(token.into())
+}
 pub(crate) fn endpoint(value: &Value) -> Result<Value> {
     let converted;
     let value = if value.is_object() {
@@ -248,6 +268,7 @@ pub(crate) async fn bootstrap(
 pub async fn serve(
     store: SessionStore,
     options: HostOptions,
+    token_generated: bool,
     browser_config: Value,
     environment: Environment,
     cwd: PathBuf,
@@ -274,7 +295,11 @@ pub async fn serve(
     }
     let host = RemoteHost::start(store, options, driver.driver()).await?;
     println!("Listening at {}", host.address);
-    println!("Access token: {token}");
+    if token_generated {
+        println!("Access token: {token}");
+    } else {
+        println!("Access token: supplied (not printed)");
+    }
     println!("Leave this terminal running; press Ctrl+C to stop alcuin serve.");
     let stopped = tokio::select! {_=cancel.cancelled()=>Ok(()),signal=shutdown_signal()=>signal};
     let shutdown = host.shutdown().await;

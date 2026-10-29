@@ -40,6 +40,20 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 pub const MAX_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
+/// Reference MAX_REMOTE_REQUEST_BODY_BYTES: 2 base64 attachment sets at the artifact cap plus
+/// a 1 MiB JSON envelope.
+// shortcut: the whole body is buffered before parsing, so an authenticated client can still
+// make the host hold about this much memory per admitted run; streaming the payload removes it.
+pub const MAX_RUN_BODY_BYTES: usize = 1_432_704_342;
+/// A request body over its route's limit; the run route answers 413.
+#[derive(Debug)]
+struct BodyTooLarge;
+impl std::fmt::Display for BodyTooLarge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Remote request body exceeds its limit.")
+    }
+}
+impl std::error::Error for BodyTooLarge {}
 /// An artifact route refusal with the reference status and error code.
 #[derive(Debug, Clone, Copy)]
 struct ArtifactRefusal(u16, &'static str);
@@ -150,7 +164,9 @@ impl RunContext {
 }
 struct State {
     store: SessionStore,
-    token: String,
+    /// SHA-256 of the expected Authorization header value.
+    authorization: [u8; 32],
+    max_run_body: usize,
     slots: RunSlots,
     queued: bool,
     busy: Arc<AtomicBool>,
@@ -179,6 +195,7 @@ impl RemoteHost {
             driver,
             Duration::from_secs(60),
             Duration::from_secs(300),
+            MAX_RUN_BODY_BYTES,
         )
         .await
     }
@@ -188,6 +205,7 @@ impl RemoteHost {
         driver: RunDriver,
         header_timeout: Duration,
         receive_timeout: Duration,
+        max_run_body: usize,
     ) -> Result<Self> {
         ensure!(
             options.max_concurrent_runs.is_some() || options.max_queued_runs.is_none(),
@@ -196,6 +214,10 @@ impl RemoteHost {
         ensure!(
             !options.token.contains(['\r', '\n']),
             "Remote token cannot contain a header line break"
+        );
+        ensure!(
+            !policy::trim(&options.token).is_empty(),
+            "Remote token cannot be empty"
         );
         let queued = options.max_concurrent_runs.is_some();
         let requested = options.max_concurrent_runs.unwrap_or(1);
@@ -216,7 +238,8 @@ impl RemoteHost {
         let stop = CancellationToken::new();
         let state = Arc::new(State {
             store,
-            token: options.token,
+            authorization: digest(format!("Bearer {}", options.token).as_bytes()),
+            max_run_body,
             slots,
             queued,
             busy: Arc::new(AtomicBool::new(false)),
@@ -373,18 +396,40 @@ async fn body(
         let Some(frame) = frame else { break };
         let frame = frame?;
         if let Ok(data) = frame.into_data() {
-            ensure!(
-                limit.is_none_or(|limit| bytes
+            if !limit.is_none_or(|limit| {
+                bytes
                     .len()
                     .checked_add(data.len())
-                    .is_some_and(|size| size <= limit)),
-                "Remote request body exceeds its limit."
-            );
+                    .is_some_and(|size| size <= limit)
+            }) {
+                return Err(BodyTooLarge.into());
+            }
             bytes.extend_from_slice(&data);
         }
     }
     Ok::<_,anyhow::Error>(bytes)
     }).await?
+}
+fn digest(bytes: &[u8]) -> [u8; 32] {
+    use sha2::Digest;
+    sha2::Sha256::digest(bytes).into()
+}
+/// Compares digests with no early exit, so response timing does not reveal a matching prefix.
+fn authorised(expected: &[u8; 32], presented: Option<&hyper::header::HeaderValue>) -> bool {
+    let presented = digest(presented.map_or(&[][..], |value| value.as_bytes()));
+    expected
+        .iter()
+        .zip(presented)
+        .fold(0, |difference, (left, right)| difference | (left ^ right))
+        == 0
+}
+fn payload_too_large() -> Response<RemoteBody> {
+    let mut result = json_response(413, json!({"error":"payload_too_large"}));
+    result.headers_mut().insert(
+        "Connection",
+        hyper::header::HeaderValue::from_static("close"),
+    );
+    result
 }
 fn parse_json(bytes: &[u8]) -> Result<Value> {
     remote_json::native_projection(serde_json::from_slice::<&RawValue>(bytes)?)
@@ -497,11 +542,7 @@ async fn route(
     {
         return Ok(response(404, "application/json", Bytes::new()));
     }
-    if request
-        .headers()
-        .get("authorization")
-        .is_none_or(|value| value.as_bytes() != format!("Bearer {}", state.token).as_bytes())
-    {
+    if !authorised(&state.authorization, request.headers().get("authorization")) {
         return Ok(json_response(401, json!({"error":"unauthorized"})));
     }
     if method == Method::GET && path == "/health" {
@@ -687,6 +728,15 @@ async fn route(
     if method != Method::POST || path != "/runs" {
         return Ok(response(404, "application/json", Bytes::new()));
     }
+    // A declared oversized body is refused before it takes a run slot or is read.
+    if request
+        .headers()
+        .get(hyper::header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok()?.parse::<u64>().ok())
+        .is_some_and(|declared| declared > state.max_run_body as u64)
+    {
+        return Ok(payload_too_large());
+    }
     let busy = if state.queued {
         None
     } else if state
@@ -716,7 +766,15 @@ async fn route(
         }
     }
     let payload = async {
-        let mut payload = parse_json(&body(&mut request, &gone, None, receive_deadline).await?)?;
+        let mut payload = parse_json(
+            &body(
+                &mut request,
+                &gone,
+                Some(state.max_run_body),
+                receive_deadline,
+            )
+            .await?,
+        )?;
         ensure!(payload["prompt"].is_string(), "Missing prompt");
         payload["browserConfig"] = client_browser_config(&payload["browserConfig"]);
         Ok::<_, anyhow::Error>(payload)
@@ -730,6 +788,9 @@ async fn route(
                 .is_some() =>
         {
             return Ok(receive_timeout_response());
+        }
+        Err(error) if error.downcast_ref::<BodyTooLarge>().is_some() => {
+            return Ok(payload_too_large());
         }
         Err(_) => return Ok(json_response(400, json!({"error":"invalid_request"}))),
     };
@@ -873,12 +934,19 @@ mod tests {
         RemoteHost,
         Arc<AtomicUsize>,
     ) {
-        fixture_timeouts(partial, Duration::from_secs(60), receive_timeout).await
+        fixture_timeouts(
+            partial,
+            Duration::from_secs(60),
+            receive_timeout,
+            MAX_RUN_BODY_BYTES,
+        )
+        .await
     }
     async fn fixture_timeouts(
         partial: bool,
         header_timeout: Duration,
         receive_timeout: Duration,
+        max_run_body: usize,
     ) -> (
         tempfile::TempDir,
         SessionStore,
@@ -926,6 +994,7 @@ mod tests {
             driver,
             header_timeout,
             receive_timeout,
+            max_run_body,
         )
         .await
         .unwrap();
@@ -948,6 +1017,7 @@ mod tests {
             false,
             Duration::from_millis(150),
             Duration::from_millis(400),
+            MAX_RUN_BODY_BYTES,
         )
         .await;
         for (request, expected) in [
@@ -1085,6 +1155,7 @@ mod tests {
             false,
             Duration::from_millis(350),
             Duration::from_millis(600),
+            MAX_RUN_BODY_BYTES,
         )
         .await;
         for kind in ["fresh", "idle-fresh", "idle-keep-alive", "pipelined"] {
@@ -1159,6 +1230,124 @@ mod tests {
         })
         .await
         .unwrap();
+    }
+    #[tokio::test]
+    async fn authorisation_needs_the_exact_token() {
+        let (_home, _store, host, _calls) = fixture(false).await;
+        let url = format!("http://{}/health", host.address);
+        let near = format!("{}X", &TOKEN[..TOKEN.len() - 1]);
+        for presented in [
+            None,
+            Some(""),
+            Some("PUBLIC fixture"),
+            Some(near.as_str()),
+            Some("PUBLIC fixture tokenX"),
+        ] {
+            let mut request = client().get(&url);
+            if let Some(presented) = presented {
+                request = request.bearer_auth(presented);
+            }
+            assert_eq!(request.send().await.unwrap().status(), 401, "{presented:?}");
+        }
+        assert_eq!(
+            health(&client(), &format!("http://{}", host.address)).await["ok"],
+            true
+        );
+        host.shutdown().await.unwrap();
+    }
+    #[tokio::test]
+    async fn empty_tokens_are_refused_at_startup() {
+        let home = tempfile::tempdir().unwrap();
+        for token in ["", "  "] {
+            let driver: RunDriver = Arc::new(|_| Box::pin(async { anyhow::bail!("unused") }));
+            let started = RemoteHost::start(
+                SessionStore::new(home.path().join(".oracle")),
+                HostOptions {
+                    address: "127.0.0.1:0".parse().unwrap(),
+                    token: token.into(),
+                    max_concurrent_runs: None,
+                    max_queued_runs: None,
+                    max_browser_tabs: 1,
+                },
+                driver,
+            )
+            .await;
+            assert!(started.is_err(), "{token:?}");
+        }
+    }
+    #[test]
+    fn the_run_body_cap_matches_the_reference() {
+        let base64 = MAX_ARTIFACT_BYTES.div_ceil(3) * 4;
+        assert_eq!(MAX_RUN_BODY_BYTES as u64, 2 * base64 + 1024 * 1024 - 2);
+    }
+    /// Sends raw request bytes and returns everything the host writes before closing.
+    async fn exchange(host: &RemoteHost, request: &[u8]) -> String {
+        let mut socket = tokio::net::TcpStream::connect(host.address).await.unwrap();
+        socket.write_all(request).await.unwrap();
+        let mut response = vec![];
+        tokio::time::timeout(Duration::from_secs(3), socket.read_to_end(&mut response))
+            .await
+            .expect("the host closes the connection after refusing the body")
+            .unwrap();
+        String::from_utf8(response).unwrap()
+    }
+    #[tokio::test]
+    async fn oversized_run_bodies_get_413_before_dispatch_and_return_capacity() {
+        const CAP: usize = 64;
+        let (_home, _store, host, calls) = fixture_timeouts(
+            false,
+            Duration::from_secs(60),
+            Duration::from_secs(300),
+            CAP,
+        )
+        .await;
+        let head = format!(
+            "POST /runs HTTP/1.1\r\nHost: {}\r\nAuthorization: Bearer {TOKEN}\r\n",
+            host.address
+        );
+        // Declared too large: refused before any body byte is sent.
+        let declared = exchange(
+            &host,
+            format!("{head}Content-Length: {}\r\n\r\n", CAP + 1).as_bytes(),
+        )
+        .await;
+        // Chunked and unfinished: refused once the streamed bytes pass the cap.
+        let streamed = exchange(
+            &host,
+            format!(
+                "{head}Transfer-Encoding: chunked\r\n\r\n{:x}\r\n{}\r\n",
+                CAP + 1,
+                "x".repeat(CAP + 1)
+            )
+            .as_bytes(),
+        )
+        .await;
+        for response in [&declared, &streamed] {
+            assert!(response.starts_with("HTTP/1.1 413"), "{response}");
+            assert!(
+                response.contains(r#"{"error":"payload_too_large"}"#),
+                "{response}"
+            );
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        let status = health(&client(), &format!("http://{}", host.address)).await;
+        assert_eq!(status["activeRuns"], 0);
+        assert_eq!(status["queuedRuns"], 0);
+        // A body of exactly the cap is still admitted.
+        let exact = format!(r#"{{"prompt":"{}"}}"#, "x".repeat(CAP - 13));
+        assert_eq!(exact.len(), CAP);
+        let response = client()
+            .post(format!("http://{}/runs", host.address))
+            .bearer_auth(TOKEN)
+            .header("Content-Type", "application/json")
+            .body(exact)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        response.text().await.unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        host.shutdown().await.unwrap();
     }
     #[tokio::test]
     async fn stalled_body_expires_and_returns_capacity_without_client_disconnect_or_dispatch() {
