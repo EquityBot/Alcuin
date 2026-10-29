@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use globset::{GlobBuilder, GlobMatcher};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -19,6 +19,43 @@ const IGNORED: &[&str] = &[
     "build",
     "tmp",
 ];
+/// Credential and private-key file names that are never bundled, compared case-insensitively.
+const SENSITIVE_NAMES: &[&str] = &[
+    ".npmrc",
+    ".pypirc",
+    ".netrc",
+    "_netrc",
+    ".git-credentials",
+    ".htpasswd",
+    "id_rsa",
+    "id_dsa",
+    "id_ecdsa",
+    "id_ecdsa_sk",
+    "id_ed25519",
+    "id_ed25519_sk",
+];
+const SENSITIVE_EXTENSIONS: &[&str] =
+    &["pem", "key", "ppk", "p12", "pfx", "jks", "keystore", "kdbx"];
+const ENV_TEMPLATES: &[&str] = &[".env.example", ".env.sample", ".env.template", ".env.dist"];
+fn sensitive_name(path: &Path) -> bool {
+    let Some(name) = path.file_name() else {
+        return false;
+    };
+    let name = name.to_string_lossy().to_lowercase();
+    if ENV_TEMPLATES.contains(&name.as_str()) {
+        return false;
+    }
+    name == ".env"
+        || name.starts_with(".env.")
+        || SENSITIVE_NAMES.contains(&name.as_str())
+        || Path::new(&name)
+            .extension()
+            .is_some_and(|extension| SENSITIVE_EXTENSIONS.contains(&&*extension.to_string_lossy()))
+}
+/// A link is judged by its target too, so an innocuous name cannot alias a credential file.
+fn sensitive(path: &Path) -> bool {
+    sensitive_name(path) || fs::canonicalize(path).is_ok_and(|target| sensitive_name(&target))
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -174,34 +211,62 @@ impl FileWalker<'_> {
         }
         false
     }
-    fn rules_at(directory: &Path) -> Option<ignore::gitignore::Gitignore> {
+    /// A rule file that cannot be applied fails the selection rather than widening it.
+    fn rules_at(directory: &Path) -> Result<Option<ignore::gitignore::Gitignore>> {
         let path = directory.join(".gitignore");
         // Read only rule files on requested or reached paths. Never discover them with a whole-tree pass.
-        if !fs::symlink_metadata(&path).is_ok_and(|m| m.is_file() && !m.is_symlink()) {
-            return None;
-        }
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(error).with_context(|| format!("Cannot read {}", path.display()));
+            }
+        };
+        ensure!(
+            metadata.is_file() && !metadata.is_symlink(),
+            "Cannot apply {}: it is not a regular file",
+            path.display()
+        );
         let mut builder = ignore::gitignore::GitignoreBuilder::new(directory);
-        let _ = builder.add(path);
-        builder.build().ok()
+        if let Some(error) = builder.add(&path) {
+            return Err(error).with_context(|| format!("Cannot apply {}", path.display()));
+        }
+        Ok(Some(builder.build().with_context(|| {
+            format!("Cannot apply {}", path.display())
+        })?))
     }
-    fn ancestor_rules(&self, path: &Path) -> Vec<ignore::gitignore::Gitignore> {
+    /// Git rules apply from the repository enclosing a path, or from the working directory for a
+    /// path inside it that no repository encloses.
+    fn rules_root<'p>(&'p self, path: &'p Path) -> Option<&'p Path> {
+        path.ancestors()
+            .skip(1)
+            .find(|directory| {
+                // A broken or unusual .git entry does not mark a repository.
+                fs::metadata(directory.join(".git")).is_ok_and(|m| m.is_dir() || m.is_file())
+            })
+            .or_else(|| path.starts_with(self.cwd).then_some(self.cwd))
+    }
+    fn ancestor_rules(&self, path: &Path) -> Result<Vec<ignore::gitignore::Gitignore>> {
         let mut directories = vec![];
+        let Some(root) = self.rules_root(path) else {
+            return Ok(vec![]);
+        };
         let mut parent = path.parent();
         while let Some(directory) = parent {
-            if !directory.starts_with(self.cwd) {
+            if !directory.starts_with(root) {
                 break;
             }
             directories.push(directory);
-            if directory == self.cwd {
+            if directory == root {
                 break;
             }
             parent = directory.parent();
         }
-        directories
-            .into_iter()
-            .rev()
-            .filter_map(Self::rules_at)
-            .collect()
+        let mut rules = vec![];
+        for directory in directories.into_iter().rev() {
+            rules.extend(Self::rules_at(directory)?);
+        }
+        Ok(rules)
     }
     fn git_ignored(path: &Path, directory: bool, rules: &[ignore::gitignore::Gitignore]) -> bool {
         for rules in rules.iter().rev() {
@@ -234,7 +299,7 @@ impl FileWalker<'_> {
             return Ok(());
         }
         visit(directory);
-        if let Some(own) = Self::rules_at(directory) {
+        if let Some(own) = Self::rules_at(directory)? {
             rules.push(own);
         }
         let mut entries: Vec<_> = fs::read_dir(directory)?.collect::<std::io::Result<_>>()?;
@@ -259,22 +324,25 @@ impl FileWalker<'_> {
         }
         Ok(())
     }
-    fn literal_ignored(&self, path: &Path) -> bool {
-        let rules = self.ancestor_rules(path);
+    fn literal_ignored(&self, path: &Path) -> Result<bool> {
+        let rules = self.ancestor_rules(path)?;
+        let Some(root) = self.rules_root(path) else {
+            return Ok(false);
+        };
         let mut ancestor = path.parent();
         while let Some(directory) = ancestor {
-            if !directory.starts_with(self.cwd) {
+            if !directory.starts_with(root) {
                 break;
             }
             if Self::git_ignored(directory, true, &rules) {
-                return true;
+                return Ok(true);
             }
-            if directory == self.cwd {
+            if directory == root {
                 break;
             }
             ancestor = directory.parent();
         }
-        Self::git_ignored(path, false, &rules)
+        Ok(Self::git_ignored(path, false, &rules))
     }
 }
 pub fn resolve_files(
@@ -356,7 +424,7 @@ fn resolve_files_with(
     for dir in &directories {
         walker.walk(
             dir,
-            walker.ancestor_rules(dir),
+            walker.ancestor_rules(dir)?,
             &mut candidates,
             visit,
             None,
@@ -384,7 +452,7 @@ fn resolve_files_with(
             };
             walker.walk(
                 &root,
-                walker.ancestor_rules(&root),
+                walker.ancestor_rules(&root)?,
                 &mut possible,
                 visit,
                 depth,
@@ -404,6 +472,8 @@ fn resolve_files_with(
     };
     let mut accepted = vec![];
     let mut oversized = vec![];
+    let mut refused = vec![];
+    let mut skipped = vec![];
     for path in ordered {
         if excludes.iter().any(|e| e.is_match(&path)) {
             continue;
@@ -416,10 +486,18 @@ fn resolve_files_with(
         {
             continue;
         }
-        if expanded && literal.contains(&path) && walker.literal_ignored(&path) {
+        if expanded && literal.contains(&path) && walker.literal_ignored(&path)? {
             continue;
         }
         if walker.default_ignored(&path) {
+            continue;
+        }
+        if sensitive(&path) {
+            if literal.contains(&path) {
+                refused.push(relative(&path, cwd));
+            } else {
+                skipped.push(relative(&path, cwd));
+            }
             continue;
         }
         // Reference validation: a missing path fails at once, every oversized file is listed.
@@ -435,6 +513,18 @@ fn resolve_files_with(
             accepted.push((path, size));
         }
     }
+    if !refused.is_empty() {
+        bail!(
+            "Refusing files that look like credentials or private keys:\n- {}\nCopy any content that is safe to share into a file with another name.",
+            refused.join("\n- ")
+        );
+    }
+    if !skipped.is_empty() {
+        eprintln!(
+            "Skipped files that look like credentials or private keys: {}",
+            skipped.join(", ")
+        );
+    }
     if !oversized.is_empty() {
         bail!(
             "The following files exceed the {} limit:\n- {}",
@@ -443,9 +533,16 @@ fn resolve_files_with(
         );
     }
     let mut output = vec![];
+    let mut undecodable = vec![];
     for (path, size) in accepted {
         let content = if read_contents {
-            String::from_utf8_lossy(&fs::read(&path)?).into_owned()
+            match read_text(&path)? {
+                Some(content) => content,
+                None => {
+                    undecodable.push(relative(&path, cwd));
+                    continue;
+                }
+            }
         } else {
             String::new()
         };
@@ -456,10 +553,20 @@ fn resolve_files_with(
             size_bytes: size,
         });
     }
+    if !undecodable.is_empty() {
+        bail!(
+            "The following files are not UTF-8 text:\n- {}",
+            undecodable.join("\n- ")
+        );
+    }
     if output.is_empty() {
         bail!("No files matched the provided --file patterns.");
     }
     Ok(output)
+}
+/// Reads a file as text; `None` when it is not valid UTF-8, so binary bytes are never garbled into a prompt.
+pub fn read_text(path: &Path) -> Result<Option<String>> {
+    Ok(String::from_utf8(fs::read(path)?).ok())
 }
 fn language(path: &str) -> &'static str {
     match Path::new(path)

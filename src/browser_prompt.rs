@@ -510,6 +510,20 @@ impl BrowserPrompt {
             name = format!("attachments-bundle-{suffix}.{extension}");
             suffix += 1;
         }
+        if format == BundleFormat::Text {
+            // A text bundle carries decoded text, so bytes that are not UTF-8 would be garbled.
+            let mut undecodable = vec![];
+            for file in &self.text_files {
+                if prompts::read_text(&file.path)?.is_none() {
+                    undecodable.push(file.display_path.as_str());
+                }
+            }
+            ensure!(
+                undecodable.is_empty(),
+                "A text bundle cannot carry files that are not UTF-8 text:\n- {}\nUse --browser-bundle-format zip to send their original bytes.",
+                undecodable.join("\n- ")
+            );
+        }
         let text = prompts::file_sections(&self.text_files, false, format == BundleFormat::Text);
         let text = if text.is_empty() {
             text
