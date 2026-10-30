@@ -1190,6 +1190,8 @@ return (async () => {
     };
     let causalRoot = false;
     let rootClicked = false;
+    let rootClicks = 0;
+    let rootClickedAt = 0;
     let openedControls = null;
     let rootClosing = false;
     let ambiguous = !ownerKey;
@@ -1256,7 +1258,11 @@ return (async () => {
       if (!active()) return;
       if (root()) return;
       const current = currentTrigger();
-      if (!current || rootAmbiguous || rootClicked) return;
+      if (!current || rootAmbiguous) return;
+      // ChatGPT can ignore a click that lands just after the composer mounts. Click again only
+      // while no menu was bound and the trigger still reports closed, at most 3 clicks in all.
+      if (rootClicked && (rootNode || rootClicks >= 3 || performance.now() - rootClickedAt < 600 ||
+          current.getAttribute('aria-expanded') !== 'false' || current.getAttribute('aria-controls') !== initialControls)) return;
       const controlled = initialControls ? document.getElementById(initialControls) : null;
       const labelledBy = controlled?.getAttribute('aria-labelledby');
       if (labelledBy && labelledBy !== initialId) {
@@ -1268,6 +1274,8 @@ return (async () => {
         return;
       }
       rootClicked = true;
+      rootClicks += 1;
+      rootClickedAt = performance.now();
       if (active()) click(current);
     };
     const selectable = node => ['aria-checked', 'aria-selected', 'aria-current', 'data-selected']
@@ -1748,7 +1756,11 @@ return (async () => {
         inspection.openRoot();
         const deadline = performance.now() + MAX_WAIT_MS;
         let menu = inspection.root();
-        while (!menu && inspection.active && !inspection.ambiguous && performance.now() < deadline) { await inspection.sleep(100); if (inspection.active) menu = inspection.root(); }
+        while (!menu && inspection.active && !inspection.ambiguous && performance.now() < deadline) {
+          await inspection.sleep(100);
+          if (inspection.active) inspection.openRoot();
+          if (inspection.active) menu = inspection.root();
+        }
         if (!inspection.active) return { status: 'selection_unknown' };
         if (inspection.ambiguous) return { status: 'selection_unknown' };
         if (!menu) return { status: 'pending' };
