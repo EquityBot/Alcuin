@@ -386,7 +386,7 @@ impl TargetJournal {
                     Self::saved_retirement_id(&record)?;
                 }
                 remaining(operation_deadline)?;
-                // Leave a tail for the disposition write if a CDP operation stalls.
+                // Stop a stalled CDP operation early so its disposition normally lands in budget.
                 let result =
                     tokio::time::timeout(remaining(operation_deadline)?, retire(record.clone()))
                         .await;
@@ -426,7 +426,10 @@ impl TargetJournal {
             &reason,
             &absence,
         );
-        let saved = self.save_until(&record, deadline)?;
+        // The outcome is decided, so its record outlasts the deadline: a stalled write that gave
+        // up here would report a false failure and leave the retirement undecided. The deadline
+        // bounds the operation and the lock above. This write stays under the record's lock.
+        let saved = self.save(&record)?;
         lock.release()?;
         Ok(saved["disposition"].clone())
     }
@@ -1525,6 +1528,33 @@ mod tests {
         journal.commit(&creator, &changed).unwrap();
         assert!(journal.retirement_id(&creator, &changed).is_err());
         assert!(journal.retirement_id(&creator, &commit).is_err());
+    }
+    #[tokio::test]
+    async fn a_decision_reached_as_the_budget_ends_is_published_despite_the_stall() {
+        for (budget, absence, decision) in [
+            (Duration::from_secs(2), "confirmed-absent", "retired"),
+            (Duration::from_millis(500), "unknown", "retained"),
+        ] {
+            let home = tempfile::tempdir().unwrap();
+            let (journal, creator, commit) = native(home.path());
+            journal.commit(&creator, &commit).unwrap();
+            journal.finalise(&commit).unwrap();
+            let deadline = Instant::now() + budget;
+            // Blocking stands in for a stall between the evidence and its durable write; the
+            // operation still completes on its first poll, as a real close can.
+            let result = journal
+                .retire_record_until(&creator, deadline, |_| async move {
+                    std::thread::sleep(budget + Duration::from_millis(50));
+                    Ok((absence.to_owned(), "PUBLIC stalled evidence".to_owned()))
+                })
+                .await
+                .unwrap();
+            assert_eq!(result["decision"], decision);
+            assert_eq!(result["absence"], absence);
+            assert!(Instant::now() >= deadline);
+            let saved = journal.read(&creator["allocationId"]).unwrap();
+            assert_eq!(saved["disposition"], result);
+        }
     }
     #[test]
     fn creator_replacement_and_directory_replacement_refuse_writes() {
