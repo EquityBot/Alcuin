@@ -10,6 +10,13 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 const LATE_CLEANUP: Duration = Duration::from_millis(750);
+#[cfg(test)]
+thread_local! {
+    /// Shortens the watch after a close the fixture refuses, not the close command itself. The
+    /// watch only reads the target list, so unlike the command budget it needs no room for a
+    /// durable write.
+    pub(crate) static TEST_CLOSE_WAIT: std::cell::Cell<Option<Duration>> = const { std::cell::Cell::new(None) };
+}
 fn allocation_remaining(deadline: std::time::Instant) -> Result<Duration> {
     let remaining = deadline.saturating_duration_since(std::time::Instant::now());
     anyhow::ensure!(
@@ -487,6 +494,10 @@ impl OwnedTarget {
             .browser
             .close_owned_target(&self.id, timeout, &cancel)
             .await;
+        #[cfg(test)]
+        let deadline = TEST_CLOSE_WAIT
+            .get()
+            .map_or(deadline, |wait| deadline.min(Instant::now() + wait));
         loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
             anyhow::ensure!(
@@ -565,6 +576,10 @@ impl OwnedTarget {
             .browser
             .close_owned_target(&self.id, remaining, &CancellationToken::new())
             .await;
+        #[cfg(test)]
+        let deadline = TEST_CLOSE_WAIT.get().map_or(deadline, |wait| {
+            deadline.min(std::time::Instant::now() + wait)
+        });
         loop {
             if self.observe_absence_until(deadline).await? {
                 return Ok(());
