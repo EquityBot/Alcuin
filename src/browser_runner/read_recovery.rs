@@ -37,6 +37,23 @@ impl Budget {
             Instant::now() < deadline,
             "Original-target observation budget expired; recovery retained"
         );
+        Self::settle(deadline, future).await
+    }
+    /// An answer wait is always polled, even after the episode ended: its limit from `limits` is
+    /// then zero, so it reports its own typed deadline, which decides provider eligibility.
+    pub(super) async fn answer_within<T>(
+        &self,
+        future: impl std::future::Future<Output = Result<T>>,
+    ) -> Result<T> {
+        match self.deadline {
+            Some(deadline) => Self::settle(deadline, future).await,
+            None => future.await,
+        }
+    }
+    async fn settle<T>(
+        deadline: Instant,
+        future: impl std::future::Future<Output = Result<T>>,
+    ) -> Result<T> {
         tokio::time::timeout_at(deadline, future).await.context(
             "Original-target observation did not settle before its deadline; recovery retained",
         )?
