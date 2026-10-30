@@ -10,6 +10,12 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 const LATE_CLEANUP: Duration = Duration::from_millis(750);
+#[cfg(test)]
+thread_local! {
+    /// Shortens the watch on a close the fixture refuses. The watch only reads the target list,
+    /// so unlike the command budget it has no durable write to leave room for.
+    pub(crate) static TEST_CLOSE_WAIT: std::cell::Cell<Option<Duration>> = const { std::cell::Cell::new(None) };
+}
 fn allocation_remaining(deadline: std::time::Instant) -> Result<Duration> {
     let remaining = deadline.saturating_duration_since(std::time::Instant::now());
     anyhow::ensure!(
@@ -471,6 +477,10 @@ impl OwnedTarget {
         self.lease.confirm_target_absent(&self.id)
     }
     pub(crate) async fn close_observed(&mut self, timeout: Duration) -> Result<()> {
+        #[cfg(test)]
+        let timeout = TEST_CLOSE_WAIT
+            .get()
+            .map_or(timeout, |wait| timeout.min(wait));
         if self
             .creation
             .as_ref()
