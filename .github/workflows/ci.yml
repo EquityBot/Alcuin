@@ -45,5 +45,10 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --locked -- -D warnings
       # Timing-bounded tests (1 s and 5 s durable-write and retirement budgets) fail closed when the
-      # runner is contended: Windows runs them serially, Linux on two threads.
+      # runner is contended: Windows runs them serially, Linux on two threads. Temporary files stay
+      # on the workspace drive: a durable write's median was 6 to 9 ms on the Windows system drive
+      # and 0.2 to 0.6 ms there (3 runners, 30 October 2026).
       - run: cargo test --locked -- --test-threads=${{ matrix.os == 'windows-latest' && 1 || 2 }}
+        env:
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}

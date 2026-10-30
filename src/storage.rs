@@ -880,7 +880,11 @@ mod lock_race_tests {
     #[test]
     fn atomic_records_and_locks_work_beyond_max_path() {
         let home = tempfile::tempdir().unwrap();
-        let deep = home.path().join("PUBLIC-".repeat(30));
+        // Two components, so the path passes MAX_PATH however short the temporary root is.
+        let deep = home
+            .path()
+            .join("PUBLIC-".repeat(30))
+            .join("PUBLIC-".repeat(30));
         fs::create_dir_all(&deep).unwrap();
         let record = deep.join("PUBLIC-record.json");
         atomic_json(&record, &serde_json::json!({"PUBLIC":1})).unwrap();
