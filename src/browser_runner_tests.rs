@@ -744,7 +744,10 @@ impl Exchange {
             ) {
                 self.cancel.cancel();
             }
-            return json!({"token":cfg["token"],"parentReservationId":cfg["owner"]["reservationId"],"rendererId":cfg["rendererId"],"acknowledged":true,"cleanupComplete":!matches!(self.fault, Fault::CleanupFailed)});
+            if matches!(self.fault, Fault::CleanupFailed) {
+                return json!({"token":cfg["token"],"parentReservationId":cfg["owner"]["reservationId"],"rendererId":cfg["rendererId"],"acknowledged":true,"cleanupComplete":false,"cleanupState":"menu-visible advanced-open"});
+            }
+            return json!({"token":cfg["token"],"parentReservationId":cfg["owner"]["reservationId"],"rendererId":cfg["rendererId"],"acknowledged":true,"cleanupComplete":true});
         }
         if expression.contains("alcuin-dom:model") {
             if cfg["strategy"] == "select" {
@@ -6441,6 +6444,13 @@ async fn wrong_model_tier_generic_unavailability_and_unclean_inspection_refuse_b
         assert_eq!(meta["status"], "error");
         assert_eq!(meta["models"][0]["status"], "error");
         assert_eq!(meta["recoveryRequired"], !retired);
+        if !retired {
+            // The failure names the picker and what stayed open (fixed page state names only).
+            assert_eq!(
+                meta["errorMessage"],
+                "Picker cleanup is unconfirmed (model picker, still open: menu-visible advanced-open); refusing target reuse"
+            );
+        }
         assert_eq!(
             f.profile.records().unwrap()["leases"]
                 .as_array()

@@ -50,7 +50,8 @@ return (async () => {
                   const cleanupComplete = record.cleanup ? await record.cleanup(true) : true;
                   settleGate(cleanupComplete ? 'clean' : 'quarantined');
                   record.cleanupComplete = cleanupComplete;
-                  return { token: cfg.token, parentReservationId: cfg.owner.reservationId, rendererId: gate.rendererId, acknowledged: true, cleanupComplete };
+                  return { token: cfg.token, parentReservationId: cfg.owner.reservationId, rendererId: gate.rendererId, acknowledged: true, cleanupComplete,
+                    ...(cleanupComplete ? {} : { cleanupState: String(record.cleanupState || 'unknown').slice(0, 120) }) };
                 } catch (error) {
                   settleGate('quarantined');
                   throw error;

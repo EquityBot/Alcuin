@@ -23,6 +23,36 @@ const MODEL_BUTTON_WAIT: Duration = Duration::from_secs(20);
 /// take before the target is treated as unconfirmed. A follow-up's renderer may still be
 /// hydrating the conversation, and on a loaded host these can exceed 1 s.
 pub(crate) const CONTROL_ACK_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// State names the picker scripts report for an unconfirmed cleanup.
+const CLEANUP_STATES: [&str; 10] = [
+    "root-ambiguous",
+    "ambiguous",
+    "menu-visible",
+    "menu-unconfirmed",
+    "advanced-open",
+    "submenu-open",
+    "overlay-open",
+    "deadline",
+    "unreadable",
+    "unknown",
+];
+
+/// Why an inspection's cleanup is unconfirmed. Only the scripts' fixed state names pass, so
+/// page text never reaches the session error.
+fn cleanup_detail(finished: &Result<Value>, owned: bool) -> String {
+    let Ok(value) = finished else {
+        return "finish did not answer".into();
+    };
+    if !owned {
+        return "finish not acknowledged".into();
+    }
+    let state = value["cleanupState"]
+        .as_str()
+        .filter(|s| !s.is_empty() && s.split(' ').all(|token| CLEANUP_STATES.contains(&token)))
+        .unwrap_or("unknown");
+    format!("still open: {state}")
+}
 pub const MODEL_BUTTON: &str = "button[aria-label=\"Select ChatGPT model\"], button[data-codex-intelligence-trigger=\"true\"], [data-testid=\"model-switcher-dropdown-button\"], button.__composer-pill[aria-haspopup=\"menu\"]";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -812,20 +842,26 @@ impl RendererReservation {
                 &CancellationToken::new(),
             )
             .await;
+        let owned = |v: &Value| {
+            v["token"] == token
+                && v["parentReservationId"] == self.owner.reservation_id
+                && v["rendererId"] == prepared["rendererId"]
+                && v["acknowledged"] == true
+        };
         let finished = match finished {
-            Ok(v)
-                if v["token"] == token
-                    && v["parentReservationId"] == self.owner.reservation_id
-                    && v["rendererId"] == prepared["rendererId"]
-                    && v["acknowledged"] == true
-                    && v["cleanupComplete"] == true =>
-            {
-                v
-            }
-            _ => {
+            Ok(v) if owned(&v) && v["cleanupComplete"] == true => v,
+            other => {
+                let detail = cleanup_detail(&other, other.as_ref().is_ok_and(owned));
+                let picker = if function.contains("alcuin-dom:thinking") {
+                    "effort"
+                } else {
+                    "model"
+                };
                 self.unconfirmed_work = true;
                 let _ = self.quarantine(CONTROL_ACK_TIMEOUT).await;
-                bail!("Picker cleanup is unconfirmed; refusing target reuse")
+                bail!(
+                    "Picker cleanup is unconfirmed ({picker} picker, {detail}); refusing target reuse"
+                )
             }
         };
         if outcome.is_err() || cancel.is_cancelled() {
@@ -1522,5 +1558,34 @@ mod settlement_tests {
         owner.quarantine(CONTROL_ACK_TIMEOUT).await.unwrap();
         assert!(!owner.settled_before_dispatch());
         stop(owner, peer).await;
+    }
+}
+
+#[cfg(test)]
+mod cleanup_detail_tests {
+    use super::cleanup_detail;
+    use serde_json::json;
+
+    #[test]
+    fn cleanup_detail_names_state_and_withholds_page_text() {
+        let state = |s: &str| cleanup_detail(&Ok(json!({"cleanupState": s})), true);
+        assert_eq!(
+            state("menu-visible overlay-open"),
+            "still open: menu-visible overlay-open"
+        );
+        assert_eq!(state("Usage limit reached"), "still open: unknown");
+        assert_eq!(state("private conversation"), "still open: unknown");
+        assert_eq!(state("menu-visible  overlay-open"), "still open: unknown");
+        let every = super::CLEANUP_STATES.join(" ");
+        assert_eq!(state(&every), format!("still open: {every}"));
+        assert_eq!(cleanup_detail(&Ok(json!({})), true), "still open: unknown");
+        assert_eq!(
+            cleanup_detail(&Ok(json!({"cleanupState": "menu-visible"})), false),
+            "finish not acknowledged"
+        );
+        assert_eq!(
+            cleanup_detail(&Err(anyhow::anyhow!("timed out")), true),
+            "finish did not answer"
+        );
     }
 }
