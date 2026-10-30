@@ -24,8 +24,22 @@ const MODEL_BUTTON_WAIT: Duration = Duration::from_secs(20);
 /// hydrating the conversation, and on a loaded host these can exceed 1 s.
 pub(crate) const CONTROL_ACK_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Why an inspection's cleanup is unconfirmed. The page reports only fixed state names, and
-/// anything else is withheld so page text never reaches the session error.
+/// State names the picker scripts report for an unconfirmed cleanup.
+const CLEANUP_STATES: [&str; 10] = [
+    "root-ambiguous",
+    "ambiguous",
+    "menu-visible",
+    "menu-unconfirmed",
+    "advanced-open",
+    "submenu-open",
+    "overlay-open",
+    "deadline",
+    "unreadable",
+    "unknown",
+];
+
+/// Why an inspection's cleanup is unconfirmed. Only the scripts' fixed state names pass, so
+/// page text never reaches the session error.
 fn cleanup_detail(finished: &Result<Value>, owned: bool) -> String {
     let Ok(value) = finished else {
         return "finish did not answer".into();
@@ -35,12 +49,7 @@ fn cleanup_detail(finished: &Result<Value>, owned: bool) -> String {
     }
     let state = value["cleanupState"]
         .as_str()
-        .filter(|s| {
-            !s.is_empty()
-                && s.len() <= 120
-                && s.chars()
-                    .all(|c| c.is_ascii_lowercase() || c == '-' || c == ' ')
-        })
+        .filter(|s| !s.is_empty() && s.split(' ').all(|token| CLEANUP_STATES.contains(&token)))
         .unwrap_or("unknown");
     format!("still open: {state}")
 }
@@ -1565,7 +1574,10 @@ mod cleanup_detail_tests {
             "still open: menu-visible overlay-open"
         );
         assert_eq!(state("Usage limit reached"), "still open: unknown");
-        assert_eq!(state(&"a".repeat(121)), "still open: unknown");
+        assert_eq!(state("private conversation"), "still open: unknown");
+        assert_eq!(state("menu-visible  overlay-open"), "still open: unknown");
+        let every = super::CLEANUP_STATES.join(" ");
+        assert_eq!(state(&every), format!("still open: {every}"));
         assert_eq!(cleanup_detail(&Ok(json!({})), true), "still open: unknown");
         assert_eq!(
             cleanup_detail(&Ok(json!({"cleanupState": "menu-visible"})), false),
