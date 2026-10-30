@@ -1124,15 +1124,15 @@ async fn retire(
     if let Some(check) = check {
         check()?;
     }
+    let _ = browser
+        .close_owned_target(id, remaining(operation_deadline)?, cancel)
+        .await;
     #[cfg(test)]
     let operation_deadline = crate::browser_target::TEST_CLOSE_WAIT
         .get()
         .map_or(operation_deadline, |wait| {
             operation_deadline.min(Instant::now() + wait)
         });
-    let _ = browser
-        .close_owned_target(id, remaining(operation_deadline)?, cancel)
-        .await;
     loop {
         if targets(&browser, operation_deadline)
             .await?
