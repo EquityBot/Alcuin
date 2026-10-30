@@ -4698,6 +4698,35 @@ async fn wait_original_answer(
         other => other,
     }
 }
+/// How many command budgets the answer wait rides out page reads that give no result (10 minutes
+/// at the default 60 s). ChatGPT keeps generating meanwhile, and giving up loses the answer.
+const PAGE_STALL_COMMANDS: u32 = 10;
+/// Rides out a stalled page read. Only reads pass through here, and each poll repeats them anyway,
+/// so nothing is sent again. Privacy is still verified before any later read is accepted.
+struct PageStalls {
+    since: Option<Instant>,
+    window: Duration,
+}
+impl PageStalls {
+    /// The read's value, or `None` to poll again; the stall's error once it outlasts the window.
+    fn check<T>(&mut self, read: Result<T>) -> Result<Option<T>> {
+        match read {
+            Ok(value) => Ok(Some(value)),
+            Err(error)
+                if error
+                    .downcast_ref::<crate::cdp::PageReadStalled>()
+                    .is_some() =>
+            {
+                let since = *self.since.get_or_insert_with(Instant::now);
+                if since.elapsed() >= self.window {
+                    return Err(error);
+                }
+                Ok(None)
+            }
+            Err(error) => Err(error),
+        }
+    }
+}
 #[allow(clippy::too_many_arguments)] // Acceptance binds source, selection, ownership and the polling deadline.
 async fn wait_answer(
     store: &SessionStore,
@@ -4712,6 +4741,10 @@ async fn wait_answer(
 ) -> Result<Value> {
     let started = Instant::now();
     let mut gate = TerminalGate::default();
+    let mut stalls = PageStalls {
+        since: None,
+        window: limits.command * PAGE_STALL_COMMANDS,
+    };
     let metadata = store.require(id)?;
     let deep = metadata["browser"]["config"]["researchMode"] == "deep";
     let mut monitor = crate::browser_log::ThinkingMonitor::new(&metadata["options"]);
@@ -4752,7 +4785,12 @@ async fn wait_answer(
                 failure
             });
         }
-        crate::browser_privacy::require(reservation.page(), limits.command, cancel).await?;
+        let verified =
+            crate::browser_privacy::require(reservation.page(), limits.command, cancel).await;
+        if stalls.check(verified)?.is_none() {
+            pause(limits.poll, cancel).await?;
+            continue;
+        }
         let cfg = json!({"owner":reservation.owner(),"receipt":receipt,"recovery":recovery,"cleanup":reservation.state()==crate::browser_renderer::DispatchState::Released,"uiErrors":true});
         let report = if deep {
             let metadata = store.require(id)?;
@@ -4852,7 +4890,7 @@ async fn wait_answer(
         let mut observed = if let Some(report) = report {
             report
         } else {
-            reservation
+            let read = reservation
                 .page()
                 .evaluate_with_arguments(
                     &result_expression(),
@@ -4860,8 +4898,14 @@ async fn wait_answer(
                     limits.command,
                     cancel,
                 )
-                .await?
+                .await;
+            let Some(read) = stalls.check(read)? else {
+                pause(limits.poll, cancel).await?;
+                continue;
+            };
+            read
         };
+        stalls.since = None;
         if observed["uiError"] == "temporary_unavailable" {
             return Err(crate::browser_provider::Failure::RetryOffered.into());
         }
