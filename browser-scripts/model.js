@@ -623,6 +623,8 @@ return (() => {
     };
     let causalRoot = false;
     let rootClicked = false;
+    let rootClicks = 0;
+    let rootClickedAt = 0;
     let openedControls = null;
     let rootClosing = false;
     let ambiguous = !ownerKey;
@@ -689,7 +691,11 @@ return (() => {
       if (!active()) return;
       if (root()) return;
       const current = currentTrigger();
-      if (!current || rootAmbiguous || rootClicked) return;
+      if (!current || rootAmbiguous) return;
+      // ChatGPT can ignore a click that lands just after the composer mounts. Click again only
+      // while no menu was bound and the trigger still reports closed, at most 3 clicks in all.
+      if (rootClicked && (rootNode || rootClicks >= 3 || performance.now() - rootClickedAt < 600 ||
+          current.getAttribute('aria-expanded') !== 'false' || current.getAttribute('aria-controls') !== initialControls)) return;
       const controlled = initialControls ? document.getElementById(initialControls) : null;
       const labelledBy = controlled?.getAttribute('aria-labelledby');
       if (labelledBy && labelledBy !== initialId) {
@@ -701,6 +707,8 @@ return (() => {
         return;
       }
       rootClicked = true;
+      rootClicks += 1;
+      rootClickedAt = performance.now();
       if (active()) click(current);
     };
     const selectable = node => ['aria-checked', 'aria-selected', 'aria-current', 'data-selected']
@@ -986,6 +994,7 @@ return (() => {
           if (inspection.ambiguous) return invalid('picker ownership changed or is ambiguous');
           if (!menu) {
             if (clickedModel && inspection.rootGone()) return { status: 'pending' };
+            if (!clickedModel) inspection.openRoot();
             await inspection.sleep(75);
             continue;
           }
@@ -1172,6 +1181,8 @@ return (() => {
     };
     let causalRoot = false;
     let rootClicked = false;
+    let rootClicks = 0;
+    let rootClickedAt = 0;
     let openedControls = null;
     let rootClosing = false;
     let ambiguous = !ownerKey;
@@ -1238,7 +1249,11 @@ return (() => {
       if (!active()) return;
       if (root()) return;
       const current = currentTrigger();
-      if (!current || rootAmbiguous || rootClicked) return;
+      if (!current || rootAmbiguous) return;
+      // ChatGPT can ignore a click that lands just after the composer mounts. Click again only
+      // while no menu was bound and the trigger still reports closed, at most 3 clicks in all.
+      if (rootClicked && (rootNode || rootClicks >= 3 || performance.now() - rootClickedAt < 600 ||
+          current.getAttribute('aria-expanded') !== 'false' || current.getAttribute('aria-controls') !== initialControls)) return;
       const controlled = initialControls ? document.getElementById(initialControls) : null;
       const labelledBy = controlled?.getAttribute('aria-labelledby');
       if (labelledBy && labelledBy !== initialId) {
@@ -1250,6 +1265,8 @@ return (() => {
         return;
       }
       rootClicked = true;
+      rootClicks += 1;
+      rootClickedAt = performance.now();
       if (active()) click(current);
     };
     const selectable = node => ['aria-checked', 'aria-selected', 'aria-current', 'data-selected']
@@ -1523,6 +1540,7 @@ return (() => {
             if (checked.length === 1) return finish((checked[0].textContent || '').trim(), 1);
             if (rows.length) return finish();
             if (performance.now() >= until) return finish(null, 0, true);
+            if (!menu) inspection.openRoot();
             if (menu) {
               const advancedCandidates = Array.from(menu.querySelectorAll('[role="menuitem"], [data-model-picker-view-toggle="true"]'))
                 .filter(node => isVisibleElement(node) && containsPickerWord(pickerNodeLabel(node), ADVANCED_WORDS));
