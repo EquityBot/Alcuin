@@ -1542,12 +1542,16 @@ mod tests {
             journal.commit(&creator, &commit).unwrap();
             journal.finalise(&commit).unwrap();
             let deadline = Instant::now() + budget;
-            // Blocking stands in for a stall between the evidence and its durable write; the
-            // operation still completes on its first poll, as a real close can.
+            // Blocking before the operation starts stands in for a stall between the evidence and
+            // its durable write; the operation still completes on its first poll, as a real close
+            // can.
             let result = journal
-                .retire_record_until(&creator, deadline, |_| async move {
+                .retire_record_until(&creator, deadline, |_| {
                     std::thread::sleep(budget + Duration::from_millis(50));
-                    Ok((absence.to_owned(), "PUBLIC stalled evidence".to_owned()))
+                    std::future::ready(Ok((
+                        absence.to_owned(),
+                        "PUBLIC stalled evidence".to_owned(),
+                    )))
                 })
                 .await
                 .unwrap();
@@ -1573,15 +1577,15 @@ mod tests {
         let holder = std::cell::Cell::new(None);
         let result = journal
             .retire_record_until(&creator, Instant::now() + budget, |_| {
-                let holder = &holder;
-                async move {
-                    std::thread::sleep(budget + Duration::from_millis(50));
-                    holder.set(Some(crate::storage::hold_recovery_mutex(
-                        &contender,
-                        Duration::from_millis(500),
-                    )));
-                    Ok(("unknown".to_owned(), "PUBLIC stalled evidence".to_owned()))
-                }
+                std::thread::sleep(budget + Duration::from_millis(50));
+                holder.set(Some(crate::storage::hold_recovery_mutex(
+                    &contender,
+                    Duration::from_millis(500),
+                )));
+                std::future::ready(Ok((
+                    "unknown".to_owned(),
+                    "PUBLIC stalled evidence".to_owned(),
+                )))
             })
             .await
             .unwrap();
