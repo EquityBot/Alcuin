@@ -10,6 +10,10 @@ use tokio::{
     process::{Child, ChildStdin, ChildStdout},
 };
 
+// MCP refuses a browser consult before creating a session when the host has no Chrome. Admission
+// only checks for an executable file, so any one stands in; no test here launches it.
+const CHROME_STAND_IN: &str = env!("CARGO_BIN_EXE_industrious");
+
 struct McpChild {
     child: Child,
     input: Option<ChildStdin>,
@@ -583,6 +587,7 @@ impl McpChild {
             .env("HOME", home)
             .env("USERPROFILE", home)
             .env("ORACLE_HOME_DIR", home)
+            .env("CHROME_PATH", CHROME_STAND_IN)
             .current_dir(home)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
