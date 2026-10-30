@@ -10,8 +10,8 @@ use tokio::{
     process::{Child, ChildStdin, ChildStdout},
 };
 
-// MCP refuses a browser consult before creating a session when the host has no Chrome. Admission
-// only checks for an executable file, so any one stands in; no test here launches it.
+// MCP refuses a browser consult before creating a session when the host has no Chrome, unless
+// CHROME_PATH is nonempty. No test in this file launches the stand-in.
 const CHROME_STAND_IN: &str = env!("CARGO_BIN_EXE_industrious");
 
 struct McpChild {
