@@ -37,6 +37,7 @@ enum Fault {
     RetryOffered,
     ProviderLateCommit,
     ProviderLateCommitPendingAnswer,
+    ProviderLateCommitStalledBeforeAnswer,
     ProviderLateCommitLostAck,
     ProviderLateCommitChangedOwner,
     ProviderLateAnswer,
@@ -558,6 +559,7 @@ impl Exchange {
                 self.fault,
                 Fault::ProviderLateCommit
                     | Fault::ProviderLateCommitPendingAnswer
+                    | Fault::ProviderLateCommitStalledBeforeAnswer
                     | Fault::ProviderLateCommitLostAck
                     | Fault::ProviderLateCommitChangedOwner
             ) && !self.provider_recovery_started()
@@ -678,6 +680,9 @@ impl Exchange {
             }
             if cfg["action"] == "acknowledge" {
                 self.commit = cfg["receipt"].clone();
+                if matches!(self.fault, Fault::ProviderLateCommitStalledBeforeAnswer) {
+                    hold_session_lock(&self.store, &self.id, RECOVERY_BUDGET);
+                }
             }
             return json!(true);
         }
@@ -1023,7 +1028,9 @@ impl Exchange {
             let recovering = self.provider_recovery_started();
             if matches!(
                 self.fault,
-                Fault::ProviderLateCommitPendingAnswer | Fault::ProviderLateCommitChangedOwner
+                Fault::ProviderLateCommitPendingAnswer
+                    | Fault::ProviderLateCommitStalledBeforeAnswer
+                    | Fault::ProviderLateCommitChangedOwner
             ) || matches!(self.fault, Fault::ProviderLateAnswerDeadline) && !recovering
             {
                 result["completionVisible"] = json!(false);
@@ -2068,13 +2075,29 @@ fn limits() -> RunnerLimits {
 const WAITED_OUT_ATTACHMENT_FLOOR: Duration = Duration::from_secs(5);
 /// For closes the fixture refuses, which production watches for its whole budget.
 const REFUSED_CLOSE_WAIT: Duration = Duration::from_secs(1);
+/// Keeps the session's writes waiting for `hold` from another thread, as a contended store would.
+fn hold_session_lock(store: &SessionStore, id: &str, hold: Duration) {
+    let lock = DirectoryLock::acquire(
+        &store
+            .home()
+            .join("sessions-write-locks")
+            .join(format!("{id}.lock")),
+        Duration::from_secs(1),
+    )
+    .unwrap();
+    std::thread::spawn(move || {
+        std::thread::sleep(hold);
+        drop(lock);
+    });
+}
+const RECOVERY_BUDGET: Duration = Duration::from_secs(3);
 /// Limits for cases whose commit or answer deadline expires before a bounded provider read.
 /// That read's whole budget is min(commit, answer), so the fixture's 500 ms leaves too little
 /// for its identity checks and receipts once a parallel suite stalls native publication.
 fn recovery_limits() -> RunnerLimits {
     RunnerLimits {
-        commit: Duration::from_secs(3),
-        answer: Duration::from_secs(3),
+        commit: RECOVERY_BUDGET,
+        answer: RECOVERY_BUDGET,
         ..limits()
     }
 }
@@ -3981,6 +4004,26 @@ async fn bounded_provider_read_does_not_restart_full_answer_timeout_after_commit
     .await
     .expect("recovered commitment restarted the full answer timeout");
     let error = result.unwrap_err();
+    assert!(
+        matches!(
+            error.downcast_ref::<crate::browser_provider::Failure>(),
+            Some(crate::browser_provider::Failure::AnswerDeadline)
+        ),
+        "{error:#}"
+    );
+    assert_eq!(f.sends.load(Ordering::SeqCst), 1);
+    assert_eq!(f.closes.load(Ordering::SeqCst), 0);
+    assert!(captured(&f.store, &f.id).is_err());
+    stop(f).await;
+}
+#[tokio::test]
+async fn an_answer_wait_reached_after_the_recovery_budget_keeps_the_typed_answer_deadline() {
+    let f = fixture(Fault::ProviderLateCommitStalledBeforeAnswer, false).await;
+    let mut bounded = recovery_limits();
+    bounded.answer = Duration::from_secs(60);
+    // The session lock is held from the acknowledgement for the whole budget, so the answer wait
+    // starts after the episode that recovered the commitment has ended.
+    let error = run_within(&f, &bounded).await.unwrap_err();
     assert!(
         matches!(
             error.downcast_ref::<crate::browser_provider::Failure>(),
