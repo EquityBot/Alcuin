@@ -39,16 +39,19 @@ impl Budget {
         );
         Self::settle(deadline, future).await
     }
-    /// An answer wait is always polled, even after the episode ended: its limit from `limits` is
-    /// then zero, so it reports its own typed deadline, which decides provider eligibility.
+    /// An answer wait due to start after the episode ended has met its deadline, so it never
+    /// starts. The typed failure decides provider eligibility; `observe` revalidates authority.
     pub(super) async fn answer_within<T>(
         &self,
         future: impl std::future::Future<Output = Result<T>>,
     ) -> Result<T> {
-        match self.deadline {
-            Some(deadline) => Self::settle(deadline, future).await,
-            None => future.await,
+        let Some(deadline) = self.deadline else {
+            return future.await;
+        };
+        if Instant::now() >= deadline {
+            return Err(crate::browser_provider::Failure::AnswerDeadline.into());
         }
+        Self::settle(deadline, future).await
     }
     async fn settle<T>(
         deadline: Instant,
@@ -284,5 +287,47 @@ impl<'a> Context<'a> {
             }}),
         )?;
         self.require(cancel)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{cell::Cell, task::Poll};
+
+    fn budget(deadline: Instant) -> Budget {
+        Budget {
+            enabled: true,
+            deadline: Some(deadline),
+        }
+    }
+    #[tokio::test]
+    async fn an_answer_wait_after_the_budget_is_not_polled_and_reports_the_answer_deadline() {
+        let polls = Cell::new(0);
+        let wait = std::future::poll_fn(|_| {
+            polls.set(polls.get() + 1);
+            Poll::<Result<()>>::Pending
+        });
+        let error = budget(Instant::now())
+            .answer_within(wait)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                error.downcast_ref::<crate::browser_provider::Failure>(),
+                Some(crate::browser_provider::Failure::AnswerDeadline)
+            ),
+            "{error:#}"
+        );
+        assert_eq!(polls.get(), 0);
+    }
+    #[tokio::test]
+    async fn an_answer_wait_still_unsettled_at_the_deadline_stays_ineligible() {
+        let deadline = Instant::now() + Duration::from_millis(50);
+        let error = budget(deadline)
+            .answer_within(std::future::pending::<Result<()>>())
+            .await
+            .unwrap_err();
+        assert!(!eligible(&error), "{error:#}");
     }
 }
