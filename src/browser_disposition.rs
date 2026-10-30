@@ -1531,6 +1531,10 @@ mod tests {
         assert!(journal.retirement_id(&creator, &changed).is_err());
         assert!(journal.retirement_id(&creator, &commit).is_err());
     }
+    /// Blocks the thread past the budget, as a stalled disk would; a timer would yield instead.
+    fn stall_past(budget: Duration) {
+        std::thread::sleep(budget + Duration::from_millis(50));
+    }
     #[tokio::test]
     async fn a_decision_reached_as_the_budget_ends_is_published_despite_the_stall() {
         for (budget, absence, decision) in [
@@ -1547,7 +1551,7 @@ mod tests {
             // can.
             let result = journal
                 .retire_record_until(&creator, deadline, |_| {
-                    std::thread::sleep(budget + Duration::from_millis(50));
+                    stall_past(budget);
                     std::future::ready(Ok((
                         absence.to_owned(),
                         "PUBLIC stalled evidence".to_owned(),
@@ -1577,7 +1581,7 @@ mod tests {
         let holder = std::cell::Cell::new(None);
         let result = journal
             .retire_record_until(&creator, Instant::now() + budget, |_| {
-                std::thread::sleep(budget + Duration::from_millis(50));
+                stall_past(budget);
                 holder.set(Some(crate::storage::hold_recovery_mutex(
                     &contender,
                     Duration::from_millis(500),
