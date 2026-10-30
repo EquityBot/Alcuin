@@ -134,6 +134,52 @@ fn file_sections_use_javascript_trailing_whitespace_and_preserve_internal_crlf()
     );
 }
 #[test]
+fn file_sections_keep_every_ended_line_and_drop_only_the_final_line_ending() {
+    let section = |content: &str, numbers| {
+        let file = prompts::PromptFile {
+            path: "x".into(),
+            display_path: "x".into(),
+            content: content.into(),
+            size_bytes: 0,
+        };
+        prompts::file_sections(&[file], false, numbers)
+    };
+    // A diff ending in a whitespace-only context line, as review.diff can.
+    assert_eq!(
+        section(" a\n+b\n \n", true),
+        "### File: x\nLines: 1-3\n```\n1 |  a\n2 | +b\n3 |  \n```"
+    );
+    assert_eq!(
+        section("a\n\t  \n", true),
+        "### File: x\nLines: 1-2\n```\n1 | a\n2 | \t  \n```"
+    );
+    assert_eq!(
+        section("a \n", true),
+        "### File: x\nLines: 1-1\n```\n1 | a \n```"
+    );
+    assert_eq!(
+        section("a\n\n\n", true),
+        "### File: x\nLines: 1-3\n```\n1 | a\n2 | \n3 | \n```"
+    );
+    assert_eq!(section(" a\n \n", false), "### File: x\n```\n a\n \n```");
+    // Only one line ending goes, and none is invented.
+    assert_eq!(
+        section("a\r\n", true),
+        "### File: x\nLines: 1-1\n```\n1 | a\n```"
+    );
+    assert_eq!(
+        section("a", true),
+        "### File: x\nLines: 1-1\n```\n1 | a\n```"
+    );
+    // Text after the last line ending keeps the pinned reference's JavaScript trim.
+    assert_eq!(
+        section("a\n  ", true),
+        "### File: x\nLines: 1-1\n```\n1 | a\n```"
+    );
+    assert_eq!(section("\n", true), "### File: x\nLines: 0\n```\n\n```");
+    assert_eq!(section("", true), "### File: x\nLines: 0\n```\n\n```");
+}
+#[test]
 fn explicit_files_globs_exclusions_and_size_refusal_use_only_the_synthetic_tree() {
     let home = tempfile::tempdir().unwrap();
     let root = home.path();

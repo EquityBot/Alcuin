@@ -12,4 +12,5 @@ First public release. Alcuin is a Rust port of a maintained fork of [Oracle](htt
 - Compatible with Oracle's `ORACLE_*` settings and `~/.oracle` session storage.
 - `serve` prints its access token only when it generates one, adds `--token-file`, compares tokens without early exit, refuses an empty token and answers HTTP 413 `payload_too_large` for run requests over 1,432,704,342 bytes (Oracle's limit).
 - File selection fails closed: `.gitignore` rules apply from the root of the repository holding each selected path, a `.gitignore` that cannot be read or parsed is an error, files read into an API prompt or a browser text bundle must be UTF-8 text rather than being garbled (browser uploads and ZIP bundles still send the original bytes), and credential and private-key files are refused by name and skipped in expansion.
+- File sections in rendered prompts and bundles keep every line that ended, dropping only the final line ending, so a file ending in a whitespace-only line (as a diff can) arrives whole.
 - Licensed under FSL-1.1-ALv2; each version also becomes available under Apache-2.0 two years after its release.

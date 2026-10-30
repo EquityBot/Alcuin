@@ -615,7 +615,13 @@ pub fn file_sections(files: &[PromptFile], indexed: bool, numbers: bool) -> Stri
                 .max()
                 .unwrap_or(0);
             let fence = "`".repeat(3.max(ticks + 1));
-            let content = crate::policy::trim_end(&file.content);
+            // A line that ended keeps all its characters, so a reviewed file arrives whole, including
+            // a last line of only whitespace, as a diff can end. Text after the last line ending keeps
+            // the JavaScript trim of the pinned reference.
+            let content = match file.content.strip_suffix('\n') {
+                Some(ended) => ended.strip_suffix('\r').unwrap_or(ended),
+                None => crate::policy::trim_end(&file.content),
+            };
             let mut lines = vec![header];
             let numbered = if numbers {
                 let split: Vec<_> = if content.is_empty() {
