@@ -203,6 +203,8 @@ enum Fault {
     ManualLoginTimeout,
     OwnedWork,
     UiWarningTimeout,
+    PageStallAfterSend,
+    PrivacyRefusalAfterSend,
     ImageUiWarning,
     StaleConversationCookie,
 }
@@ -1284,6 +1286,45 @@ impl Exchange {
                             && expression.contains("\"action\":\"acknowledge\"")
                     })
             {
+                continue;
+            }
+            if matches!(self.fault, Fault::PageStallAfterSend)
+                && self.result_reads < 2
+                && request["method"] == "Runtime.evaluate"
+                && request["params"]["expression"]
+                    .as_str()
+                    .is_some_and(|expression| expression.contains("industrious-dom:result"))
+            {
+                // First read: the renderer never replies. Second read: the expression throws.
+                self.result_reads += 1;
+                if self.result_reads == 1 {
+                    continue;
+                }
+                let thrown = json!({"id":request["id"],"result":{"result":{"type":"object","subtype":"error"},"exceptionDetails":{"text":"Uncaught","exception":{"description":"TypeError: PUBLIC page replaced"}}}});
+                if socket
+                    .send(Message::Text(thrown.to_string().into()))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+                continue;
+            }
+            if matches!(self.fault, Fault::PrivacyRefusalAfterSend)
+                && request["method"] == "Runtime.evaluate"
+                && request["params"]["expression"]
+                    .as_str()
+                    .is_some_and(|expression| expression.contains("industrious-dom:result"))
+            {
+                let description = format!("Error: {}", crate::browser_privacy::REFUSAL);
+                let thrown = json!({"id":request["id"],"result":{"result":{"type":"object","subtype":"error"},"exceptionDetails":{"text":"Uncaught","exception":{"description":description}}}});
+                if socket
+                    .send(Message::Text(thrown.to_string().into()))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
                 continue;
             }
             if matches!(self.fault, Fault::UploadObjectUnacknowledged)
@@ -4075,6 +4116,71 @@ async fn bounded_provider_read_caps_recovered_ack_and_revalidates_used_episode()
         assert!(captured(&f.store, &f.id).is_err(), "{fault:?}");
         stop(f).await;
     }
+}
+#[tokio::test]
+async fn a_page_stall_after_the_send_keeps_waiting_and_captures_the_answer_without_a_second_send() {
+    let f = fixture(Fault::PageStallAfterSend, false).await;
+    let patient = RunnerLimits {
+        // The unanswered read uses up one command budget.
+        command: Duration::from_secs(2),
+        answer: Duration::from_secs(30),
+        ..limits()
+    };
+    let result = run_within(&f, &patient).await.unwrap();
+    assert_eq!(result["status"], "completed");
+    assert_eq!(
+        captured(&f.store, &f.id).unwrap(),
+        b"PUBLIC exact owned answer
+
+End
+"
+    );
+    assert_eq!(f.sends.load(Ordering::SeqCst), 1);
+    stop(f).await;
+}
+#[tokio::test]
+async fn a_privacy_refusal_from_the_result_read_ends_the_wait_at_once() {
+    let f = fixture(Fault::PrivacyRefusalAfterSend, false).await;
+    let patient = RunnerLimits {
+        answer: Duration::from_secs(30),
+        ..limits()
+    };
+    let started = std::time::Instant::now();
+    let error = run_within(&f, &patient).await.unwrap_err();
+    assert!(
+        format!("{error:#}").contains("Browser expression failed"),
+        "{error:#}"
+    );
+    assert!(started.elapsed() < Duration::from_secs(20));
+    assert!(captured(&f.store, &f.id).is_err());
+    assert_eq!(f.sends.load(Ordering::SeqCst), 1);
+    stop(f).await;
+}
+#[test]
+fn page_stalls_are_ridden_out_only_within_their_window_and_other_errors_pass() {
+    let stall = || anyhow::Error::from(crate::cdp::PageReadStalled("PUBLIC stall".into()));
+    let mut patient = PageStalls {
+        since: None,
+        window: Duration::from_secs(60),
+    };
+    assert_eq!(patient.check(Ok(1)).unwrap(), Some(1));
+    assert!(patient.since.is_none());
+    assert_eq!(patient.check::<i32>(Err(stall())).unwrap(), None);
+    assert!(patient.since.is_some());
+    // Any other failure, such as a privacy refusal, ends the wait as it did before.
+    let refused = patient.check::<i32>(Err(anyhow::anyhow!("PUBLIC refusal")));
+    assert_eq!(refused.unwrap_err().to_string(), "PUBLIC refusal");
+    let mut spent = PageStalls {
+        since: None,
+        window: Duration::ZERO,
+    };
+    let stalled = spent.check::<i32>(Err(stall())).unwrap_err();
+    assert!(
+        stalled
+            .downcast_ref::<crate::cdp::PageReadStalled>()
+            .is_some()
+    );
+    assert_eq!(stalled.to_string(), "PUBLIC stall");
 }
 #[tokio::test]
 async fn response_load_error_is_not_captured_and_retains_the_committed_target() {

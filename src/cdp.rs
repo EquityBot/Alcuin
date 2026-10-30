@@ -20,6 +20,17 @@ use tokio_tungstenite::{
 };
 use tokio_util::sync::CancellationToken;
 
+/// A page read that gave no usable result: the renderer did not reply in time, or the
+/// expression threw something other than the privacy guard's refusal.
+#[derive(Debug)]
+pub(crate) struct PageReadStalled(pub(crate) String);
+impl std::fmt::Display for PageReadStalled {
+    fn fmt(&self, output: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        output.write_str(&self.0)
+    }
+}
+impl std::error::Error for PageReadStalled {}
+
 struct Command {
     id: u64,
     message: Value,
@@ -227,7 +238,7 @@ impl Cdp {
             message["sessionId"] = json!(session);
         }
         tokio::select! {biased;_=cancel.cancelled()=>bail!("CDP command was cancelled before dispatch."),_=self.connection.shutdown.cancelled()=>bail!("CDP connection is closed; command was not sent."),result=tokio::time::timeout_at(deadline,self.connection.commands.send(Command{id,message,reply,cancel:cancel.clone(),deadline}))=>result.map_err(|_|anyhow::anyhow!("CDP command queue timed out; command was not sent."))?.map_err(|_|anyhow::anyhow!("CDP connection is closed; command was not sent."))?};
-        let value = tokio::select! {biased;_=cancel.cancelled()=>bail!("CDP command was cancelled after reservation; acknowledgement is uncertain. Do not replay."),result=tokio::time::timeout_at(deadline,answer)=>result.map_err(|_|anyhow::anyhow!("CDP command timed out; acknowledgement is uncertain. Do not replay. Method: {method}."))?.map_err(|_|anyhow::anyhow!("CDP command acknowledgement is unavailable."))?.map_err(anyhow::Error::msg)?};
+        let value = tokio::select! {biased;_=cancel.cancelled()=>bail!("CDP command was cancelled after reservation; acknowledgement is uncertain. Do not replay."),result=tokio::time::timeout_at(deadline,answer)=>result.map_err(|_|PageReadStalled(format!("CDP command timed out; acknowledgement is uncertain. Do not replay. Method: {method}.")))?.map_err(|_|anyhow::anyhow!("CDP command acknowledgement is unavailable."))?.map_err(anyhow::Error::msg)?};
         if value.get("error").is_some() {
             bail!("CDP command {method} was refused by the endpoint.");
         }
@@ -250,10 +261,17 @@ impl Cdp {
                 cancel,
             )
             .await?;
-        anyhow::ensure!(
-            result.get("exceptionDetails").is_none(),
-            "Browser expression failed; result was not accepted."
-        );
+        if let Some(details) = result.get("exceptionDetails") {
+            let failed = "Browser expression failed; result was not accepted.";
+            // The page's privacy guard throws its refusal, which is final. So is an
+            // exception that does not say what was thrown.
+            return Err(match details["exception"]["description"].as_str() {
+                Some(thrown) if !thrown.contains(crate::browser_privacy::REFUSAL) => {
+                    PageReadStalled(failed.into()).into()
+                }
+                _ => anyhow::anyhow!(failed),
+            });
+        }
         result["result"]
             .get("value")
             .cloned()

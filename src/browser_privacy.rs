@@ -6,7 +6,7 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 const PROBE: &str = include_str!("../browser-scripts/temporary-chat.js");
-const REFUSAL: &str =
+pub(crate) const REFUSAL: &str =
     "Verified ChatGPT Temporary Chat is required; preserve uncertain requests without replay";
 /// Re-read interval whilst the live view is unmounted (the initial composer wait uses the same).
 const SETTLE_POLL: Duration = Duration::from_millis(100);
