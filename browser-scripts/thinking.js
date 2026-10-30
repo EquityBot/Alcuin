@@ -1485,11 +1485,27 @@ return (async () => {
       cleaned = structuralComplete && (!rootClicked || rootClosed) && opened.every(entry => entry.closed);
       return structuralComplete && await observeAdditionalCleanup(finalising, until);
     };
+    // Names what an unconfirmed cleanup left behind, so its failure can be attributed.
+    const cleanupState = () => {
+      const facts = [];
+      if (rootAmbiguous) facts.push('root-ambiguous');
+      else if (ambiguous) facts.push('ambiguous');
+      if (rootNode && rootNode.isConnected !== false && visible(rootNode)) facts.push('menu-visible');
+      else if (rootClicked && !rootClosed) facts.push('menu-unconfirmed');
+      for (const entry of opened) if (!entry.closed) facts.push(entry.kind + '-open');
+      if (additionalCleanupComplete() !== true) facts.push('overlay-open');
+      return facts.join(' ') || 'deadline';
+    };
     const cleanup = async (finalising = false) => {
       if (cleanupRun) await cleanupRun;
       cleanupRun = cleaned ? observeAdditionalCleanup(finalising) : cleanupOwned(finalising);
       try {
-        return await cleanupRun;
+        const complete = await cleanupRun;
+        if (record) {
+          try { record.cleanupState = complete ? null : cleanupState(); }
+          catch { record.cleanupState = 'unreadable'; }
+        }
+        return complete;
       }
       finally { cleanupRun = null; }
     };

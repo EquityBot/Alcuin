@@ -1010,7 +1010,7 @@ const PRO_PICKER_SETUP: &str = r#"(cfg)=>{
   document.querySelector('form').append(trigger);
   const radio=(label)=>`<div role="menuitemradio" aria-checked="false" tabindex="-1" data-orientation="vertical" data-radix-collection-item=""${label==='Pro'&&state.max<4?' aria-disabled="true" data-disabled=""':''}><div data-menu-row-content="true"><span>${label}</span></div></div>`;
   let wrapper=null;
-  const close=()=>{wrapper?.remove();wrapper=null;trigger.setAttribute('aria-expanded','false');trigger.setAttribute('data-state','closed');};
+  const close=()=>{if(state.stuck)return;wrapper?.remove();wrapper=null;trigger.setAttribute('aria-expanded','false');trigger.setAttribute('data-state','closed');};
   const update=()=>{
     const name=names[state.level];
     trigger.lastChild.textContent=name;
@@ -1131,6 +1131,18 @@ async fn pro_model_picker_cases(page: &Cdp) -> Result<()> {
         );
         reservation.release_clean(SHORT).await?;
     }
+    // A menu that will not close fails closed and names what stayed open.
+    let mut reservation = picker(json!({"stuck":true})).await?;
+    let error = reservation
+        .select_pair("select", "GPT-6", SHORT, &cancel)
+        .await
+        .err()
+        .context("A picker that stays open must not pass cleanup")?;
+    anyhow::ensure!(
+        error.to_string()
+            == "Picker cleanup is unconfirmed (model picker, still open: menu-visible); refusing target reuse",
+        "{error:#}"
+    );
     page.evaluate(
         "sessionStorage.removeItem('oracle:target-claim');true",
         SHORT,
