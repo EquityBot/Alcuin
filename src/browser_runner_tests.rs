@@ -37,6 +37,7 @@ enum Fault {
     RetryOffered,
     ProviderLateCommit,
     ProviderLateCommitPendingAnswer,
+    ProviderLateCommitStalledBeforeAnswer,
     ProviderLateCommitLostAck,
     ProviderLateCommitChangedOwner,
     ProviderLateAnswer,
@@ -560,6 +561,7 @@ impl Exchange {
                 self.fault,
                 Fault::ProviderLateCommit
                     | Fault::ProviderLateCommitPendingAnswer
+                    | Fault::ProviderLateCommitStalledBeforeAnswer
                     | Fault::ProviderLateCommitLostAck
                     | Fault::ProviderLateCommitChangedOwner
             ) && !self.provider_recovery_started()
@@ -680,6 +682,9 @@ impl Exchange {
             }
             if cfg["action"] == "acknowledge" {
                 self.commit = cfg["receipt"].clone();
+                if matches!(self.fault, Fault::ProviderLateCommitStalledBeforeAnswer) {
+                    hold_session_lock(&self.store, &self.id, RECOVERY_BUDGET);
+                }
             }
             return json!(true);
         }
@@ -1025,7 +1030,9 @@ impl Exchange {
             let recovering = self.provider_recovery_started();
             if matches!(
                 self.fault,
-                Fault::ProviderLateCommitPendingAnswer | Fault::ProviderLateCommitChangedOwner
+                Fault::ProviderLateCommitPendingAnswer
+                    | Fault::ProviderLateCommitStalledBeforeAnswer
+                    | Fault::ProviderLateCommitChangedOwner
             ) || matches!(self.fault, Fault::ProviderLateAnswerDeadline) && !recovering
             {
                 result["completionVisible"] = json!(false);
@@ -2104,13 +2111,34 @@ fn limits() -> RunnerLimits {
         bringup: Duration::from_secs(5),
     }
 }
+/// For uploads that wait out their budget by design: the fixture's command budget, in place of
+/// the 45 s production floor. `attachment_budget` still takes the larger of the two.
+const WAITED_OUT_ATTACHMENT_FLOOR: Duration = Duration::from_secs(5);
+/// For closes the fixture refuses, which production watches for its whole budget.
+const REFUSED_CLOSE_WAIT: Duration = Duration::from_secs(1);
+/// Keeps the session's writes waiting for `hold` from another thread, as a contended store would.
+fn hold_session_lock(store: &SessionStore, id: &str, hold: Duration) {
+    let lock = DirectoryLock::acquire(
+        &store
+            .home()
+            .join("sessions-write-locks")
+            .join(format!("{id}.lock")),
+        Duration::from_secs(1),
+    )
+    .unwrap();
+    std::thread::spawn(move || {
+        std::thread::sleep(hold);
+        drop(lock);
+    });
+}
+const RECOVERY_BUDGET: Duration = Duration::from_secs(3);
 /// Limits for cases whose commit or answer deadline expires before a bounded provider read.
 /// That read's whole budget is min(commit, answer), so the fixture's 500 ms leaves too little
 /// for its identity checks and receipts once a parallel suite stalls native publication.
 fn recovery_limits() -> RunnerLimits {
     RunnerLimits {
-        commit: Duration::from_secs(3),
-        answer: Duration::from_secs(3),
+        commit: RECOVERY_BUDGET,
+        answer: RECOVERY_BUDGET,
         ..limits()
     }
 }
@@ -4030,6 +4058,26 @@ async fn bounded_provider_read_does_not_restart_full_answer_timeout_after_commit
     stop(f).await;
 }
 #[tokio::test]
+async fn an_answer_wait_reached_after_the_recovery_budget_keeps_the_typed_answer_deadline() {
+    let f = fixture(Fault::ProviderLateCommitStalledBeforeAnswer, false).await;
+    let mut bounded = recovery_limits();
+    bounded.answer = Duration::from_secs(60);
+    // The session lock is held from the acknowledgement for the whole budget, so the answer wait
+    // starts after the episode that recovered the commitment has ended.
+    let error = run_within(&f, &bounded).await.unwrap_err();
+    assert!(
+        matches!(
+            error.downcast_ref::<crate::browser_provider::Failure>(),
+            Some(crate::browser_provider::Failure::AnswerDeadline)
+        ),
+        "{error:#}"
+    );
+    assert_eq!(f.sends.load(Ordering::SeqCst), 1);
+    assert_eq!(f.closes.load(Ordering::SeqCst), 0);
+    assert!(captured(&f.store, &f.id).is_err());
+    stop(f).await;
+}
+#[tokio::test]
 async fn bounded_provider_read_caps_recovered_ack_and_revalidates_used_episode() {
     for fault in [
         Fault::ProviderLateCommitLostAck,
@@ -5776,6 +5824,7 @@ async fn a_lock_held_through_cleanup_and_warning_keeps_the_completed_answer() {
 
 #[tokio::test]
 async fn completed_close_retries_resume_only_the_exact_durable_marker() {
+    crate::browser_target::TEST_CLOSE_WAIT.set(Some(REFUSED_CLOSE_WAIT));
     for explicit in [false, true] {
         for fault in [
             Fault::CloseRefusedTwice,
@@ -5846,10 +5895,12 @@ async fn completed_close_retries_resume_only_the_exact_durable_marker() {
             stop(f).await;
         }
     }
+    crate::browser_target::TEST_CLOSE_WAIT.set(None);
 }
 
 #[tokio::test]
 async fn same_process_reconciliation_never_closes_running_or_uncertain_requests() {
+    crate::browser_target::TEST_CLOSE_WAIT.set(Some(REFUSED_CLOSE_WAIT));
     for case in [
         "running",
         "send-uncertain",
@@ -5899,6 +5950,7 @@ async fn same_process_reconciliation_never_closes_running_or_uncertain_requests(
         assert_eq!(f.sends.load(Ordering::SeqCst), 1);
         stop(f).await;
     }
+    crate::browser_target::TEST_CLOSE_WAIT.set(None);
 }
 
 #[tokio::test]
@@ -6830,6 +6882,9 @@ async fn source_mismatch_historical_echo_incomplete_answer_and_lost_ack_never_re
 #[tokio::test]
 async fn owned_upload_must_reach_readiness_and_cleanup_before_send() {
     for fault in [Fault::None, Fault::UploadFailed] {
+        // The failure waits out the budget by design; the successful upload keeps the real one.
+        TEST_ATTACHMENT_BUDGET_FLOOR
+            .set(matches!(fault, Fault::UploadFailed).then_some(WAITED_OUT_ATTACHMENT_FLOOR));
         let f = fixture(fault, true).await;
         let result = run(&f).await;
         assert_eq!(result.is_ok(), matches!(fault, Fault::None));
@@ -6864,6 +6919,7 @@ async fn owned_upload_must_reach_readiness_and_cleanup_before_send() {
         assert!(f.home.path().join("public.txt").exists());
         stop(f).await;
     }
+    TEST_ATTACHMENT_BUDGET_FLOOR.set(None);
 }
 #[tokio::test]
 async fn unconfirmed_upload_commands_or_cleanup_never_authorise_close_or_send() {
@@ -6876,6 +6932,18 @@ async fn unconfirmed_upload_commands_or_cleanup_never_authorise_close_or_send() 
         Fault::UploadCleanupWrongOwner,
         Fault::UploadCleanupWrongNavigation,
     ] {
+        // These wait out the budget by design; the wrong receipts refuse on their first read and
+        // keep the real budget, so expiry cannot stand in for the refusal they test.
+        TEST_ATTACHMENT_BUDGET_FLOOR.set(
+            matches!(
+                fault,
+                Fault::UploadObjectUnacknowledged
+                    | Fault::UploadDescribeUnacknowledged
+                    | Fault::UploadCommandUnacknowledged
+                    | Fault::UploadCleanupFailed
+            )
+            .then_some(WAITED_OUT_ATTACHMENT_FLOOR),
+        );
         let f = fixture(fault, true).await;
         assert!(run(&f).await.is_err(), "{fault:?}");
         assert_eq!(f.sends.load(Ordering::SeqCst), 0, "{fault:?}");
@@ -6895,6 +6963,7 @@ async fn unconfirmed_upload_commands_or_cleanup_never_authorise_close_or_send() 
         );
         stop(f).await;
     }
+    TEST_ATTACHMENT_BUDGET_FLOOR.set(None);
 }
 #[tokio::test]
 async fn a_cleaned_second_upload_failure_retires_the_owned_target_with_its_first_upload() {

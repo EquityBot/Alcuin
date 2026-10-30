@@ -4186,10 +4186,22 @@ fn capture_image_summary(
     let capture = capture_outcome(store, id, witness, outcome, &text, None, cancel)?;
     Ok((capture, text))
 }
+const ATTACHMENT_BUDGET_FLOOR: Duration = Duration::from_secs(45);
+#[cfg(test)]
+thread_local! {
+    static TEST_ATTACHMENT_BUDGET_FLOOR: std::cell::Cell<Option<Duration>> = const { std::cell::Cell::new(None) };
+}
+fn attachment_budget_floor() -> Duration {
+    #[cfg(test)]
+    if let Some(floor) = TEST_ATTACHMENT_BUDGET_FLOOR.get() {
+        return floor;
+    }
+    ATTACHMENT_BUDGET_FLOOR
+}
 /// Reference attachment completion budget: max(inputTimeoutMs, 45 s) plus 20 s for each
 /// further file, raised to `attachmentTimeoutMs`. All of a batch's uploads share it.
 fn attachment_budget(config: &Value, limits: &RunnerLimits, files: usize) -> Duration {
-    let budget = limits.command.max(Duration::from_secs(45))
+    let budget = limits.command.max(attachment_budget_floor())
         + Duration::from_secs(20).saturating_mul(files.saturating_sub(1) as u32);
     budget.max(Duration::from_millis(
         config["attachmentTimeoutMs"].as_u64().unwrap_or(0),
@@ -4646,7 +4658,7 @@ async fn wait_original_answer(
     )?;
     let bounded = recovery.limits(limits);
     let initial = recovery
-        .within(wait_answer(
+        .answer_within(wait_answer(
             store,
             id,
             reservation,

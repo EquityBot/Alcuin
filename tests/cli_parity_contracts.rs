@@ -964,14 +964,23 @@ fn program_options_after_a_command_apply_or_ignore_like_commander() {
 // the command's own --verbose is never set, and runBridgeDoctor ignores its options anyway.
 fn bridge_doctor_accepts_and_ignores_verbose_like_commander() {
     let home = tempfile::tempdir().unwrap();
-    let plain = cli(home.path(), &["bridge", "doctor"]);
+    // Doctor exits 1 on a host without Chrome. It only checks for an executable file, so any one
+    // stands in, and the test no longer depends on what the host has installed.
+    let cli = |args: &[&str]| {
+        command(home.path())
+            .env("CHROME_PATH", env!("CARGO_BIN_EXE_industrious"))
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let plain = cli(&["bridge", "doctor"]);
     assert_eq!(plain.status.code(), Some(0), "{}", stderr(&plain));
     for args in [
         &["bridge", "doctor", "--verbose"][..],
         &["bridge", "doctor", "-v"],
         &["--verbose", "bridge", "doctor"],
     ] {
-        let output = cli(home.path(), args);
+        let output = cli(args);
         assert_eq!(output.status.code(), plain.status.code(), "{args:?}");
         assert_eq!(stdout(&output), stdout(&plain), "{args:?}");
         assert_eq!(stderr(&output), stderr(&plain), "{args:?}");
