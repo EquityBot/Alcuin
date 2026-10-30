@@ -430,7 +430,9 @@ impl TargetJournal {
         // up here would report a false failure and leave the retirement undecided. The deadline
         // bounds the operation and the lock above. This write stays under the record's lock.
         let saved = self.save(&record)?;
-        lock.release()?;
+        // The lock would otherwise inherit the spent deadline, and a release that fails once is
+        // not retried, so a contended release would strand it.
+        lock.release_until(Instant::now() + Duration::from_secs(5))?;
         Ok(saved["disposition"].clone())
     }
     pub(crate) async fn retire_settled_before_dispatch<F, Fut>(
@@ -1555,6 +1557,37 @@ mod tests {
             let saved = journal.read(&creator["allocationId"]).unwrap();
             assert_eq!(saved["disposition"], result);
         }
+    }
+    #[tokio::test]
+    async fn a_late_publication_releases_its_lock_despite_contention() {
+        let home = tempfile::tempdir().unwrap();
+        let (journal, creator, commit) = native(home.path());
+        journal.commit(&creator, &commit).unwrap();
+        journal.finalise(&commit).unwrap();
+        let budget = Duration::from_millis(500);
+        let lock = journal
+            .file(&creator["allocationId"])
+            .unwrap()
+            .with_extension("lock");
+        let contender = lock.clone();
+        let holder = std::cell::Cell::new(None);
+        let result = journal
+            .retire_record_until(&creator, Instant::now() + budget, |_| {
+                let holder = &holder;
+                async move {
+                    std::thread::sleep(budget + Duration::from_millis(50));
+                    holder.set(Some(crate::storage::hold_recovery_mutex(
+                        &contender,
+                        Duration::from_millis(500),
+                    )));
+                    Ok(("unknown".to_owned(), "PUBLIC stalled evidence".to_owned()))
+                }
+            })
+            .await
+            .unwrap();
+        assert_eq!(result["decision"], "retained");
+        assert!(!lock.exists());
+        holder.take().unwrap().join().unwrap();
     }
     #[test]
     fn creator_replacement_and_directory_replacement_refuse_writes() {

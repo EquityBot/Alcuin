@@ -552,6 +552,20 @@ fn normalise_windows_path_identity(raw: &str) -> String {
     raw.to_lowercase()
 }
 
+/// Holds a lock's recovery mutex on another thread, returning once it is held.
+#[cfg(test)]
+pub(crate) fn hold_recovery_mutex(path: &Path, hold: Duration) -> std::thread::JoinHandle<()> {
+    let path = path.to_owned();
+    let (held, wait) = std::sync::mpsc::channel();
+    let holder = std::thread::spawn(move || {
+        let mutex = RecoveryMutex::acquire(&path, Duration::from_secs(5)).unwrap();
+        held.send(()).unwrap();
+        std::thread::sleep(hold);
+        drop(mutex);
+    });
+    wait.recv().unwrap();
+    holder
+}
 struct RecoveryMutex {
     #[cfg(unix)]
     _file: File,
