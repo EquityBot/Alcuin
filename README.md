@@ -9,7 +9,7 @@
 
 <div align="center">
 
-[![tests](https://github.com/EquityBot/Industrious/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/EquityBot/Industrious/actions/workflows/ci.yml) [![CodeQL](https://github.com/EquityBot/Industrious/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/EquityBot/Industrious/actions/workflows/codeql.yml)<br>
+[![tests](https://github.com/EquityBot/Industrious/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/EquityBot/Industrious/actions/workflows/ci.yml) [![CodeQL](https://github.com/EquityBot/Industrious/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/EquityBot/Industrious/actions/workflows/codeql.yml) [![Snyk](https://github.com/EquityBot/Alcuin/actions/workflows/snyk.yml/badge.svg?branch=main)](https://github.com/EquityBot/Alcuin/actions/workflows/snyk.yml)<br>
 [![OpenSSF Scorecard](https://raw.githubusercontent.com/ryanduguid/.github/badges/EquityBot/Industrious.svg)](https://scorecard.dev/viewer/?uri=github.com/EquityBot/Industrious)<br>
 [![rust: 1.99+](.github/assets/badges/rust.svg)](https://www.rust-lang.org/) [![licence: FSL-1.1-ALv2](.github/assets/badges/licence.svg)](LICENSE)
 
