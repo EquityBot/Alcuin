@@ -9,7 +9,7 @@
 
 <div align="center">
 
-[![tests](https://github.com/EquityBot/Alcuin/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/EquityBot/Alcuin/actions/workflows/ci.yml) [![CodeQL](https://github.com/EquityBot/Alcuin/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/EquityBot/Alcuin/actions/workflows/codeql.yml) [![Snyk](https://github.com/EquityBot/Alcuin/actions/workflows/snyk.yml/badge.svg?branch=main)](https://github.com/EquityBot/Alcuin/actions/workflows/snyk.yml)<br>
+[![tests](https://github.com/EquityBot/Alcuin/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/EquityBot/Alcuin/actions/workflows/ci.yml) [![Codecov](https://codecov.io/gh/EquityBot/Alcuin/graph/badge.svg)](https://codecov.io/gh/EquityBot/Alcuin) [![CodeQL](https://github.com/EquityBot/Alcuin/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/EquityBot/Alcuin/actions/workflows/codeql.yml) [![Snyk](https://github.com/EquityBot/Alcuin/actions/workflows/snyk.yml/badge.svg?branch=main)](https://github.com/EquityBot/Alcuin/actions/workflows/snyk.yml) [![SonarCloud](https://sonarcloud.io/api/project_badges/measure?project=EquityBot_Alcuin&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=EquityBot_Alcuin) [![Codacy code quality](https://app.codacy.com/project/badge/Grade/64b01c5d3b174763951ce4fa40124a84)](https://app.codacy.com/gh/EquityBot/Alcuin/dashboard)<br>
 [![OpenSSF Scorecard](https://raw.githubusercontent.com/ryanduguid/.github/badges/EquityBot/Alcuin.svg)](https://scorecard.dev/viewer/?uri=github.com/EquityBot/Alcuin)<br>
 [![rust: 1.99+](.github/assets/badges/rust.svg)](https://www.rust-lang.org/) [![licence: FSL-1.1-ALv2](.github/assets/badges/licence.svg)](LICENSE)
 

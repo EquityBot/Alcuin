@@ -44,11 +44,58 @@ jobs:
         run: Set-MpPreference -DisableRealtimeMonitoring $true
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --locked -- -D warnings
+      # Coverage needs llvm-tools and a prebuilt cargo-llvm-cov, with no fallback to compiling it.
+      - if: runner.os == 'Linux'
+        run: rustup component add llvm-tools
+      - if: runner.os == 'Linux'
+        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: cargo-llvm-cov@0.9.1
+          fallback: none
       # Timing-bounded tests (1 s and 5 s durable-write and retirement budgets) fail closed when the
       # runner is contended: Windows runs them serially, Linux on two threads. Temporary files stay
       # on the workspace drive: a durable write's median was 6 to 9 ms on the Windows system drive
       # and 0.2 to 0.6 ms there (3 runners, 30 October 2026).
-      - run: cargo test --locked -- --test-threads=${{ matrix.os == 'windows-latest' && 1 || 2 }}
+      - if: runner.os == 'Windows'
+        run: cargo test --locked -- --test-threads=1
         env:
           TEMP: ${{ runner.temp }}
           TMP: ${{ runner.temp }}
+      # The Linux leg runs the same tests under cargo-llvm-cov for the Codecov report.
+      - if: runner.os == 'Linux'
+        run: cargo llvm-cov --locked --lcov --output-path coverage-rust.lcov -- --test-threads=2
+        env:
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+      - if: runner.os == 'Linux'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-rust
+          path: coverage-rust.lcov
+          retention-days: 1
+
+  # The upload runs apart from the tests so the OIDC token is never available
+  # while test code runs. A Codecov outage fails only this job.
+  codecov:
+    name: upload coverage to Codecov
+    needs: check
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    permissions:
+      contents: read
+      id-token: write # Authenticate the Codecov upload with OIDC; no stored token.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: coverage-rust
+      - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          use_oidc: true
+          files: coverage-rust.lcov
+          disable_search: true
+          fail_ci_if_error: true
