@@ -1,0 +1,91 @@
+name: Snyk
+
+# Snyk cannot read Cargo.lock directly. Each Cargo set is described as
+# CycloneDX SBOMs, one per workspace member, and tested with `snyk sbom test`;
+# an npm set is tested from its package-lock.json. It runs weekly and when a
+# manifest or lockfile changes.
+on:
+  schedule:
+    - cron: "33 5 * * 2"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - "**/package.json"
+      - "**/package-lock.json"
+      - ".github/workflows/snyk.yml"
+  pull_request:
+    paths:
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - "**/package.json"
+      - "**/package-lock.json"
+      - ".github/workflows/snyk.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Snyk open source test
+    # Pull requests from forks, and Dependabot's (which get Dependabot secrets
+    # only), receive no SNYK_TOKEN; the weekly run scans their changes.
+    if: github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      # One dependency set per line: cargo:<workspace directory> or
+      # npm:<package-lock.json>.
+      SNYK_TARGETS: |
+        cargo:.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: snyk/actions/setup@9adf32b1121593767fc3c057af55b55db032dc04 # v1.0.0
+      # A prebuilt release whose checksum the action's manifest pins, instead of
+      # compiling the generator on every run.
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: cargo-cyclonedx@0.5.9
+      - name: Test each dependency set
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          set -uo pipefail
+          # Without the token every SBOM is still generated, so a broken lock
+          # shows up, but the job fails because nothing was scanned.
+          if [ -z "$SNYK_TOKEN" ]; then
+            echo "::error::The SNYK_TOKEN repository secret is not set, so nothing was scanned."
+          fi
+          status=0
+          while IFS=: read -r kind target; do
+            [ -n "$kind" ] || continue
+            case "$kind" in
+              npm) [ -z "$SNYK_TOKEN" ] || snyk test --file="$target" --project-name="$target" || status=1 ;;
+              cargo)
+                # rustup reads a pinned version from the toolchain file.
+                if [ -f "$target/rust-toolchain.toml" ] || [ -f "$target/rust-toolchain" ]; then
+                  (cd "$target" && rustup toolchain install) \
+                    || { echo "::error::rustup could not install the toolchain for $target"; status=1; continue; }
+                fi
+                (cd "$target" && cargo cyclonedx --format json --spec-version 1.5 --override-filename snyk-sbom) \
+                  || { echo "::error::cargo cyclonedx failed for $target"; status=1; continue; }
+                list=$(mktemp)
+                find "$target" -name snyk-sbom.json -not -path '*/target/*' -print0 > "$list" \
+                  || { echo "::error::Cannot list the SBOMs for $target"; status=1; continue; }
+                [ -s "$list" ] || { echo "::error::cargo cyclonedx wrote no SBOM for $target"; status=1; continue; }
+                while IFS= read -r -d '' sbom; do
+                  [ -z "$SNYK_TOKEN" ] || snyk sbom test --experimental --file="$sbom" || status=1
+                done < "$list" ;;
+              *) echo "::error::Unknown dependency set $kind:$target"; status=1 ;;
+            esac
+          done <<< "$SNYK_TARGETS"
+          [ -n "$SNYK_TOKEN" ] || exit 1
+          exit "$status"
