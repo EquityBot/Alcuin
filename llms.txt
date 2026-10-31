@@ -9,13 +9,13 @@ Version 0.1.0 (unreleased). Needs Rust 1.99 or later; install from a checkout wi
 
 ## Start
 
-- [README](https://github.com/EquityBot/Industrious#readme): install, use, settings and known limitations.
-- [SECURITY.md](https://github.com/EquityBot/Industrious/blob/main/SECURITY.md): what Industrious can reach and how to report a vulnerability.
+- [README](https://github.com/EquityBot/Alcuin#readme): install, use, settings and known limitations.
+- [SECURITY.md](https://github.com/EquityBot/Alcuin/blob/main/SECURITY.md): what Industrious can reach and how to report a vulnerability.
 
 ## Docs
 
-- [CHANGELOG.md](https://github.com/EquityBot/Industrious/blob/main/CHANGELOG.md): changes in each release.
-- [NOTICE](https://github.com/EquityBot/Industrious/blob/main/NOTICE): licence terms and Oracle's retained MIT notice.
+- [CHANGELOG.md](https://github.com/EquityBot/Alcuin/blob/main/CHANGELOG.md): changes in each release.
+- [NOTICE](https://github.com/EquityBot/Alcuin/blob/main/NOTICE): licence terms and Oracle's retained MIT notice.
 
 ## Related
 
