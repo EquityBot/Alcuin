@@ -3,7 +3,7 @@
     <source media="(max-width: 600px) and (prefers-color-scheme: light)" srcset=".github/assets/banner-phone-light.svg">
     <source media="(max-width: 600px)" srcset=".github/assets/banner-phone.svg">
     <source media="(prefers-color-scheme: light)" srcset=".github/assets/banner-light.svg">
-    <img src=".github/assets/banner.svg" width="100%" alt="Alcuin: Ask ChatGPT about your code; keep every answer. Pixel art of a domed straw beehive beside the Alcuin wordmark in slab-serif block letters.">
+    <img src=".github/assets/banner.svg" width="100%" alt="Alcuin: Ask ChatGPT about your code; keep every answer. Pixel art of a quill in an inkwell beside the Alcuin wordmark in slab-serif block letters.">
   </picture>
 </p>
 
