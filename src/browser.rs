@@ -451,11 +451,22 @@ impl DisconnectCause {
     pub fn user_message(self, remote: bool) -> String {
         let place = if remote { "Remote Chrome" } else { "Chrome" };
         match self {
-            Self::CdpClientDisconnect => format!("{place} DevTools client disconnected before Alcuin finished; the browser target appears still alive."),
-            Self::TargetClosed => format!("{place} closed the ChatGPT tab before Alcuin finished; Chrome itself is still running."),
-            Self::LivenessUnknown => format!("{place} DevTools client disconnected before Alcuin finished and Chrome's state could not be confirmed; the window may still be open."),
-            Self::ChromeClosed if remote => "Remote Chrome connection lost before Alcuin finished.".into(),
-            Self::ChromeClosed => "Chrome window closed before Alcuin finished. Please keep it open until completion.".into(),
+            Self::CdpClientDisconnect => format!(
+                "{place} DevTools client disconnected before Alcuin finished; the browser target appears still alive."
+            ),
+            Self::TargetClosed => format!(
+                "{place} closed the ChatGPT tab before Alcuin finished; Chrome itself is still running."
+            ),
+            Self::LivenessUnknown => format!(
+                "{place} DevTools client disconnected before Alcuin finished and Chrome's state could not be confirmed; the window may still be open."
+            ),
+            Self::ChromeClosed if remote => {
+                "Remote Chrome connection lost before Alcuin finished.".into()
+            }
+            Self::ChromeClosed => {
+                "Chrome window closed before Alcuin finished. Please keep it open until completion."
+                    .into()
+            }
         }
     }
 }

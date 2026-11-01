@@ -183,8 +183,7 @@ async fn dry_runs_print_the_reference_summary_resolved_lines_and_guidance() {
     .await
     .unwrap();
     assert!(
-        api.starts_with("[dry-run] Alcuin (")
-            && api.contains(" would call gpt-6-astra with ~"),
+        api.starts_with("[dry-run] Alcuin (") && api.contains(" would call gpt-6-astra with ~"),
         "{api}"
     );
     assert!(api.contains("[dry-run] No files matched the provided --file patterns.\n[dry-run] MCP resolved request:\n"));
@@ -512,4 +511,155 @@ async fn missing_api_keys_use_the_reference_text() {
             format!("Missing {source}. Set it via the environment.{hint}")
         );
     }
+}
+
+#[tokio::test]
+async fn file_inputs_outside_the_working_directory_are_refused_unless_opted_in() {
+    let home = tempfile::tempdir().unwrap();
+    let project = home.path().join("PUBLIC-project");
+    std::fs::create_dir_all(project.join("src")).unwrap();
+    std::fs::write(project.join("src/PUBLIC.rs"), "fn main() {}\n").unwrap();
+    let outside = home.path().join("PUBLIC-outside");
+    std::fs::create_dir(&outside).unwrap();
+    std::fs::write(outside.join("credentials"), "PUBLIC synthetic secret\n").unwrap();
+    let mut escapes = vec![
+        outside.join("credentials").to_string_lossy().into_owned(),
+        "../PUBLIC-outside/credentials".to_owned(),
+        "src/../../PUBLIC-outside/credentials".to_owned(),
+        "../PUBLIC-outside/*".to_owned(),
+        // `..` after a wildcard climbs past the literal `src` once the pattern is normalised.
+        "src/*/../../../PUBLIC-outside/*".to_owned(),
+        "src/*/../../../PUBLIC-outside/credentials".to_owned(),
+    ];
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+        symlink(
+            outside.join("credentials"),
+            project.join("PUBLIC-file-link"),
+        )
+        .unwrap();
+        symlink(&outside, project.join("PUBLIC-folder-link")).unwrap();
+        symlink(&project, home.path().join("PUBLIC-alias")).unwrap();
+        escapes.extend(
+            [
+                "PUBLIC-file-link",
+                "PUBLIC-folder-link/credentials",
+                "PUBLIC-folder-link/*",
+            ]
+            .map(str::to_owned),
+        );
+    }
+    #[cfg(windows)]
+    {
+        // A junction needs no symlink privilege.
+        let junction = |link: &Path, target: &Path| {
+            let status = Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(link)
+                .arg(target)
+                .stdout(Stdio::null())
+                .status()
+                .unwrap();
+            assert!(status.success());
+        };
+        junction(&project.join("PUBLIC-folder-link"), &outside);
+        junction(&home.path().join("PUBLIC-alias"), &project);
+        // A file symlink needs Developer Mode or elevation.
+        if std::os::windows::fs::symlink_file(
+            outside.join("credentials"),
+            project.join("PUBLIC-file-link"),
+        )
+        .is_ok()
+        {
+            escapes.push("PUBLIC-file-link".to_owned());
+        }
+        escapes
+            .extend(["PUBLIC-folder-link/credentials", "PUBLIC-folder-link/*"].map(str::to_owned));
+    }
+    // A link outside that leads in could be repointed after the check, so it is refused too.
+    escapes.push(
+        home.path()
+            .join("PUBLIC-alias")
+            .join("src")
+            .join("PUBLIC.rs")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    let mut confined = server(home.path(), Environment::new());
+    confined.cwd = project.clone();
+    for escape in &escapes {
+        for (tool, input) in [
+            (
+                "consult",
+                json!({"prompt":PROMPT,"engine":"api","dryRun":true,"files":["src/PUBLIC.rs", escape]}),
+            ),
+            (
+                "project_sources",
+                json!({"operation":"add","dryRun":true,"chatgptUrl":"https://chatgpt.com/g/g-p-public/project","files":[escape]}),
+            ),
+        ] {
+            let error = call(&confined, tool, input).await.unwrap_err().to_string();
+            assert!(
+                error.starts_with(&format!(
+                    "MCP file \"{escape}\" is outside the working directory"
+                )) && error.contains("ORACLE_MCP_ALLOW_EXTERNAL_INPUT=1"),
+                "{tool} {escape}: {error}"
+            );
+        }
+    }
+    // An MCP input is never split at commas, so this stays one exclusion.
+    let inside = call(
+        &confined,
+        "consult",
+        json!({"prompt":PROMPT,"engine":"api","dryRun":true,"files":["src/*.rs", "!src/**,../PUBLIC-outside/credentials"]}),
+    )
+    .await
+    .unwrap();
+    assert!(
+        inside.contains("src/PUBLIC.rs") && !inside.contains("PUBLIC-outside"),
+        "{inside}"
+    );
+    // On Windows, letter case does not change which file a path names.
+    #[cfg(windows)]
+    {
+        let upper = project.join("SRC").join("public.RS");
+        let cased = upper.to_string_lossy().to_uppercase();
+        call(
+            &confined,
+            "consult",
+            json!({"prompt":PROMPT,"engine":"api","dryRun":true,"files":[cased]}),
+        )
+        .await
+        .unwrap();
+    }
+    // Glob characters in the working directory's own path do not make an input a pattern.
+    let parenthesised = home.path().join("PUBLIC-app (2026) [x86]");
+    std::fs::create_dir_all(parenthesised.join("src")).unwrap();
+    std::fs::write(parenthesised.join("src/PUBLIC.rs"), "fn main() {}\n").unwrap();
+    let mut awkward = server(home.path(), Environment::new());
+    awkward.cwd = parenthesised;
+    call(
+        &awkward,
+        "consult",
+        json!({"prompt":PROMPT,"engine":"api","dryRun":true,"files":["src/PUBLIC.rs"]}),
+    )
+    .await
+    .unwrap();
+    let mut opted_in = server(
+        home.path(),
+        Environment::from([("ORACLE_MCP_ALLOW_EXTERNAL_INPUT".into(), "1".into())]),
+    );
+    opted_in.cwd = project;
+    let external = call(
+        &opted_in,
+        "consult",
+        json!({"prompt":PROMPT,"engine":"api","dryRun":true,"files":["../PUBLIC-outside/credentials"]}),
+    )
+    .await
+    .unwrap();
+    assert!(
+        external.contains("PUBLIC-outside/credentials"),
+        "{external}"
+    );
 }

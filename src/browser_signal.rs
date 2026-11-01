@@ -35,8 +35,7 @@ pub(crate) fn plan(
     // Runtime identity is already durable: every runtime_patch is a synchronous session write.
     if leave_running && in_flight {
         lines.push(
-            "Session still in flight; reattach with \"alcuin session <slug>\" to continue."
-                .into(),
+            "Session still in flight; reattach with \"alcuin session <slug>\" to continue.".into(),
         );
     }
     (leave_running, lines)

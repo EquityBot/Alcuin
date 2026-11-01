@@ -313,9 +313,8 @@ fn recovered_cleanup_line(completion: &browser_historical::HistoricalCompletion)
         ));
     }
     let disposition = completion.disposition.as_ref()?;
-    (disposition["decision"] == "retired" && disposition["absence"] == "confirmed-absent").then(
-        || "Retired Alcuin-owned browser tab after saving the recovered answer.".to_owned(),
-    )
+    (disposition["decision"] == "retired" && disposition["absence"] == "confirmed-absent")
+        .then(|| "Retired Alcuin-owned browser tab after saving the recovered answer.".to_owned())
 }
 fn report_recovery_error(output: &mut impl Write, error: anyhow::Error) -> Result<()> {
     match writeln!(output, "\nBrowser recovery is incomplete: {error:#}")

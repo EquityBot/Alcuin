@@ -773,7 +773,7 @@ async fn run_command(args: Vec<OsString>) -> Result<i32> {
                     .parse::<u16>()
                     .context("Service port must be between 0 and 65535")?;
                 let address =
-                    tokio::net::lookup_host((text(sub, "host").unwrap_or("0.0.0.0"), port))
+                    tokio::net::lookup_host((text(sub, "host").unwrap_or("127.0.0.1"), port))
                         .await?
                         .next()
                         .context("Service bind host did not resolve")?;

@@ -435,8 +435,6 @@ async fn compiled_serve_advertises_authenticated_capabilities_without_opening_br
         .kill_on_drop(true)
         .args([
             "serve",
-            "--host",
-            "127.0.0.1",
             "--port",
             "0",
             "--token",
@@ -470,6 +468,8 @@ async fn compiled_serve_advertises_authenticated_capabilities_without_opening_br
     );
     let line = next().await;
     let address = line.strip_prefix("Listening at ").unwrap();
+    // Without --host the service accepts this machine only.
+    assert!(address.starts_with("127.0.0.1:"), "{line}");
     let store = SessionStore::new(home.path().join("receiver"));
     let client = alcuin::remote_client::RemoteClient::new(
         address,
