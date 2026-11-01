@@ -3260,6 +3260,7 @@ async fn parent_adoption_completes_then_retires_only_selected_child_and_duplicat
 }
 #[tokio::test]
 async fn parent_cleanup_retries_once_without_replaying_or_closing_changed_targets() {
+    crate::browser_target::TEST_CLOSE_WAIT.set(Some(REFUSED_CLOSE_WAIT));
     for (fault, expected_closes, settled) in [
         (Fault::CloseRefusedOnce, 2, true),
         (Fault::CloseRefusedTwice, 2, false),

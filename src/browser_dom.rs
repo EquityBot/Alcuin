@@ -132,7 +132,11 @@ const INSERT: &str = "(cfg) => { const guard = window.__oracleAttachmentPromptGu
 const EDIT: &str = "(cfg) => { const guard = window.__oracleAttachmentPromptGuards?.[cfg.guardId]; if (!guard) return {ready:false}; const before = guard.summary(); if (before.ready && !before.length) guard.fallback(cfg.prompt); return guard.summary(); }";
 /// Reference stageAttachmentPrompt waits this long after inserting: ChatGPT's editor renders a blank
 /// line as an extra bare break until it re-renders.
+#[cfg(not(test))]
 pub(crate) const EDITOR_SETTLE: Duration = Duration::from_millis(500);
+/// Fixture editors never re-render, so tests keep the settle step but not its length.
+#[cfg(test)]
+pub(crate) const EDITOR_SETTLE: Duration = Duration::from_millis(10);
 const SEAL: &str = "(cfg) => window.__oracleAttachmentPromptGuards?.[cfg.guardId]?.seal?.()";
 const PROMPT_CLEAN: &str = "(cfg) => { const guards=window.__oracleAttachmentPromptGuards; const guard=guards?.[cfg.guardId]; if (!guard) return {cleaned:false}; guard.cleanup(); delete guards[cfg.guardId]; return {cleaned:true}; }";
 const PROMPT_ROLLBACK: &str = "(cfg) => { /* alcuin-dom:prompt-rollback */ return window.__oracleAttachmentPromptGuards?.[cfg.guardId]?.rollback?.() ?? {restored:false}; }";
