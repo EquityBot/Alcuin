@@ -250,6 +250,8 @@ async fn unused_blank_retirement_rechecks_authority_at_the_close_boundary() {
             _ => {}
         }
         let before = registry.records().unwrap();
+        // The unconfirmed close is watched until it expires; other cases keep the full budget.
+        TEST_CLOSE_WAIT.set((case == "unconfirmed").then_some(Duration::from_secs(1)));
         // This matrix checks changing authority, rather than disk performance.
         let result = target.retire_unclaimed_blank(FIXTURE_BUDGET).await;
         let success = matches!(case, "blank" | "last-page");

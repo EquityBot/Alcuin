@@ -100,6 +100,19 @@ async fn verify(
 async fn pause(cancel: &CancellationToken) -> Result<()> {
     tokio::select! {biased;_=cancel.cancelled()=>bail!("Web Search selection cancelled"),_=tokio::time::sleep(Duration::from_millis(100))=>Ok(())}
 }
+#[cfg(test)]
+thread_local! {
+    /// Shortens the waits for a menu option or chip that the fixture never shows.
+    pub(crate) static TEST_SELECTION_WAIT: std::cell::Cell<Option<Duration>> = const { std::cell::Cell::new(None) };
+}
+/// How long Web Search and Deep Research selection keep polling for a menu option or chip.
+pub(crate) fn selection_wait(wait: Duration) -> Duration {
+    #[cfg(test)]
+    if let Some(short) = TEST_SELECTION_WAIT.get() {
+        return wait.min(short);
+    }
+    wait
+}
 pub(crate) async fn check_navigation(
     reservation: &mut RendererReservation,
     cfg: &Value,
@@ -216,7 +229,7 @@ pub(crate) async fn activate(
         "Web Search requires the ChatGPT composer tools menu.",
     )
     .await?;
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + selection_wait(Duration::from_secs(5));
     loop {
         let selected = evaluate(reservation, SELECT, &cfg, timeout, cancel).await?;
         if selected == "clicked" {
@@ -231,7 +244,7 @@ pub(crate) async fn activate(
         );
         pause(cancel).await?;
     }
-    let deadline = Instant::now() + Duration::from_secs(3);
+    let deadline = Instant::now() + selection_wait(Duration::from_secs(3));
     loop {
         if verify(reservation, &cfg, timeout, cancel).await? {
             return Ok(true);
@@ -508,6 +521,8 @@ mod tests {
     }
     #[tokio::test]
     async fn missing_tools_options_and_chips_refuse_with_the_reference_messages() {
+        // The missing option and chip wait out their windows by design.
+        TEST_SELECTION_WAIT.set(Some(Duration::from_millis(300)));
         for (fault, deep, expected) in [
             (
                 "no-menu",

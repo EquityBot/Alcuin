@@ -57,7 +57,7 @@ pub(crate) async fn activate(
         "Could not find the composer plus button to activate Deep Research.",
     )
     .await?;
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + crate::browser_search::selection_wait(Duration::from_secs(5));
     let selection=async { loop {
         let read=crate::browser_search::evaluate(reservation,&selection_expression(SELECT),&cfg,timeout,cancel).await?;
         if read["status"]=="ready" {break Ok::<_,anyhow::Error>(read);}
@@ -125,7 +125,7 @@ pub(crate) async fn activate(
             "Research input or guard cleanup is uncertain; retain recovery without replay"
         );
     }
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + crate::browser_search::selection_wait(Duration::from_secs(5));
     loop {
         if selected(reservation, &cfg, timeout, cancel).await? {
             return Ok(false);
