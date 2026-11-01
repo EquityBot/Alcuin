@@ -232,6 +232,16 @@ async fn image_default_path_validation_and_engine_texts_match_the_reference() {
             "Unrecognized key(s) in object: 'PUBLIC'",
         ),
         (
+            "project_sources",
+            json!({"operation":"list","maxFileSizeBytes":1}),
+            "Unrecognized key(s) in object: 'maxFileSizeBytes'",
+        ),
+        (
+            "sessions",
+            json!({"PUBLIC":true}),
+            "Unrecognized key(s) in object: 'PUBLIC'",
+        ),
+        (
             "consult",
             json!({"prompt":PROMPT,"engine":"api","browserKeepBrowser":false,"generateImage":"generated/PUBLIC.png"}),
             "MCP image output requires engine:\"browser\".",

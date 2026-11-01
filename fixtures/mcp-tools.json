@@ -162,6 +162,7 @@
             "type": "string"
           }
         },
+        "additionalProperties": false,
         "required": [
           "prompt"
         ]
@@ -638,6 +639,7 @@
             "type": "string"
           }
         },
+        "additionalProperties": false,
         "required": [
           "prompt"
         ]
@@ -1056,6 +1058,7 @@
             "type": "boolean"
           }
         },
+        "additionalProperties": false,
         "required": [
           "operation"
         ]
@@ -1245,7 +1248,8 @@
             "description": "When id is set, include session metadata + stored request + full log text.",
             "type": "boolean"
           }
-        }
+        },
+        "additionalProperties": false
       },
       "outputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1337,6 +1341,7 @@
             "maximum": 9007199254740991
           }
         },
+        "additionalProperties": false,
         "required": [
           "id"
         ]

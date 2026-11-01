@@ -706,11 +706,7 @@ async fn actual_stdio_discovery_sessions_wait_and_resources_match_reference_shap
         );
     }
     let result = server
-        .call(
-            4,
-            "sessions",
-            json!({"id":id,"detail":true,"extraFieldIsStripped":true}),
-        )
+        .call(4, "sessions", json!({"id":id,"detail":true}))
         .await;
     assert_eq!(
         result["result"]["structuredContent"]["session"]["metadata"]["historicalExtension"]["retain"],
@@ -785,7 +781,7 @@ async fn actual_stdio_dry_runs_never_create_sessions_or_touch_browser_state() {
         image.ends_with(name) && !output.contains("16:9"),
         "{output}"
     );
-    let result=server.call(4,"project_sources",json!({"operation":"add","chatgptUrl":"https://chatgpt.com/g/g-p-public/project","files":["public.rs"],"dryRun":true,"unknownIsStripped":true})).await;
+    let result=server.call(4,"project_sources",json!({"operation":"add","chatgptUrl":"https://chatgpt.com/g/g-p-public/project","files":["public.rs"],"dryRun":true})).await;
     assert_eq!(
         result["result"]["structuredContent"]["plannedUploads"][0]["batch"],
         1

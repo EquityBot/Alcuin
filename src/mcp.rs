@@ -87,12 +87,7 @@ impl AlcuinMcp {
             .find(|t| t.name == name)
             .context("Unknown MCP tool")?;
         let schema = Value::Object((*tool.input_schema).clone());
-        validate_input(
-            &arguments,
-            &schema,
-            matches!(name, "consult" | "chatgpt_image" | "wait"),
-            "input",
-        )?;
+        validate_input(&arguments, &schema, "input")?;
         if let Some(id) = arguments["id"].as_str() {
             sessions::assert_id(id)?;
         }
@@ -911,7 +906,8 @@ pub fn add_summaries(out: &mut Value, meta: &Value) {
         out["warnings"] = json!(warnings);
     }
 }
-pub fn validate_input(value: &Value, schema: &Value, strict: bool, path: &str) -> Result<()> {
+/// Checks MCP tool input against its schema; keys the schema does not declare are refused.
+pub fn validate_input(value: &Value, schema: &Value, path: &str) -> Result<()> {
     let kind = schema["type"].as_str().unwrap_or("");
     let valid = match kind {
         "object" => value.is_object(),
@@ -965,8 +961,8 @@ pub fn validate_input(value: &Value, schema: &Value, strict: bool, path: &str) -
         }
         for (key, value) in object {
             if let Some(child) = properties.get(key) {
-                validate_input(value, child, false, &format!("{path}.{key}"))?;
-            } else if strict {
+                validate_input(value, child, &format!("{path}.{key}"))?;
+            } else {
                 bail!("Unrecognized key(s) in object: '{key}'");
             }
         }
@@ -978,7 +974,7 @@ pub fn validate_input(value: &Value, schema: &Value, strict: bool, path: &str) -
             .iter()
             .enumerate()
         {
-            validate_input(item, &schema["items"], false, &format!("{path}[{index}]"))?;
+            validate_input(item, &schema["items"], &format!("{path}[{index}]"))?;
         }
     }
     Ok(())
