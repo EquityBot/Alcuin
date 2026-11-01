@@ -183,8 +183,7 @@ async fn dry_runs_print_the_reference_summary_resolved_lines_and_guidance() {
     .await
     .unwrap();
     assert!(
-        api.starts_with("[dry-run] Alcuin (")
-            && api.contains(" would call gpt-6-astra with ~"),
+        api.starts_with("[dry-run] Alcuin (") && api.contains(" would call gpt-6-astra with ~"),
         "{api}"
     );
     assert!(api.contains("[dry-run] No files matched the provided --file patterns.\n[dry-run] MCP resolved request:\n"));

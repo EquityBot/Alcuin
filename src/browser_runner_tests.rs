@@ -299,8 +299,7 @@ impl Exchange {
             .take_while(|r| {
                 !(r["method"] == "Input.dispatchKeyEvent" && r["params"]["type"] == "keyDown")
                     && !r["params"]["expression"].as_str().is_some_and(|e| {
-                        e.contains("alcuin-dom:submission")
-                            && e.contains("\"action\":\"acquire\"")
+                        e.contains("alcuin-dom:submission") && e.contains("\"action\":\"acquire\"")
                     })
             })
             .filter(|r| {
@@ -805,8 +804,7 @@ impl Exchange {
             if matches!(self.fault, Fault::ChangedModelOwner)
                 && self.trace.lock().unwrap().iter().any(|r| {
                     r["params"]["expression"].as_str().is_some_and(|s| {
-                        s.contains("alcuin-dom:thinking")
-                            && s.contains("\"inspectionOnly\":false")
+                        s.contains("alcuin-dom:thinking") && s.contains("\"inspectionOnly\":false")
                     })
                 })
             {
@@ -2439,10 +2437,7 @@ fn dead_provider_attempt_state(
                 "ALCUIN_SYNTHETIC_ENDPOINT_PORT",
                 port.unwrap_or(9222).to_string(),
             )
-            .env(
-                "ALCUIN_SYNTHETIC_CAPTURE_KIND",
-                capture_kind.unwrap_or(""),
-            )
+            .env("ALCUIN_SYNTHETIC_CAPTURE_KIND", capture_kind.unwrap_or(""))
             .stdout(stdout)
             .stderr(stderr)
             .spawn()
@@ -6297,9 +6292,7 @@ async fn partial_two_button_recovery_downloads_the_uncaptured_control_and_export
                 .filter(|request| {
                     request["params"]["expression"]
                         .as_str()
-                        .is_some_and(|expression| {
-                            expression.contains("alcuin-dom:download-click")
-                        })
+                        .is_some_and(|expression| expression.contains("alcuin-dom:download-click"))
                 })
                 .count(),
             3
@@ -6447,8 +6440,7 @@ async fn complete_sequence_commits_full_source_captures_exact_answer_and_retires
                 .iter()
                 .position(|v| {
                     v["params"]["expression"].as_str().is_some_and(|s| {
-                        s.contains("alcuin-dom:thinking")
-                            && s.contains("\"level\":\"extra-high\"")
+                        s.contains("alcuin-dom:thinking") && s.contains("\"level\":\"extra-high\"")
                     })
                 })
                 .unwrap();
@@ -7431,9 +7423,7 @@ async fn recovery_preserves_image_positions_and_reuses_button_publications_after
                 .filter(|operation| {
                     operation["params"]["expression"]
                         .as_str()
-                        .is_some_and(|expression| {
-                            expression.contains("alcuin-dom:download-click")
-                        })
+                        .is_some_and(|expression| expression.contains("alcuin-dom:download-click"))
                 })
                 .count(),
             if matches!(fault, Fault::ButtonOutputFailure) {
@@ -8116,9 +8106,9 @@ async fn fresh_current_strategy_refuses_before_any_picker_inspection() {
     );
     assert_eq!(f.sends.load(Ordering::SeqCst), 0);
     assert!(!f.trace.lock().unwrap().iter().any(|r| {
-        r["params"]["expression"].as_str().is_some_and(|s| {
-            s.contains("alcuin-dom:thinking") || s.contains("alcuin-dom:model")
-        })
+        r["params"]["expression"]
+            .as_str()
+            .is_some_and(|s| s.contains("alcuin-dom:thinking") || s.contains("alcuin-dom:model"))
     }));
     stop(f).await;
 }

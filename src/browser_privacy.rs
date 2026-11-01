@@ -64,9 +64,7 @@ pub(crate) async fn require(
         anyhow::ensure!(!left.is_zero(), REFUSAL);
         let verified = page
             .evaluate_with_arguments(
-                &format!(
-                    "(cfg) => {{ /* alcuin-dom:temporary-chat */ return (\n{PROBE}\n); }}"
-                ),
+                &format!("(cfg) => {{ /* alcuin-dom:temporary-chat */ return (\n{PROBE}\n); }}"),
                 &json!([{}]),
                 left,
                 cancel,
