@@ -1,0 +1,14 @@
+# Advisories reviewed and accepted (1 November 2026). All 3 are "unmaintained" notices with no
+# vulnerability and no patched version: the zvariant crates were merged into zbus 6.0.0, and the
+# newest secret-service (5.2.0) still depends on zbus 5. Review on every secret-service upgrade,
+# and remove the ignores once `cargo audit --deny warnings` passes without them.
+[advisories]
+ignore = [
+    # zvariant 5.15.1, zvariant_derive 5.15.1 and zbus_names 4.3.5. Path (cargo tree -i zvariant
+    # --target all): zbus 5.19.0 <- secret-service 5.2.0 <- this crate, Linux only. The code
+    # reads the Chrome Safe Storage item from the Secret Service over D-Bus
+    # (src/browser_cookie_keys.rs, linux_password); an unmaintained notice does not change that.
+    "RUSTSEC-2026-0370",
+    "RUSTSEC-2026-0371",
+    "RUSTSEC-2026-0372",
+]
