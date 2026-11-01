@@ -58,7 +58,7 @@ Then run consultations with `--engine browser`. Each new request opens a Tempora
 
 **MCP.** `alcuin bridge codex-config` and `alcuin bridge claude-config` print a server entry for Codex and Claude Code.
 
-**Remote browser.** `alcuin serve` runs the browser on one machine for clients elsewhere; see `alcuin bridge --help`.
+**Remote browser.** `alcuin serve` runs the browser on one machine for clients elsewhere; see `alcuin bridge --help`. It listens on 127.0.0.1 unless you pass `--host`. Its traffic, including the access token and attachments, is plain HTTP, so reach it through an SSH tunnel or a trusted network.
 
 Run `alcuin --help --verbose` for every option.
 

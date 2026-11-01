@@ -42,7 +42,7 @@
     "options": [
       {
         "flags": "--host <address>",
-        "description": "Interface to bind (default 0.0.0.0)."
+        "description": "Interface to bind (default 127.0.0.1, this machine only). Pass 0.0.0.0 or another address to accept other machines; traffic is plain HTTP."
       },
       {
         "flags": "--port <number>",
