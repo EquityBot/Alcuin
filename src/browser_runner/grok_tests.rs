@@ -394,10 +394,7 @@ async fn recovery_case(
         .env("ALCUIN_GROK_RECOVERY_HOLD", hold)
         .env("ALCUIN_GROK_RECOVERY_HOST", &endpoint.host)
         .env("ALCUIN_GROK_RECOVERY_PORT", endpoint.port.to_string())
-        .env(
-            "ALCUIN_GROK_RECOVERY_WS",
-            &endpoint.browser_ws_endpoint,
-        );
+        .env("ALCUIN_GROK_RECOVERY_WS", &endpoint.browser_ws_endpoint);
     for key in ["PATH", "SystemRoot", "SYSTEMROOT", "TEMP", "TMP"] {
         if let Some(value) = std::env::var_os(key) {
             command.env(key, value);

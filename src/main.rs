@@ -4,8 +4,7 @@ async fn main() {
     let code = match alcuin::cli::run(std::env::args_os()).await {
         Ok(code) => code,
         Err(error) => {
-            if let Some(duplicate) = error.downcast_ref::<alcuin::execution::DuplicatePrompt>()
-            {
+            if let Some(duplicate) = error.downcast_ref::<alcuin::execution::DuplicatePrompt>() {
                 println!("{duplicate}");
             } else if !error.is::<alcuin::execution::LoggedFailure>() {
                 eprintln!("✖ {error:#}");

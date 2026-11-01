@@ -415,9 +415,10 @@ async fn borrowing_never_claims_navigates_creates_or_retires_and_duplicate_or_wr
             Some("Target.createTarget" | "Page.navigate" | "Target.closeTarget")
         )));
         assert!(
-            requests.iter().all(|r| !r["params"]["expression"]
-                .as_str()
-                .is_some_and(|s| s.contains("native-reply-claim")
+            requests
+                .iter()
+                .all(|r| !r["params"]["expression"].as_str().is_some_and(|s| s
+                    .contains("native-reply-claim")
                     || s.contains("alcuin-dom:submission")))
         );
     }
