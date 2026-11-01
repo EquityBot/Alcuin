@@ -527,6 +527,9 @@ async fn file_inputs_outside_the_working_directory_are_refused_unless_opted_in()
         "../PUBLIC-outside/credentials".to_owned(),
         "src/../../PUBLIC-outside/credentials".to_owned(),
         "../PUBLIC-outside/*".to_owned(),
+        // `..` after a wildcard climbs past the literal `src` once the pattern is normalised.
+        "src/*/../../../PUBLIC-outside/*".to_owned(),
+        "src/*/../../../PUBLIC-outside/credentials".to_owned(),
     ];
     #[cfg(unix)]
     {
