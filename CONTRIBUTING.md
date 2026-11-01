@@ -19,6 +19,7 @@ Run what CI runs before opening one:
 cargo fmt --check
 cargo clippy --all-targets --locked -- -D warnings
 cargo test --locked
+cargo audit --deny warnings
 ```
 
 New functionality and bug fixes come with automated tests, in `tests/` or the

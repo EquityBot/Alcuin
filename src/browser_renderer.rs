@@ -390,9 +390,7 @@ impl RendererReservation {
                 self.unconfirmed_work = true;
                 self.state = DispatchState::Quarantined;
                 if action == "acquire" && refused.is_ok() {
-                    bail!(
-                        "This Alcuin target is busy or quarantined; choose another browser tab."
-                    );
+                    bail!("This Alcuin target is busy or quarantined; choose another browser tab.");
                 }
                 bail!(
                     "Renderer reservation {action} was not positively acknowledged; preserving recovery"

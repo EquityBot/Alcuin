@@ -8,8 +8,7 @@ use std::{
 #[test]
 fn termination_plan_matches_the_reference_hook() {
     let pending = "Received SIGTERM; leaving Chrome running (assistant response pending)";
-    let reattach =
-        "Session still in flight; reattach with \"alcuin session <slug>\" to continue.";
+    let reattach = "Session still in flight; reattach with \"alcuin session <slug>\" to continue.";
     let terminate = "Received SIGTERM; terminating Chrome process";
     let copied = "Received SIGTERM; terminating Chrome and removing the copied profile (copy-profile is not retained)";
     // (keep, in flight, shared manual login, copied) -> leave running, lines

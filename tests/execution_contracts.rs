@@ -1,4 +1,3 @@
-use anyhow::{Result, bail};
 use alcuin::{
     artifacts,
     config::Environment,
@@ -9,6 +8,7 @@ use alcuin::{
     },
     sessions::SessionStore,
 };
+use anyhow::{Result, bail};
 use serde_json::{Value, json};
 use std::{
     fs,

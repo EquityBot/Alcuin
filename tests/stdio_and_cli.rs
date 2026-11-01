@@ -659,12 +659,8 @@ impl McpChild {
 #[tokio::test]
 async fn oracle_mcp_alias_serves_mcp_and_creates_no_session() {
     let home = tempfile::tempdir().unwrap();
-    let mut server = McpChild::spawn(
-        home.path(),
-        env!("CARGO_BIN_EXE_alcuin"),
-        &["oracle-mcp"],
-    )
-    .await;
+    let mut server =
+        McpChild::spawn(home.path(), env!("CARGO_BIN_EXE_alcuin"), &["oracle-mcp"]).await;
     server.initialise().await;
     server.shutdown().await;
     assert!(!home.path().join("sessions").exists());
