@@ -69,7 +69,6 @@ pub fn runtime_environment() -> Environment {
         "ORACLE_BROWSER_ALLOW_COOKIE_ERRORS",
         "ORACLE_BROWSER_MAX_CONCURRENT_TABS",
         "ORACLE_MCP_ALLOW_EXTERNAL_INPUT",
-        "ORACLE_MCP_ALLOW_EXTERNAL_OUTPUT",
         "ORACLE_MAX_FILE_SIZE_BYTES",
         "ORACLE_MIN_PROMPT_CHARS",
         "OPENAI_API_KEY",
@@ -343,28 +342,4 @@ pub fn resolve_existing_prefix(path: &Path) -> Result<PathBuf> {
             Err(error) => return Err(error.into()),
         }
     }
-}
-pub fn mcp_output(
-    home: &Path,
-    requested: &Path,
-    field: &str,
-    allow_external: bool,
-) -> Result<PathBuf> {
-    if allow_external {
-        // Reference path.resolve: lexical, so an existing symlink stays in the path.
-        return Ok(crate::prompts::absolute(
-            Path::new(""),
-            &requested.to_string_lossy(),
-        ));
-    }
-    let target = resolve_existing_prefix(requested)?;
-    let root = resolve_existing_prefix(home)?.join("generated");
-    if target.starts_with(&root) && target != root {
-        return Ok(target);
-    }
-    anyhow::bail!(
-        "MCP \"{field}\" must resolve under the generated output directory ({}); got \"{}\". Use a path under that directory, or set ORACLE_MCP_ALLOW_EXTERNAL_OUTPUT=1 to allow external output paths.",
-        root.display(),
-        target.display()
-    )
 }

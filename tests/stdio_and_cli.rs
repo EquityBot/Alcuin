@@ -753,34 +753,6 @@ async fn actual_stdio_dry_runs_never_create_sessions_or_touch_browser_state() {
         result["result"]["structuredContent"]["resolved"]["browser"]["thinkingTime"],
         "pro"
     );
-    let result = server
-        .call(
-            3,
-            "chatgpt_image",
-            json!({"prompt":"PUBLIC illustration","dryRun":true,"aspectRatio":"16:9"}),
-        )
-        .await;
-    let path = result["result"]["structuredContent"]["requestedOutputPath"]
-        .as_str()
-        .unwrap();
-    assert!(path.starts_with(home.path().join("generated").to_str().unwrap()));
-    // Reference dry runs print the plan, not the composed prompt.
-    let output = result["result"]["structuredContent"]["output"]
-        .as_str()
-        .unwrap();
-    let name = std::path::Path::new(path)
-        .file_name()
-        .unwrap()
-        .to_str()
-        .unwrap();
-    let image = output
-        .lines()
-        .find_map(|line| line.strip_prefix("  image output: "))
-        .unwrap();
-    assert!(
-        image.ends_with(name) && !output.contains("16:9"),
-        "{output}"
-    );
     let result=server.call(4,"project_sources",json!({"operation":"add","chatgptUrl":"https://chatgpt.com/g/g-p-public/project","files":["public.rs"],"dryRun":true})).await;
     assert_eq!(
         result["result"]["structuredContent"]["plannedUploads"][0]["batch"],
@@ -790,8 +762,8 @@ async fn actual_stdio_dry_runs_never_create_sessions_or_touch_browser_state() {
         (5, "consult", json!({"prompt":"PUBLIC","unknown":true})),
         (
             6,
-            "chatgpt_image",
-            json!({"prompt":"PUBLIC","unknown":true}),
+            "consult",
+            json!({"prompt":"PUBLIC","generateImage":"generated/PUBLIC.png"}),
         ),
         (
             7,

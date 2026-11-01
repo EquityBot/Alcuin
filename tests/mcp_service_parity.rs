@@ -190,41 +190,16 @@ async fn dry_runs_print_the_reference_summary_resolved_lines_and_guidance() {
 }
 
 #[tokio::test]
-async fn image_default_path_validation_and_engine_texts_match_the_reference() {
+async fn validation_and_engine_texts_match_the_reference() {
     let home = tempfile::tempdir().unwrap();
     let server = server(home.path(), Environment::new());
-    let image = server
-        .invoke(
-            "chatgpt_image",
-            json!({"prompt":PROMPT,"dryRun":true}),
-            &CancellationToken::new(),
-        )
-        .await
-        .unwrap()
-        .structured_content
-        .unwrap();
-    let name = Path::new(image["requestedOutputPath"].as_str().unwrap())
-        .file_name()
-        .unwrap()
-        .to_string_lossy()
-        .into_owned();
-    let middle = name
-        .strip_prefix("chatgpt-image-")
-        .and_then(|rest| rest.strip_suffix(".png"))
-        .unwrap();
-    let (time, unique) = middle.split_once('-').unwrap();
-    assert!(
-        !time.is_empty()
-            && time
-                .bytes()
-                .all(|b| b.is_ascii_digit() || b.is_ascii_lowercase())
-            && unique.len() == 8
-            && unique.bytes().all(|b| b.is_ascii_hexdigit()),
-        "{name}"
-    );
     for (tool, input, expected) in [
         ("consult", json!({"prompt":""}), "Prompt is required."),
-        ("chatgpt_image", json!({"prompt":""}), "Prompt is required."),
+        (
+            "chatgpt_image",
+            json!({"prompt":PROMPT}),
+            "Unknown MCP tool",
+        ),
         ("wait", json!({"id":""}), "Session id is required."),
         (
             "consult",
@@ -243,8 +218,18 @@ async fn image_default_path_validation_and_engine_texts_match_the_reference() {
         ),
         (
             "consult",
-            json!({"prompt":PROMPT,"engine":"api","browserKeepBrowser":false,"generateImage":"generated/PUBLIC.png"}),
-            "MCP image output requires engine:\"browser\".",
+            json!({"prompt":PROMPT,"engine":"browser","generateImage":"generated/PUBLIC.png"}),
+            "Unrecognized key(s) in object: 'generateImage'",
+        ),
+        (
+            "consult",
+            json!({"prompt":PROMPT,"models":["gpt-6-pro"]}),
+            "Unrecognized key(s) in object: 'models'",
+        ),
+        (
+            "consult",
+            json!({"prompt":PROMPT,"engine":"browser","browserResearchMode":"deep"}),
+            "input.browserResearchMode: invalid enum value",
         ),
         (
             "consult",
@@ -257,6 +242,39 @@ async fn image_default_path_validation_and_engine_texts_match_the_reference() {
             expected
         );
     }
+}
+
+#[test]
+fn tool_annotations_mark_which_tools_reach_chatgpt_and_which_only_read() {
+    let hints = AlcuinMcp::tools()
+        .into_iter()
+        .map(|tool| {
+            let hints = tool.annotations.unwrap();
+            (
+                tool.name.into_owned(),
+                hints.read_only_hint,
+                hints.destructive_hint,
+                hints.open_world_hint,
+            )
+        })
+        .collect::<Vec<_>>();
+    let sends = (Some(false), Some(false), Some(true));
+    let reads = (Some(true), None, Some(false));
+    assert_eq!(
+        hints,
+        [
+            ("consult", sends),
+            ("project_sources", sends),
+            ("sessions", reads),
+            ("wait", reads),
+        ]
+        .map(|(name, (read_only, destructive, open_world))| (
+            name.to_owned(),
+            read_only,
+            destructive,
+            open_world
+        ))
+    );
 }
 
 #[tokio::test]
@@ -282,16 +300,6 @@ async fn browser_consult_without_chrome_fails_before_creating_a_session() {
         "Browser engine unavailable: no Chrome installation found and CHROME_PATH is unset."
     );
     assert!(server.store.list(true).unwrap().is_empty());
-}
-
-#[test]
-fn external_output_keeps_the_lexical_path() {
-    let home = tempfile::tempdir().unwrap();
-    let requested = home.path().join("PUBLIC-a").join("..").join("PUBLIC.png");
-    assert_eq!(
-        alcuin::config::mcp_output(home.path(), &requested, "outputPath", true).unwrap(),
-        home.path().join("PUBLIC.png")
-    );
 }
 
 #[test]
