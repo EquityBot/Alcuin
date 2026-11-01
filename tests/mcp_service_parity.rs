@@ -190,41 +190,16 @@ async fn dry_runs_print_the_reference_summary_resolved_lines_and_guidance() {
 }
 
 #[tokio::test]
-async fn image_default_path_validation_and_engine_texts_match_the_reference() {
+async fn validation_and_engine_texts_match_the_reference() {
     let home = tempfile::tempdir().unwrap();
     let server = server(home.path(), Environment::new());
-    let image = server
-        .invoke(
-            "chatgpt_image",
-            json!({"prompt":PROMPT,"dryRun":true}),
-            &CancellationToken::new(),
-        )
-        .await
-        .unwrap()
-        .structured_content
-        .unwrap();
-    let name = Path::new(image["requestedOutputPath"].as_str().unwrap())
-        .file_name()
-        .unwrap()
-        .to_string_lossy()
-        .into_owned();
-    let middle = name
-        .strip_prefix("chatgpt-image-")
-        .and_then(|rest| rest.strip_suffix(".png"))
-        .unwrap();
-    let (time, unique) = middle.split_once('-').unwrap();
-    assert!(
-        !time.is_empty()
-            && time
-                .bytes()
-                .all(|b| b.is_ascii_digit() || b.is_ascii_lowercase())
-            && unique.len() == 8
-            && unique.bytes().all(|b| b.is_ascii_hexdigit()),
-        "{name}"
-    );
     for (tool, input, expected) in [
         ("consult", json!({"prompt":""}), "Prompt is required."),
-        ("chatgpt_image", json!({"prompt":""}), "Prompt is required."),
+        (
+            "chatgpt_image",
+            json!({"prompt":PROMPT}),
+            "Unknown MCP tool",
+        ),
         ("wait", json!({"id":""}), "Session id is required."),
         (
             "consult",
@@ -232,9 +207,29 @@ async fn image_default_path_validation_and_engine_texts_match_the_reference() {
             "Unrecognized key(s) in object: 'PUBLIC'",
         ),
         (
+            "project_sources",
+            json!({"operation":"list","maxFileSizeBytes":1}),
+            "Unrecognized key(s) in object: 'maxFileSizeBytes'",
+        ),
+        (
+            "sessions",
+            json!({"PUBLIC":true}),
+            "Unrecognized key(s) in object: 'PUBLIC'",
+        ),
+        (
             "consult",
-            json!({"prompt":PROMPT,"engine":"api","browserKeepBrowser":false,"generateImage":"generated/PUBLIC.png"}),
-            "MCP image output requires engine:\"browser\".",
+            json!({"prompt":PROMPT,"engine":"browser","generateImage":"generated/PUBLIC.png"}),
+            "Unrecognized key(s) in object: 'generateImage'",
+        ),
+        (
+            "consult",
+            json!({"prompt":PROMPT,"models":["gpt-6-pro"]}),
+            "Unrecognized key(s) in object: 'models'",
+        ),
+        (
+            "consult",
+            json!({"prompt":PROMPT,"engine":"browser","browserResearchMode":"deep"}),
+            "input.browserResearchMode: invalid enum value",
         ),
         (
             "consult",
@@ -247,6 +242,100 @@ async fn image_default_path_validation_and_engine_texts_match_the_reference() {
             expected
         );
     }
+}
+
+#[tokio::test]
+async fn sessions_and_wait_see_only_this_projects_sessions_unless_opted_in() {
+    let home = tempfile::tempdir().unwrap();
+    let project = home.path().join("PUBLIC-project");
+    let elsewhere = home.path().join("PUBLIC-elsewhere");
+    std::fs::create_dir_all(project.join("PUBLIC-sub")).unwrap();
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let store = SessionStore::new(home.path());
+    let create = |prompt: &str, cwd: &Path| {
+        store
+            .create(json!({"prompt":prompt,"model":"gpt-6-astra"}), cwd, None)
+            .unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    let inside = create("PUBLIC inside the project", &project.join("PUBLIC-sub"));
+    let outside = create("PUBLIC in another project", &elsewhere);
+    let listed = |server: &AlcuinMcp| {
+        let server = server.clone();
+        async move {
+            let result = server
+                .invoke("sessions", json!({}), &CancellationToken::new())
+                .await
+                .unwrap();
+            let mut ids = result.structured_content.unwrap()["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|entry| entry["id"].as_str().unwrap().to_owned())
+                .collect::<Vec<_>>();
+            ids.sort();
+            ids
+        }
+    };
+    let mut scoped = server(home.path(), Environment::new());
+    scoped.cwd = project.clone();
+    assert_eq!(listed(&scoped).await, std::slice::from_ref(&inside));
+    for (tool, input) in [
+        ("sessions", json!({"id":outside,"detail":true})),
+        ("wait", json!({"id":outside,"timeoutMs":0})),
+    ] {
+        let error = call(&scoped, tool, input).await.unwrap_err().to_string();
+        assert!(error.contains("ORACLE_MCP_ALL_SESSIONS=1"), "{error}");
+    }
+    call(&scoped, "sessions", json!({"id":inside}))
+        .await
+        .unwrap();
+    let mut everywhere = server(
+        home.path(),
+        Environment::from([("ORACLE_MCP_ALL_SESSIONS".into(), "1".into())]),
+    );
+    everywhere.cwd = project;
+    let mut both = vec![inside, outside.clone()];
+    both.sort();
+    assert_eq!(listed(&everywhere).await, both);
+    call(&everywhere, "sessions", json!({"id":outside}))
+        .await
+        .unwrap();
+}
+
+#[test]
+fn tool_annotations_mark_which_tools_reach_chatgpt_and_which_only_read() {
+    let hints = AlcuinMcp::tools()
+        .into_iter()
+        .map(|tool| {
+            let hints = tool.annotations.unwrap();
+            (
+                tool.name.into_owned(),
+                hints.read_only_hint,
+                hints.destructive_hint,
+                hints.open_world_hint,
+            )
+        })
+        .collect::<Vec<_>>();
+    let sends = (Some(false), Some(false), Some(true));
+    let reads = (Some(true), None, Some(false));
+    assert_eq!(
+        hints,
+        [
+            ("consult", sends),
+            ("project_sources", sends),
+            ("sessions", reads),
+            ("wait", reads),
+        ]
+        .map(|(name, (read_only, destructive, open_world))| (
+            name.to_owned(),
+            read_only,
+            destructive,
+            open_world
+        ))
+    );
 }
 
 #[tokio::test]
@@ -272,16 +361,6 @@ async fn browser_consult_without_chrome_fails_before_creating_a_session() {
         "Browser engine unavailable: no Chrome installation found and CHROME_PATH is unset."
     );
     assert!(server.store.list(true).unwrap().is_empty());
-}
-
-#[test]
-fn external_output_keeps_the_lexical_path() {
-    let home = tempfile::tempdir().unwrap();
-    let requested = home.path().join("PUBLIC-a").join("..").join("PUBLIC.png");
-    assert_eq!(
-        alcuin::config::mcp_output(home.path(), &requested, "outputPath", true).unwrap(),
-        home.path().join("PUBLIC.png")
-    );
 }
 
 #[test]

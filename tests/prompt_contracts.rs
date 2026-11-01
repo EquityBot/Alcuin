@@ -252,52 +252,6 @@ fn json5_config_merges_outer_projects_before_inner_projects() {
     assert_eq!(loaded.config["browser"]["remoteToken"], "synthetic");
 }
 #[test]
-fn mcp_output_boundary_refuses_escape_and_symlink_redirection() {
-    let root = tempfile::tempdir().unwrap();
-    let home = root.path().join("home");
-    fs::create_dir(&home).unwrap();
-    assert!(
-        config::mcp_output(
-            &home,
-            &home.join("generated/image.png"),
-            "generateImage",
-            false
-        )
-        .is_ok()
-    );
-    assert!(
-        config::mcp_output(
-            &home,
-            &home.join("generated/../config.json"),
-            "generateImage",
-            false
-        )
-        .is_err()
-    );
-    assert!(
-        config::mcp_output(
-            &home,
-            &root.path().join("outside.png"),
-            "generateImage",
-            false
-        )
-        .is_err()
-    );
-    #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink(root.path(), home.join("generated")).unwrap();
-        assert!(
-            config::mcp_output(
-                &home,
-                &home.join("generated/image.png"),
-                "generateImage",
-                false
-            )
-            .is_err()
-        );
-    }
-}
-#[test]
 fn azure_options_resolve_per_field_from_option_environment_then_user_config() {
     let config = json!({"endpoint":"https://config.invalid","deployment":"config-deployment","apiVersion":"config-version"});
     let env = Environment::from([("AZURE_OPENAI_DEPLOYMENT".into(), "env-deployment".into())]);

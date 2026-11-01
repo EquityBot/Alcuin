@@ -3,7 +3,7 @@
     {
       "name": "consult",
       "title": "Run a Alcuin session",
-      "description": "Run a Alcuin session (API or ChatGPT browser automation). Use `files` to attach project context. If `engine` is omitted, Alcuin follows CLI defaults: config/ORACLE_ENGINE first, then API when OPENAI_API_KEY is set, otherwise browser. Browser ChatGPT Pro consults can take many minutes; set `waitForCompletion:false` to return a durable sessionId immediately, then use `wait` to block without agent-side polling. Use `dryRun:true` first when configuring an agent and inspect `sessions`/`alcuin status` before retrying. Browser manual-login uses a private Alcuin Chrome profile separate from the user's normal Chrome; dry-run output includes first-time setup guidance when that path is active. For browser-based image/file uploads, set `browserAttachments:\"always\"`. For ChatGPT image generation, set `generateImage` to enable the same image wait/download path as CLI --generate-image and read returned paths from `images`. Browser consults can include `browserFollowUps` for a multi-turn ChatGPT review in one conversation. Sessions are stored under `ORACLE_HOME_DIR` (shared with the CLI).",
+      "description": "Run a Alcuin session (API or ChatGPT browser automation). Use `files` to attach project context. If `engine` is omitted, Alcuin follows CLI defaults: config/ORACLE_ENGINE first, then API when OPENAI_API_KEY is set, otherwise browser. Browser ChatGPT Pro consults can take many minutes; set `waitForCompletion:false` to return a durable sessionId immediately, then use `wait` to block without agent-side polling. Use `dryRun:true` first when configuring an agent and inspect `sessions`/`alcuin status` before retrying. Browser manual-login uses a private Alcuin Chrome profile separate from the user's normal Chrome; dry-run output includes first-time setup guidance when that path is active. For browser file uploads, set `browserAttachments:\"always\"`. Browser consults can include `browserFollowUps` for a multi-turn ChatGPT review in one conversation. Sessions are stored under `ORACLE_HOME_DIR` (shared with the CLI).",
       "inputSchema": {
         "type": "object",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -32,15 +32,8 @@
             "description": "Single model name/label. If `engine` is omitted, Alcuin follows CLI defaults: config/ORACLE_ENGINE first, then `api` when OPENAI_API_KEY is set, otherwise `browser`. Prefer setting `engine` explicitly to avoid default surprises.",
             "type": "string"
           },
-          "models": {
-            "description": "Multi-model fan-out (API engine only). Cannot be combined with browser automation.",
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
           "engine": {
-            "description": "Execution engine. `api` uses provider APIs. `browser` uses ChatGPT automation or the local Gemini web client according to the model. Picker labels apply to ChatGPT only. When omitted, Alcuin follows CLI defaults: config/ORACLE_ENGINE first, then `api` when OPENAI_API_KEY is set, otherwise `browser`.",
+            "description": "Execution engine. `api` uses provider APIs. `browser` uses ChatGPT automation. When omitted, Alcuin follows CLI defaults: config/ORACLE_ENGINE first, then `api` when OPENAI_API_KEY is set, otherwise `browser`.",
             "type": "string",
             "enum": [
               "api",
@@ -110,11 +103,10 @@
             ]
           },
           "browserResearchMode": {
-            "description": "Browser-only: explicitly select ChatGPT Web Search or Deep Research.",
+            "description": "Browser-only: explicitly select ChatGPT Web Search.",
             "type": "string",
             "enum": [
-              "search",
-              "deep"
+              "search"
             ]
           },
           "browserArchive": {
@@ -137,14 +129,6 @@
             "description": "Browser-only: keep Chrome running after completion (useful for debugging).",
             "type": "boolean"
           },
-          "generateImage": {
-            "description": "Browser-only: save generated image(s) to this file path. For ChatGPT browser mode this enables the image-aware wait/download path used by CLI --generate-image.",
-            "type": "string"
-          },
-          "outputPath": {
-            "description": "Browser-only image output fallback path, mirroring the CLI --output option for image operations.",
-            "type": "string"
-          },
           "waitForCompletion": {
             "description": "When false, start the Alcuin run in a detached worker and return its sessionId immediately. Use the wait tool to block for completion without agent-side polling. Defaults to true for compatibility.",
             "type": "boolean"
@@ -162,6 +146,7 @@
             "type": "string"
           }
         },
+        "additionalProperties": false,
         "required": [
           "prompt"
         ]
@@ -540,485 +525,17 @@
           "output"
         ],
         "additionalProperties": false
-      }
-    },
-    {
-      "name": "chatgpt_image",
-      "title": "Generate an image with ChatGPT",
-      "description": "Agent-friendly wrapper for ChatGPT browser image generation. It selects browser mode, enables the image-aware wait/download path, uploads reference files when provided, and returns saved image paths in structuredContent.images.",
-      "inputSchema": {
-        "type": "object",
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "properties": {
-          "prompt": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Image generation prompt."
-          },
-          "files": {
-            "default": [],
-            "description": "Optional reference image/file paths or globs to upload to ChatGPT.",
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "outputPath": {
-            "description": "Where to save the first generated image. Defaults to a unique file under ORACLE_HOME_DIR/generated/.",
-            "type": "string"
-          },
-          "aspectRatio": {
-            "description": "Optional requested image aspect ratio, e.g. \"1:1\", \"9:16\", or \"16:9\".",
-            "type": "string"
-          },
-          "model": {
-            "description": "Optional ChatGPT/browser model label or alias. Defaults follow Alcuin config.",
-            "type": "string"
-          },
-          "browserModelLabel": {
-            "description": "Explicit ChatGPT UI model label to select.",
-            "type": "string"
-          },
-          "browserAttachments": {
-            "description": "How to deliver files. Defaults to \"always\" when files are present so reference images are uploaded.",
-            "type": "string",
-            "enum": [
-              "auto",
-              "never",
-              "always"
-            ]
-          },
-          "browserThinkingTime": {
-            "description": "Set ChatGPT thinking time when supported by the chosen model.",
-            "type": "string",
-            "enum": [
-              "light",
-              "standard",
-              "extended",
-              "extra-high",
-              "pro",
-              "heavy",
-              "instant",
-              "low",
-              "medium",
-              "high",
-              "extra high",
-              "extrahigh",
-              "xhigh"
-            ]
-          },
-          "browserModelStrategy": {
-            "description": "Model picker strategy. Mirrors the consult tool and CLI browser flag.",
-            "type": "string",
-            "enum": [
-              "select",
-              "current",
-              "ignore"
-            ]
-          },
-          "browserArchive": {
-            "description": "Archive completed ChatGPT conversations after local artifacts are saved.",
-            "type": "string",
-            "enum": [
-              "auto",
-              "always",
-              "never"
-            ]
-          },
-          "browserKeepBrowser": {
-            "description": "Keep Chrome running after completion for debugging.",
-            "type": "boolean"
-          },
-          "dryRun": {
-            "description": "Preview the resolved image run without touching the browser.",
-            "type": "boolean"
-          },
-          "slug": {
-            "description": "Optional human-friendly session id.",
-            "type": "string"
-          }
-        },
-        "required": [
-          "prompt"
-        ]
       },
-      "outputSchema": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "type": "object",
-        "properties": {
-          "sessionId": {
-            "type": "string"
-          },
-          "status": {
-            "type": "string"
-          },
-          "output": {
-            "type": "string"
-          },
-          "dryRun": {
-            "type": "boolean"
-          },
-          "resolved": {
-            "type": "object",
-            "properties": {
-              "resolvedEngine": {
-                "type": "string",
-                "enum": [
-                  "api",
-                  "browser"
-                ]
-              },
-              "model": {
-                "type": "string"
-              },
-              "models": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "files": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "followUpCount": {
-                "type": "number"
-              },
-              "browser": {
-                "type": "object",
-                "properties": {
-                  "desiredModel": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "thinkingTime": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "modelStrategy": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "researchMode": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "attachments": {
-                    "type": "string"
-                  },
-                  "bundleFiles": {
-                    "type": "boolean"
-                  },
-                  "bundleFormat": {
-                    "type": "string",
-                    "enum": [
-                      "auto",
-                      "text",
-                      "zip"
-                    ]
-                  },
-                  "keepBrowser": {
-                    "type": "boolean"
-                  },
-                  "manualLogin": {
-                    "type": "boolean"
-                  },
-                  "profileDir": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "chatgptUrl": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "imageOutputPath": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  }
-                },
-                "additionalProperties": false
-              },
-              "guidance": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              }
-            },
-            "required": [
-              "resolvedEngine",
-              "model",
-              "files",
-              "followUpCount",
-              "guidance"
-            ],
-            "additionalProperties": false
-          },
-          "models": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "model": {
-                  "type": "string"
-                },
-                "effectiveModel": {
-                  "type": "string"
-                },
-                "status": {
-                  "type": "string"
-                },
-                "startedAt": {
-                  "type": "string"
-                },
-                "completedAt": {
-                  "type": "string"
-                },
-                "usage": {
-                  "type": "object",
-                  "properties": {
-                    "inputTokens": {
-                      "type": "number"
-                    },
-                    "outputTokens": {
-                      "type": "number"
-                    },
-                    "reasoningTokens": {
-                      "type": "number"
-                    },
-                    "totalTokens": {
-                      "type": "number"
-                    },
-                    "cost": {
-                      "type": "number"
-                    }
-                  },
-                  "additionalProperties": false
-                },
-                "response": {
-                  "type": "object",
-                  "properties": {
-                    "id": {
-                      "type": "string"
-                    },
-                    "requestId": {
-                      "type": "string"
-                    },
-                    "status": {
-                      "type": "string"
-                    }
-                  },
-                  "additionalProperties": false
-                },
-                "error": {
-                  "type": "object",
-                  "properties": {
-                    "category": {
-                      "type": "string"
-                    },
-                    "message": {
-                      "type": "string"
-                    }
-                  },
-                  "additionalProperties": false
-                },
-                "logPath": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "model",
-                "status"
-              ],
-              "additionalProperties": false
-            }
-          },
-          "artifacts": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "kind": {
-                  "type": "string",
-                  "enum": [
-                    "transcript",
-                    "deep-research-report",
-                    "image",
-                    "file"
-                  ]
-                },
-                "path": {
-                  "type": "string"
-                },
-                "label": {
-                  "type": "string"
-                },
-                "mimeType": {
-                  "type": "string"
-                },
-                "sizeBytes": {
-                  "type": "number"
-                }
-              },
-              "required": [
-                "kind",
-                "path"
-              ],
-              "additionalProperties": false
-            }
-          },
-          "images": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "kind": {
-                  "type": "string",
-                  "const": "image"
-                },
-                "path": {
-                  "type": "string"
-                },
-                "label": {
-                  "type": "string"
-                },
-                "mimeType": {
-                  "type": "string"
-                },
-                "sizeBytes": {
-                  "type": "number"
-                },
-                "alt": {
-                  "type": "string"
-                },
-                "width": {
-                  "type": "number"
-                },
-                "height": {
-                  "type": "number"
-                },
-                "fileId": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "path"
-              ],
-              "additionalProperties": false
-            }
-          },
-          "warnings": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "code": {
-                  "type": "string",
-                  "const": "artifact-staging-cleanup-failed"
-                },
-                "severity": {
-                  "type": "string",
-                  "const": "warning"
-                },
-                "message": {
-                  "type": "string",
-                  "const": "Artifact publication succeeded and was verified, but staging cleanup failed; residual staging data may remain."
-                },
-                "details": {
-                  "type": "object",
-                  "properties": {
-                    "artifactKind": {
-                      "type": "string",
-                      "enum": [
-                        "file",
-                        "image"
-                      ]
-                    },
-                    "origin": {
-                      "type": "string",
-                      "enum": [
-                        "local",
-                        "host",
-                        "receiver"
-                      ]
-                    },
-                    "filename": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 80
-                    }
-                  },
-                  "required": [
-                    "artifactKind",
-                    "origin",
-                    "filename"
-                  ],
-                  "additionalProperties": false
-                }
-              },
-              "required": [
-                "code",
-                "severity",
-                "message",
-                "details"
-              ],
-              "additionalProperties": false
-            }
-          },
-          "browserCleanup": {
-            "type": "object",
-            "properties": {
-              "state": {
-                "type": "string",
-                "const": "pending"
-              },
-              "recoveryRequired": {
-                "type": "boolean",
-                "const": true
-              }
-            },
-            "required": [
-              "state",
-              "recoveryRequired"
-            ],
-            "additionalProperties": false
-          },
-          "detached": {
-            "type": "boolean"
-          },
-          "requestedOutputPath": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "status",
-          "output",
-          "requestedOutputPath"
-        ],
-        "additionalProperties": false
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "openWorldHint": true
       }
     },
     {
       "name": "project_sources",
       "title": "Manage ChatGPT Project Sources",
-      "description": "List or append files to a ChatGPT Project's persistent Sources tab. This is useful for Developer Mode workflows where chats do not share memory, but explicit project sources provide shared context. Destructive delete/replace/sync operations are intentionally not included in v1.",
+      "description": "List a ChatGPT Project's persistent Sources tab, or preview with `dryRun:true` which files `add` would upload. Uploads themselves are refused, because Alcuin runs ChatGPT only in Temporary Chat. This is useful for Developer Mode workflows where chats do not share memory, but explicit project sources provide shared context. Destructive delete/replace/sync operations are intentionally not included in v1.",
       "inputSchema": {
         "type": "object",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1029,7 +546,7 @@
               "list",
               "add"
             ],
-            "description": "Project Sources operation. v1 intentionally supports only non-destructive list/add."
+            "description": "Project Sources operation. `add` requires `dryRun:true` and only previews."
           },
           "chatgptUrl": {
             "description": "ChatGPT project URL ending in /project. Falls back to browser.chatgptUrl config.",
@@ -1037,7 +554,7 @@
           },
           "files": {
             "default": [],
-            "description": "Local file paths or globs to add as persistent ChatGPT Project Sources.",
+            "description": "Local file paths or globs to preview as ChatGPT Project Sources.",
             "type": "array",
             "items": {
               "type": "string"
@@ -1056,6 +573,7 @@
             "type": "boolean"
           }
         },
+        "additionalProperties": false,
         "required": [
           "operation"
         ]
@@ -1214,12 +732,17 @@
           "tookMs"
         ],
         "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "openWorldHint": true
       }
     },
     {
       "name": "sessions",
       "title": "List or fetch alcuin sessions",
-      "description": "Inspect Alcuin session history stored under `ORACLE_HOME_DIR` (shared with the CLI). List recent sessions or fetch one by id/slug (optionally including metadata + request + log).",
+      "description": "Inspect Alcuin session history stored under `ORACLE_HOME_DIR` (shared with the CLI). List recent sessions or fetch one by id/slug (optionally including metadata + request + log). Only sessions started in or below the MCP server working directory are visible unless the user sets ORACLE_MCP_ALL_SESSIONS=1.",
       "inputSchema": {
         "type": "object",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1245,7 +768,8 @@
             "description": "When id is set, include session metadata + stored request + full log text.",
             "type": "boolean"
           }
-        }
+        },
+        "additionalProperties": false
       },
       "outputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1315,12 +839,16 @@
           }
         },
         "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false
       }
     },
     {
       "name": "wait",
       "title": "Wait for a Alcuin session",
-      "description": "Wait for an existing Alcuin session to reach a terminal state without agent-side polling. Omit timeoutMs to wait indefinitely, or set a bounded caller wait. Wait timeout or request cancellation never cancels the Alcuin session; call wait again with the same id to continue waiting.",
+      "description": "Wait for an existing Alcuin session to reach a terminal state without agent-side polling. Omit timeoutMs to wait indefinitely, or set a bounded caller wait. Wait timeout or request cancellation never cancels the Alcuin session; call wait again with the same id to continue waiting. Like `sessions`, it sees only sessions started in or below the MCP server working directory unless the user sets ORACLE_MCP_ALL_SESSIONS=1.",
       "inputSchema": {
         "type": "object",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1337,6 +865,7 @@
             "maximum": 9007199254740991
           }
         },
+        "additionalProperties": false,
         "required": [
           "id"
         ]
@@ -1607,6 +1136,10 @@
           "output"
         ],
         "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false
       }
     }
   ]

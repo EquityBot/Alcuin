@@ -72,8 +72,8 @@ Alcuin keeps Oracle's names so existing setups carry over: settings use `ORACLE_
 - Providers are ChatGPT in the browser, the OpenAI and Azure OpenAI APIs, and Grok in the browser as an optional fallback (`--browser-fallback grok`); a run that uploads attachments never falls back to Grok. Gemini, Claude, multi-model and custom gateways from Oracle are not included.
 - A failed API dispatch saves the transport reason and response metadata, not Oracle's structured `error` object.
 - Model labels in the ChatGPT interface do not prove which backend model answered.
-- Deep Research is unavailable. ChatGPT offers it only in ordinary chats, and Alcuin runs every ChatGPT request in Temporary Chat, so `--browser-research deep` (MCP `browserResearchMode: "deep"`) is refused before anything is sent.
-- Image generation is unavailable. ChatGPT does not generate images in Temporary Chat (checked 27 October 2026), so browser runs with `--generate-image` or `--output` (with or without `--edit-image`) and the MCP `chatgpt_image` tool are refused before anything is sent; `serve` refuses image requests from remote clients the same way.
+- Deep Research is unavailable. ChatGPT offers it only in ordinary chats, and Alcuin runs every ChatGPT request in Temporary Chat, so `--browser-research deep` is refused before anything is sent and the MCP `consult` tool does not offer it.
+- Image generation is unavailable. ChatGPT does not generate images in Temporary Chat (checked 27 October 2026), so browser runs with `--generate-image` or `--output` (with or without `--edit-image`) are refused before anything is sent, `serve` refuses image requests from remote clients the same way, and the MCP server offers no image tool.
 - `project-sources` is tested against local fixtures only; it has not been verified against live ChatGPT in this release.
 - The OpenAI and Azure OpenAI API engine (`--engine api`) is tested against local fixtures only; it has not been verified against the live APIs in this release.
 - CI runs the offline test suite only. Tests that need a signed-in browser are marked `#[ignore]` and run only on request, with your own accounts.

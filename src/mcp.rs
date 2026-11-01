@@ -87,12 +87,7 @@ impl AlcuinMcp {
             .find(|t| t.name == name)
             .context("Unknown MCP tool")?;
         let schema = Value::Object((*tool.input_schema).clone());
-        validate_input(
-            &arguments,
-            &schema,
-            matches!(name, "consult" | "chatgpt_image" | "wait"),
-            "input",
-        )?;
+        validate_input(&arguments, &schema, "input")?;
         if let Some(id) = arguments["id"].as_str() {
             sessions::assert_id(id)?;
         }
@@ -100,7 +95,6 @@ impl AlcuinMcp {
             "sessions" => self.sessions(&arguments),
             "wait" => self.wait(&arguments, cancel).await,
             "consult" => self.consult(arguments, cancel).await,
-            "chatgpt_image" => self.image(arguments, cancel).await,
             "project_sources" => {
                 // Reference buildProjectSourcesBrowserConfig: the environment names apply here too.
                 let mut overrides = json!({});
@@ -112,9 +106,28 @@ impl AlcuinMcp {
             _ => bail!("Unknown MCP tool"),
         }
     }
+    /// MCP callers see only sessions started in or below the server's working directory unless
+    /// the user opts in; a session without a recorded directory counts as outside.
+    fn in_project(&self, meta: &Value) -> bool {
+        self.opted_in("ORACLE_MCP_ALL_SESSIONS")
+            || meta["cwd"].as_str().is_some_and(|cwd| {
+                prompts::within(
+                    &prompts::absolute(std::path::Path::new(cwd), "."),
+                    &prompts::absolute(&self.cwd, "."),
+                )
+            })
+    }
+    fn project_session(&self, id: &str) -> Result<Value> {
+        let meta = self.store.require(id)?;
+        anyhow::ensure!(
+            self.in_project(&meta),
+            "Session \"{id}\" was started outside this MCP server's working directory. Set ORACLE_MCP_ALL_SESSIONS=1 to read sessions from every project."
+        );
+        Ok(meta)
+    }
     fn sessions(&self, input: &Value) -> Result<CallToolResult> {
         if let Some(id) = input["id"].as_str() {
-            let meta = self.store.reported(id, self.store.require(id)?)?;
+            let meta = self.store.reported(id, self.project_session(id)?)?;
             if input["detail"] == true {
                 let log = self.store.log(id)?;
                 let mut session = json!({"metadata":meta,"log":log});
@@ -132,7 +145,7 @@ impl AlcuinMcp {
             .store
             .list(true)?
             .into_iter()
-            .filter(|entry| !crate::browser_attempt::internal(entry))
+            .filter(|entry| !crate::browser_attempt::internal(entry) && self.in_project(entry))
             .map(|mut entry| {
                 entry["status"] = self.store.listed_status(&entry);
                 entry
@@ -156,6 +169,7 @@ impl AlcuinMcp {
     }
     async fn wait(&self, input: &Value, cancel: &CancellationToken) -> Result<CallToolResult> {
         let id = input["id"].as_str().context("Session id is required.")?;
+        self.project_session(id)?;
         let timeout = input["timeoutMs"]
             .as_f64()
             .map(|n| Duration::from_secs_f64(n / 1000.0));
@@ -216,9 +230,6 @@ impl AlcuinMcp {
         cancel: &CancellationToken,
     ) -> Result<CallToolResult> {
         if input["preset"] == "chatgpt-pro-heavy" {
-            if input["models"].as_array().is_some_and(|a| !a.is_empty()) {
-                bail!("MCP consult preset \"chatgpt-pro-heavy\" cannot be combined with models.");
-            }
             for (key, value) in [
                 ("engine", "browser"),
                 ("model", "gpt-6-pro"),
@@ -230,29 +241,7 @@ impl AlcuinMcp {
             }
         }
         self.confine_files(&input)?;
-        let allow = self.opted_in("ORACLE_MCP_ALLOW_EXTERNAL_OUTPUT");
-        for field in ["generateImage", "outputPath"] {
-            if let Some(path) = input[field]
-                .as_str()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-            {
-                input[field] = json!(config::mcp_output(
-                    self.store.home(),
-                    &self.cwd.join(path),
-                    field,
-                    allow
-                )?);
-            }
-        }
         let config = self.configured();
-        if ["generateImage", "outputPath"]
-            .iter()
-            .any(|field| input[*field].as_str().is_some_and(|s| !s.trim().is_empty()))
-            && execution::resolved_engine(&input, &config, &self.env)? != "browser"
-        {
-            bail!("MCP image output requires engine:\"browser\".");
-        }
         input["waitPreference"] = json!(input["waitForCompletion"] != false);
         let request = execution::resolve_mcp(&input, &config, &self.env, &self.cwd)?;
         if input["dryRun"] == true {
@@ -439,68 +428,6 @@ impl AlcuinMcp {
             ));
         }
         Ok(response)
-    }
-    async fn image(&self, mut input: Value, cancel: &CancellationToken) -> Result<CallToolResult> {
-        if let Some(model) = input["model"].as_str() {
-            let first = model.trim().to_lowercase();
-            if ["claude", "gemini", "grok"].iter().any(|p| {
-                first == *p
-                    || first.starts_with(&format!("{p}-"))
-                    || first.starts_with(&format!("{p} "))
-            }) {
-                bail!("chatgpt_image requires a ChatGPT/GPT model.");
-            }
-        }
-        let path = input["outputPath"]
-            .as_str()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                self.store.home().join("generated").join(format!(
-                    "chatgpt-image-{}-{}.png",
-                    base36(chrono::Utc::now().timestamp_millis().unsigned_abs()),
-                    &uuid::Uuid::new_v4().to_string()[..8]
-                ))
-            });
-        let prompt = input["prompt"].as_str().unwrap_or("").trim().to_owned();
-        let prompt = if let Some(ratio) = input["aspectRatio"]
-            .as_str()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            format!("{prompt}\n\nCreate the image with aspect ratio {ratio}.")
-        } else {
-            prompt
-        };
-        input["prompt"] = json!(prompt);
-        input["engine"] = json!("browser");
-        input["generateImage"] = json!(path);
-        input
-            .as_object_mut()
-            .context("Image input must be an object")?
-            .remove("aspectRatio");
-        input
-            .as_object_mut()
-            .context("Image input must be an object")?
-            .remove("outputPath");
-        if input.get("browserAttachments").is_none()
-            && input["files"].as_array().is_some_and(|a| !a.is_empty())
-        {
-            input["browserAttachments"] = json!("always");
-        }
-        let mut result = self.consult(input, cancel).await?;
-        if let Some(structured) = &mut result.structured_content {
-            // Grok never serves image requests; the reference image result has no such field.
-            if let Some(browser) = structured
-                .pointer_mut("/resolved/browser")
-                .and_then(Value::as_object_mut)
-            {
-                browser.remove("fallbackProvider");
-            }
-            structured["requestedOutputPath"] = json!(path);
-        }
-        Ok(result)
     }
     pub(crate) async fn project_sources(
         &self,
@@ -911,7 +838,8 @@ pub fn add_summaries(out: &mut Value, meta: &Value) {
         out["warnings"] = json!(warnings);
     }
 }
-pub fn validate_input(value: &Value, schema: &Value, strict: bool, path: &str) -> Result<()> {
+/// Checks MCP tool input against its schema; keys the schema does not declare are refused.
+pub fn validate_input(value: &Value, schema: &Value, path: &str) -> Result<()> {
     let kind = schema["type"].as_str().unwrap_or("");
     let valid = match kind {
         "object" => value.is_object(),
@@ -965,8 +893,8 @@ pub fn validate_input(value: &Value, schema: &Value, strict: bool, path: &str) -
         }
         for (key, value) in object {
             if let Some(child) = properties.get(key) {
-                validate_input(value, child, false, &format!("{path}.{key}"))?;
-            } else if strict {
+                validate_input(value, child, &format!("{path}.{key}"))?;
+            } else {
                 bail!("Unrecognized key(s) in object: '{key}'");
             }
         }
@@ -978,21 +906,10 @@ pub fn validate_input(value: &Value, schema: &Value, strict: bool, path: &str) -
             .iter()
             .enumerate()
         {
-            validate_input(item, &schema["items"], false, &format!("{path}[{index}]"))?;
+            validate_input(item, &schema["items"], &format!("{path}[{index}]"))?;
         }
     }
     Ok(())
-}
-fn base36(mut value: u64) -> String {
-    let mut digits = vec![];
-    loop {
-        digits.push(char::from_digit((value % 36) as u32, 36).unwrap_or('0'));
-        value /= 36;
-        if value == 0 {
-            break;
-        }
-    }
-    digits.iter().rev().collect()
 }
 fn decode_component(raw: &str) -> Result<String> {
     let mut bytes = vec![];

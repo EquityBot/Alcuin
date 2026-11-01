@@ -142,39 +142,17 @@ async fn cleanup_summaries_conform_to_the_consult_image_and_wait_output_schemas(
         json!({"state":"pending","recoveryRequired":true})
     );
     conforms(&wait, &output_schema("wait"), "wait");
-    for tool in ["consult", "chatgpt_image"] {
-        let mut out = json!({"sessionId":id,"status":"completed","output":""});
-        if tool == "chatgpt_image" {
-            out["requestedOutputPath"] = json!("PUBLIC.png");
-        }
-        add_summaries(&mut out, &meta);
-        assert!(out.get("browserCleanup").is_some());
-        conforms(&out, &output_schema(tool), tool);
-    }
+    let mut out = json!({"sessionId":id,"status":"completed","output":""});
+    add_summaries(&mut out, &meta);
+    assert!(out.get("browserCleanup").is_some());
+    conforms(&out, &output_schema("consult"), "consult");
 }
 
 #[tokio::test]
-async fn image_dry_runs_conform_and_consult_dry_runs_keep_the_fallback_consent() {
+async fn consult_dry_runs_keep_the_fallback_consent() {
     let home = tempfile::tempdir().unwrap();
     let server = server(home.path());
     let cancel = CancellationToken::new();
-    let image = structured(
-        server
-            .invoke(
-                "chatgpt_image",
-                json!({"prompt":"PUBLIC image","dryRun":true}),
-                &cancel,
-            )
-            .await
-            .unwrap(),
-    );
-    assert!(image["resolved"]["browser"].is_object());
-    assert!(
-        image["resolved"]["browser"]
-            .get("fallbackProvider")
-            .is_none()
-    );
-    conforms(&image, &output_schema("chatgpt_image"), "chatgpt_image");
     let consult = structured(
         server
             .invoke(
