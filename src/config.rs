@@ -69,6 +69,7 @@ pub fn runtime_environment() -> Environment {
         "ORACLE_BROWSER_ALLOW_COOKIE_ERRORS",
         "ORACLE_BROWSER_MAX_CONCURRENT_TABS",
         "ORACLE_MCP_ALLOW_EXTERNAL_INPUT",
+        "ORACLE_MCP_ALL_SESSIONS",
         "ORACLE_MAX_FILE_SIZE_BYTES",
         "ORACLE_MIN_PROMPT_CHARS",
         "OPENAI_API_KEY",

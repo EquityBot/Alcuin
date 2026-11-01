@@ -742,7 +742,7 @@
     {
       "name": "sessions",
       "title": "List or fetch alcuin sessions",
-      "description": "Inspect Alcuin session history stored under `ORACLE_HOME_DIR` (shared with the CLI). List recent sessions or fetch one by id/slug (optionally including metadata + request + log).",
+      "description": "Inspect Alcuin session history stored under `ORACLE_HOME_DIR` (shared with the CLI). List recent sessions or fetch one by id/slug (optionally including metadata + request + log). Only sessions started in or below the MCP server working directory are visible unless the user sets ORACLE_MCP_ALL_SESSIONS=1.",
       "inputSchema": {
         "type": "object",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -848,7 +848,7 @@
     {
       "name": "wait",
       "title": "Wait for a Alcuin session",
-      "description": "Wait for an existing Alcuin session to reach a terminal state without agent-side polling. Omit timeoutMs to wait indefinitely, or set a bounded caller wait. Wait timeout or request cancellation never cancels the Alcuin session; call wait again with the same id to continue waiting.",
+      "description": "Wait for an existing Alcuin session to reach a terminal state without agent-side polling. Omit timeoutMs to wait indefinitely, or set a bounded caller wait. Wait timeout or request cancellation never cancels the Alcuin session; call wait again with the same id to continue waiting. Like `sessions`, it sees only sessions started in or below the MCP server working directory unless the user sets ORACLE_MCP_ALL_SESSIONS=1.",
       "inputSchema": {
         "type": "object",
         "$schema": "https://json-schema.org/draft/2020-12/schema",

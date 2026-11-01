@@ -184,7 +184,7 @@ fn pattern_root(pattern: &Path) -> PathBuf {
         .collect()
 }
 /// Whether `path` lies under `root`, ignoring letter case on Windows as its file systems do.
-fn within(path: &Path, root: &Path) -> bool {
+pub(crate) fn within(path: &Path, root: &Path) -> bool {
     if cfg!(windows) {
         let fold = |path: &Path| {
             path.components()

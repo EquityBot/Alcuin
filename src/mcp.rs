@@ -106,9 +106,28 @@ impl AlcuinMcp {
             _ => bail!("Unknown MCP tool"),
         }
     }
+    /// MCP callers see only sessions started in or below the server's working directory unless
+    /// the user opts in; a session without a recorded directory counts as outside.
+    fn in_project(&self, meta: &Value) -> bool {
+        self.opted_in("ORACLE_MCP_ALL_SESSIONS")
+            || meta["cwd"].as_str().is_some_and(|cwd| {
+                prompts::within(
+                    &prompts::absolute(std::path::Path::new(cwd), "."),
+                    &prompts::absolute(&self.cwd, "."),
+                )
+            })
+    }
+    fn project_session(&self, id: &str) -> Result<Value> {
+        let meta = self.store.require(id)?;
+        anyhow::ensure!(
+            self.in_project(&meta),
+            "Session \"{id}\" was started outside this MCP server's working directory. Set ORACLE_MCP_ALL_SESSIONS=1 to read sessions from every project."
+        );
+        Ok(meta)
+    }
     fn sessions(&self, input: &Value) -> Result<CallToolResult> {
         if let Some(id) = input["id"].as_str() {
-            let meta = self.store.reported(id, self.store.require(id)?)?;
+            let meta = self.store.reported(id, self.project_session(id)?)?;
             if input["detail"] == true {
                 let log = self.store.log(id)?;
                 let mut session = json!({"metadata":meta,"log":log});
@@ -126,7 +145,7 @@ impl AlcuinMcp {
             .store
             .list(true)?
             .into_iter()
-            .filter(|entry| !crate::browser_attempt::internal(entry))
+            .filter(|entry| !crate::browser_attempt::internal(entry) && self.in_project(entry))
             .map(|mut entry| {
                 entry["status"] = self.store.listed_status(&entry);
                 entry
@@ -150,6 +169,7 @@ impl AlcuinMcp {
     }
     async fn wait(&self, input: &Value, cancel: &CancellationToken) -> Result<CallToolResult> {
         let id = input["id"].as_str().context("Session id is required.")?;
+        self.project_session(id)?;
         let timeout = input["timeoutMs"]
             .as_f64()
             .map(|n| Duration::from_secs_f64(n / 1000.0));

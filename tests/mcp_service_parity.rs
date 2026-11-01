@@ -244,6 +244,67 @@ async fn validation_and_engine_texts_match_the_reference() {
     }
 }
 
+#[tokio::test]
+async fn sessions_and_wait_see_only_this_projects_sessions_unless_opted_in() {
+    let home = tempfile::tempdir().unwrap();
+    let project = home.path().join("PUBLIC-project");
+    let elsewhere = home.path().join("PUBLIC-elsewhere");
+    std::fs::create_dir_all(project.join("PUBLIC-sub")).unwrap();
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let store = SessionStore::new(home.path());
+    let create = |prompt: &str, cwd: &Path| {
+        store
+            .create(json!({"prompt":prompt,"model":"gpt-6-astra"}), cwd, None)
+            .unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    let inside = create("PUBLIC inside the project", &project.join("PUBLIC-sub"));
+    let outside = create("PUBLIC in another project", &elsewhere);
+    let listed = |server: &AlcuinMcp| {
+        let server = server.clone();
+        async move {
+            let result = server
+                .invoke("sessions", json!({}), &CancellationToken::new())
+                .await
+                .unwrap();
+            let mut ids = result.structured_content.unwrap()["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|entry| entry["id"].as_str().unwrap().to_owned())
+                .collect::<Vec<_>>();
+            ids.sort();
+            ids
+        }
+    };
+    let mut scoped = server(home.path(), Environment::new());
+    scoped.cwd = project.clone();
+    assert_eq!(listed(&scoped).await, std::slice::from_ref(&inside));
+    for (tool, input) in [
+        ("sessions", json!({"id":outside,"detail":true})),
+        ("wait", json!({"id":outside,"timeoutMs":0})),
+    ] {
+        let error = call(&scoped, tool, input).await.unwrap_err().to_string();
+        assert!(error.contains("ORACLE_MCP_ALL_SESSIONS=1"), "{error}");
+    }
+    call(&scoped, "sessions", json!({"id":inside}))
+        .await
+        .unwrap();
+    let mut everywhere = server(
+        home.path(),
+        Environment::from([("ORACLE_MCP_ALL_SESSIONS".into(), "1".into())]),
+    );
+    everywhere.cwd = project;
+    let mut both = vec![inside, outside.clone()];
+    both.sort();
+    assert_eq!(listed(&everywhere).await, both);
+    call(&everywhere, "sessions", json!({"id":outside}))
+        .await
+        .unwrap();
+}
+
 #[test]
 fn tool_annotations_mark_which_tools_reach_chatgpt_and_which_only_read() {
     let hints = AlcuinMcp::tools()
