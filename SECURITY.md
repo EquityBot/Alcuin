@@ -16,7 +16,7 @@ Treat every file you attach as sent to that provider. Do not attach credentials,
 
 ## Reporting a vulnerability
 
-Please report suspected vulnerabilities privately through GitHub's 'Report a vulnerability' button on this repository's Security tab. Do not open a public issue. Include the version (`alcuin --version`), platform and the smallest steps that show the problem. You will get an acknowledgement, and a fix or a decision, as soon as the maintainer can review it; there is no fixed response time.
+Please report suspected vulnerabilities privately through GitHub's 'Report a vulnerability' button on this repository's Security tab, at https://github.com/EquityBot/Alcuin/security/advisories/new. Do not open a public issue. Include the version (`alcuin --version`), platform and the smallest steps that show the problem. You will get an acknowledgement, and a fix or a decision, as soon as the maintainer can review it; there is no fixed response time.
 
 ## Supported versions
 
