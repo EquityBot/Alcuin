@@ -176,10 +176,12 @@ pub(crate) fn absolute(cwd: &Path, value: &str) -> PathBuf {
     }
     output
 }
-/// MCP file inputs must stay inside `cwd`. Each is checked lexically, so an absolute or `..`
-/// path is refused before anything outside is read, then by its resolved target, so a link
-/// cannot lead out. A pattern is checked by its literal prefix; folder and pattern walks skip
-/// links, so they reach nothing else outside. Exclusions only narrow the selection.
+/// MCP file inputs must stay inside `cwd`, judged by the resolved target of each input, so
+/// neither `..` nor a link can lead out and letter case cannot shut out a path inside. A missing
+/// input is judged lexically. Nothing is read before the check, and an input outside gets the
+/// same refusal whether or not it exists. A pattern is checked by its literal prefix; folder
+/// and pattern walks skip links, so they reach nothing else outside. Exclusions only narrow
+/// the selection, and MCP inputs are never split at commas.
 pub fn confine_inputs(inputs: &[String], cwd: &Path) -> Result<()> {
     let mut inputs = inputs
         .iter()
@@ -197,15 +199,13 @@ pub fn confine_inputs(inputs: &[String], cwd: &Path) -> Result<()> {
             .components()
             .take_while(|part| !dynamic(&part.as_os_str().to_string_lossy()))
             .collect();
-        let inside = prefix.starts_with(&root)
-            && match fs::canonicalize(&prefix) {
-                Ok(target) => target.starts_with(&resolved_root),
-                // File selection reports the missing path.
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
-                Err(error) => {
-                    return Err(error).with_context(|| format!("Cannot resolve {raw}"));
-                }
-            };
+        let lexical = prefix.starts_with(&root);
+        let inside = match fs::canonicalize(&prefix) {
+            Ok(target) => target.starts_with(&resolved_root),
+            // File selection reports a missing path inside.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound || !lexical => lexical,
+            Err(error) => return Err(error).with_context(|| format!("Cannot resolve {raw}")),
+        };
         ensure!(
             inside,
             "MCP file \"{raw}\" is outside the working directory ({}). Use a path inside it, or set ORACLE_MCP_ALLOW_EXTERNAL_INPUT=1 to allow files elsewhere.",

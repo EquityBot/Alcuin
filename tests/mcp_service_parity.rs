@@ -591,14 +591,31 @@ async fn file_inputs_outside_the_working_directory_are_refused_unless_opted_in()
             );
         }
     }
+    // An MCP input is never split at commas, so this stays one exclusion.
     let inside = call(
         &confined,
         "consult",
-        json!({"prompt":PROMPT,"engine":"api","dryRun":true,"files":["src/*.rs", "!../PUBLIC-outside/*"]}),
+        json!({"prompt":PROMPT,"engine":"api","dryRun":true,"files":["src/*.rs", "!src/**,../PUBLIC-outside/credentials"]}),
     )
     .await
     .unwrap();
-    assert!(inside.contains("src/PUBLIC.rs"), "{inside}");
+    assert!(
+        inside.contains("src/PUBLIC.rs") && !inside.contains("PUBLIC-outside"),
+        "{inside}"
+    );
+    // On Windows, letter case does not change which file a path names.
+    #[cfg(windows)]
+    {
+        let upper = project.join("SRC").join("public.RS");
+        let cased = upper.to_string_lossy().to_uppercase();
+        call(
+            &confined,
+            "consult",
+            json!({"prompt":PROMPT,"engine":"api","dryRun":true,"files":[cased]}),
+        )
+        .await
+        .unwrap();
+    }
     let mut opted_in = server(
         home.path(),
         Environment::from([("ORACLE_MCP_ALLOW_EXTERNAL_INPUT".into(), "1".into())]),
