@@ -512,3 +512,107 @@ async fn missing_api_keys_use_the_reference_text() {
         );
     }
 }
+
+#[tokio::test]
+async fn file_inputs_outside_the_working_directory_are_refused_unless_opted_in() {
+    let home = tempfile::tempdir().unwrap();
+    let project = home.path().join("PUBLIC-project");
+    std::fs::create_dir_all(project.join("src")).unwrap();
+    std::fs::write(project.join("src/PUBLIC.rs"), "fn main() {}\n").unwrap();
+    let outside = home.path().join("PUBLIC-outside");
+    std::fs::create_dir(&outside).unwrap();
+    std::fs::write(outside.join("credentials"), "PUBLIC synthetic secret\n").unwrap();
+    let mut escapes = vec![
+        outside.join("credentials").to_string_lossy().into_owned(),
+        "../PUBLIC-outside/credentials".to_owned(),
+        "src/../../PUBLIC-outside/credentials".to_owned(),
+        "../PUBLIC-outside/*".to_owned(),
+    ];
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+        symlink(
+            outside.join("credentials"),
+            project.join("PUBLIC-file-link"),
+        )
+        .unwrap();
+        symlink(&outside, project.join("PUBLIC-folder-link")).unwrap();
+        escapes.extend(
+            [
+                "PUBLIC-file-link",
+                "PUBLIC-folder-link/credentials",
+                "PUBLIC-folder-link/*",
+            ]
+            .map(str::to_owned),
+        );
+    }
+    #[cfg(windows)]
+    {
+        // A junction needs no symlink privilege.
+        let status = Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(project.join("PUBLIC-folder-link"))
+            .arg(&outside)
+            .stdout(Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success());
+        // A file symlink needs Developer Mode or elevation.
+        if std::os::windows::fs::symlink_file(
+            outside.join("credentials"),
+            project.join("PUBLIC-file-link"),
+        )
+        .is_ok()
+        {
+            escapes.push("PUBLIC-file-link".to_owned());
+        }
+        escapes
+            .extend(["PUBLIC-folder-link/credentials", "PUBLIC-folder-link/*"].map(str::to_owned));
+    }
+    let mut confined = server(home.path(), Environment::new());
+    confined.cwd = project.clone();
+    for escape in &escapes {
+        for (tool, input) in [
+            (
+                "consult",
+                json!({"prompt":PROMPT,"engine":"api","dryRun":true,"files":["src/PUBLIC.rs", escape]}),
+            ),
+            (
+                "project_sources",
+                json!({"operation":"add","dryRun":true,"chatgptUrl":"https://chatgpt.com/g/g-p-public/project","files":[escape]}),
+            ),
+        ] {
+            let error = call(&confined, tool, input).await.unwrap_err().to_string();
+            assert!(
+                error.starts_with(&format!(
+                    "MCP file \"{escape}\" is outside the working directory"
+                )) && error.contains("ORACLE_MCP_ALLOW_EXTERNAL_INPUT=1"),
+                "{tool} {escape}: {error}"
+            );
+        }
+    }
+    let inside = call(
+        &confined,
+        "consult",
+        json!({"prompt":PROMPT,"engine":"api","dryRun":true,"files":["src/*.rs", "!../PUBLIC-outside/*"]}),
+    )
+    .await
+    .unwrap();
+    assert!(inside.contains("src/PUBLIC.rs"), "{inside}");
+    let mut opted_in = server(
+        home.path(),
+        Environment::from([("ORACLE_MCP_ALLOW_EXTERNAL_INPUT".into(), "1".into())]),
+    );
+    opted_in.cwd = project;
+    let external = call(
+        &opted_in,
+        "consult",
+        json!({"prompt":PROMPT,"engine":"api","dryRun":true,"files":["../PUBLIC-outside/credentials"]}),
+    )
+    .await
+    .unwrap();
+    assert!(
+        external.contains("PUBLIC-outside/credentials"),
+        "{external}"
+    );
+}

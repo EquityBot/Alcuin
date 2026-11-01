@@ -176,6 +176,44 @@ pub(crate) fn absolute(cwd: &Path, value: &str) -> PathBuf {
     }
     output
 }
+/// MCP file inputs must stay inside `cwd`. Each is checked lexically, so an absolute or `..`
+/// path is refused before anything outside is read, then by its resolved target, so a link
+/// cannot lead out. A pattern is checked by its literal prefix; folder and pattern walks skip
+/// links, so they reach nothing else outside. Exclusions only narrow the selection.
+pub fn confine_inputs(inputs: &[String], cwd: &Path) -> Result<()> {
+    let mut inputs = inputs
+        .iter()
+        .map(|s| crate::policy::trim(s))
+        .filter(|s| !s.is_empty() && !s.starts_with('!'))
+        .peekable();
+    if inputs.peek().is_none() {
+        return Ok(());
+    }
+    let root = absolute(cwd, ".");
+    let resolved_root = fs::canonicalize(&root)
+        .with_context(|| format!("Cannot resolve the working directory {}", root.display()))?;
+    for raw in inputs {
+        let prefix: PathBuf = absolute(cwd, raw)
+            .components()
+            .take_while(|part| !dynamic(&part.as_os_str().to_string_lossy()))
+            .collect();
+        let inside = prefix.starts_with(&root)
+            && match fs::canonicalize(&prefix) {
+                Ok(target) => target.starts_with(&resolved_root),
+                // File selection reports the missing path.
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+                Err(error) => {
+                    return Err(error).with_context(|| format!("Cannot resolve {raw}"));
+                }
+            };
+        ensure!(
+            inside,
+            "MCP file \"{raw}\" is outside the working directory ({}). Use a path inside it, or set ORACLE_MCP_ALLOW_EXTERNAL_INPUT=1 to allow files elsewhere.",
+            root.display()
+        );
+    }
+    Ok(())
+}
 struct FileWalker<'a> {
     cwd: &'a Path,
     literal: &'a [PathBuf],

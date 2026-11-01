@@ -188,6 +188,28 @@ impl AlcuinMcp {
         )
         .config
     }
+    fn opted_in(&self, name: &str) -> bool {
+        self.env.get(name).is_some_and(|s| {
+            matches!(
+                s.trim().to_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+    }
+    /// MCP callers read files only inside the server's working directory unless the user opts in.
+    fn confine_files(&self, input: &Value) -> Result<()> {
+        if self.opted_in("ORACLE_MCP_ALLOW_EXTERNAL_INPUT") {
+            return Ok(());
+        }
+        let files = input["files"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        prompts::confine_inputs(&files, &self.cwd)
+    }
     async fn consult(
         &self,
         mut input: Value,
@@ -207,15 +229,8 @@ impl AlcuinMcp {
                 }
             }
         }
-        let allow = self
-            .env
-            .get("ORACLE_MCP_ALLOW_EXTERNAL_OUTPUT")
-            .is_some_and(|s| {
-                matches!(
-                    s.trim().to_lowercase().as_str(),
-                    "1" | "true" | "yes" | "on"
-                )
-            });
+        self.confine_files(&input)?;
+        let allow = self.opted_in("ORACLE_MCP_ALLOW_EXTERNAL_OUTPUT");
         for field in ["generateImage", "outputPath"] {
             if let Some(path) = input[field]
                 .as_str()
@@ -521,6 +536,7 @@ impl AlcuinMcp {
                 .unwrap_or(""),
         )?;
         let files = if operation == "add" {
+            self.confine_files(input)?;
             let inputs = input["files"]
                 .as_array()
                 .into_iter()
