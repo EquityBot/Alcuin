@@ -176,12 +176,24 @@ pub(crate) fn absolute(cwd: &Path, value: &str) -> PathBuf {
     }
     output
 }
-/// MCP file inputs must stay inside `cwd`, judged by the resolved target of each input, so
-/// neither `..` nor a link can lead out and letter case cannot shut out a path inside. A missing
-/// input is judged lexically. Nothing is read before the check, and an input outside gets the
-/// same refusal whether or not it exists. A pattern is checked by its literal prefix; folder
-/// and pattern walks skip links, so they reach nothing else outside. Exclusions only narrow
-/// the selection, and MCP inputs are never split at commas.
+/// Whether `path` lies under `root`, ignoring letter case on Windows as its file systems do.
+fn within(path: &Path, root: &Path) -> bool {
+    if cfg!(windows) {
+        let fold = |path: &Path| {
+            path.components()
+                .map(|part| part.as_os_str().to_string_lossy().to_lowercase())
+                .collect::<Vec<_>>()
+        };
+        fold(path).starts_with(&fold(root))
+    } else {
+        path.starts_with(root)
+    }
+}
+/// MCP file inputs must stay inside `cwd`. Each is checked lexically, so an absolute or `..`
+/// path is refused before anything outside is touched, then by its resolved target, so a link
+/// cannot lead out. A pattern is checked by its literal prefix; folder and pattern walks skip
+/// links, so they reach nothing else outside. Exclusions only narrow the selection, and MCP
+/// inputs are never split at commas.
 pub fn confine_inputs(inputs: &[String], cwd: &Path) -> Result<()> {
     let mut inputs = inputs
         .iter()
@@ -195,17 +207,21 @@ pub fn confine_inputs(inputs: &[String], cwd: &Path) -> Result<()> {
     let resolved_root = fs::canonicalize(&root)
         .with_context(|| format!("Cannot resolve the working directory {}", root.display()))?;
     for raw in inputs {
-        let prefix: PathBuf = absolute(cwd, raw)
+        // Only the input's own text can make it a pattern; `cwd` may contain `(` or `[`.
+        let literal: PathBuf = Path::new(raw)
             .components()
             .take_while(|part| !dynamic(&part.as_os_str().to_string_lossy()))
             .collect();
-        let lexical = prefix.starts_with(&root);
-        let inside = match fs::canonicalize(&prefix) {
-            Ok(target) => target.starts_with(&resolved_root),
-            // File selection reports a missing path inside.
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound || !lexical => lexical,
-            Err(error) => return Err(error).with_context(|| format!("Cannot resolve {raw}")),
-        };
+        let prefix = absolute(cwd, &literal.to_string_lossy());
+        let inside = within(&prefix, &root)
+            && match fs::canonicalize(&prefix) {
+                Ok(target) => target.starts_with(&resolved_root),
+                // File selection reports the missing path.
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+                Err(error) => {
+                    return Err(error).with_context(|| format!("Cannot resolve {raw}"));
+                }
+            };
         ensure!(
             inside,
             "MCP file \"{raw}\" is outside the working directory ({}). Use a path inside it, or set ORACLE_MCP_ALLOW_EXTERNAL_INPUT=1 to allow files elsewhere.",

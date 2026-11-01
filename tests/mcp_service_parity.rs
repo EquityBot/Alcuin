@@ -537,6 +537,7 @@ async fn file_inputs_outside_the_working_directory_are_refused_unless_opted_in()
         )
         .unwrap();
         symlink(&outside, project.join("PUBLIC-folder-link")).unwrap();
+        symlink(&project, home.path().join("PUBLIC-alias")).unwrap();
         escapes.extend(
             [
                 "PUBLIC-file-link",
@@ -549,14 +550,18 @@ async fn file_inputs_outside_the_working_directory_are_refused_unless_opted_in()
     #[cfg(windows)]
     {
         // A junction needs no symlink privilege.
-        let status = Command::new("cmd")
-            .args(["/C", "mklink", "/J"])
-            .arg(project.join("PUBLIC-folder-link"))
-            .arg(&outside)
-            .stdout(Stdio::null())
-            .status()
-            .unwrap();
-        assert!(status.success());
+        let junction = |link: &Path, target: &Path| {
+            let status = Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(link)
+                .arg(target)
+                .stdout(Stdio::null())
+                .status()
+                .unwrap();
+            assert!(status.success());
+        };
+        junction(&project.join("PUBLIC-folder-link"), &outside);
+        junction(&home.path().join("PUBLIC-alias"), &project);
         // A file symlink needs Developer Mode or elevation.
         if std::os::windows::fs::symlink_file(
             outside.join("credentials"),
@@ -569,6 +574,15 @@ async fn file_inputs_outside_the_working_directory_are_refused_unless_opted_in()
         escapes
             .extend(["PUBLIC-folder-link/credentials", "PUBLIC-folder-link/*"].map(str::to_owned));
     }
+    // A link outside that leads in could be repointed after the check, so it is refused too.
+    escapes.push(
+        home.path()
+            .join("PUBLIC-alias")
+            .join("src")
+            .join("PUBLIC.rs")
+            .to_string_lossy()
+            .into_owned(),
+    );
     let mut confined = server(home.path(), Environment::new());
     confined.cwd = project.clone();
     for escape in &escapes {
@@ -616,6 +630,19 @@ async fn file_inputs_outside_the_working_directory_are_refused_unless_opted_in()
         .await
         .unwrap();
     }
+    // Glob characters in the working directory's own path do not make an input a pattern.
+    let parenthesised = home.path().join("PUBLIC-app (2026) [x86]");
+    std::fs::create_dir_all(parenthesised.join("src")).unwrap();
+    std::fs::write(parenthesised.join("src/PUBLIC.rs"), "fn main() {}\n").unwrap();
+    let mut awkward = server(home.path(), Environment::new());
+    awkward.cwd = parenthesised;
+    call(
+        &awkward,
+        "consult",
+        json!({"prompt":PROMPT,"engine":"api","dryRun":true,"files":["src/PUBLIC.rs"]}),
+    )
+    .await
+    .unwrap();
     let mut opted_in = server(
         home.path(),
         Environment::from([("ORACLE_MCP_ALLOW_EXTERNAL_INPUT".into(), "1".into())]),
