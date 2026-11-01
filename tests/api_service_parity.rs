@@ -1,6 +1,5 @@
 //! API run parity with the reference runOracle and OpenAI client: synthetic providers and local
 //! stubs only, with no real credentials or provider requests.
-use anyhow::Result;
 use alcuin::{
     config::Environment,
     execution,
@@ -11,6 +10,7 @@ use alcuin::{
     },
     sessions::SessionStore,
 };
+use anyhow::Result;
 use serde_json::{Value, json};
 use std::{
     io::{Read, Write},

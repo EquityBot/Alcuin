@@ -3830,16 +3830,12 @@ async fn run_borrowed(
         navigate_exact(target.page(), &url, &expected, limits, cancel).await?;
         ensure_not_blocked(store, id, target.page(), &config, &profile, limits, cancel).await?;
     }
-    let mut reservation = RendererReservation::acquire(
-        target.page().clone(),
-        claim_id,
-        limits.command,
-        cancel,
-    )
-    .await
-    .context(
-        "This Alcuin tab has active or uncertain ownership; choose another browser tab.",
-    )?;
+    let mut reservation =
+        RendererReservation::acquire(target.page().clone(), claim_id, limits.command, cancel)
+            .await
+            .context(
+                "This Alcuin tab has active or uncertain ownership; choose another browser tab.",
+            )?;
     patch(store, id, witness, json!({"recoveryRequired":true}))?;
     runtime_patch(
         store,
