@@ -49,6 +49,50 @@ dependencies = [
 ]
 
 [[package]]
+name = "alcuin"
+version = "0.1.0"
+dependencies = [
+ "aes",
+ "aes-gcm",
+ "anyhow",
+ "base64 0.23.1",
+ "bytes",
+ "cbc",
+ "chrono",
+ "clap",
+ "futures-util",
+ "globset",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "ignore",
+ "json5",
+ "libc",
+ "pbkdf2",
+ "regex",
+ "reqwest",
+ "rmcp",
+ "rusqlite",
+ "ryu-js",
+ "schemars",
+ "secret-service",
+ "security-framework",
+ "serde",
+ "serde_json",
+ "sha1",
+ "sha2",
+ "tempfile",
+ "tiktoken-rs",
+ "tokio",
+ "tokio-tungstenite",
+ "tokio-util",
+ "uuid",
+ "windows-sys 0.61.2",
+ "zeroize",
+ "zip",
+]
+
+[[package]]
 name = "android_system_properties"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1161,50 +1205,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "alcuin"
-version = "0.1.0"
-dependencies = [
- "aes",
- "aes-gcm",
- "anyhow",
- "base64 0.23.1",
- "bytes",
- "cbc",
- "chrono",
- "clap",
- "futures-util",
- "globset",
- "http-body-util",
- "hyper",
- "hyper-util",
- "ignore",
- "json5",
- "libc",
- "pbkdf2",
- "regex",
- "reqwest",
- "rmcp",
- "rusqlite",
- "ryu-js",
- "schemars",
- "secret-service",
- "security-framework",
- "serde",
- "serde_json",
- "sha1",
- "sha2",
- "tempfile",
- "tiktoken-rs",
- "tokio",
- "tokio-tungstenite",
- "tokio-util",
- "uuid",
- "windows-sys 0.61.2",
- "zeroize",
- "zip",
-]
-
-[[package]]
 name = "inout"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1851,9 +1851,9 @@ dependencies = [
 
 [[package]]
 name = "rusqlite"
-version = "0.41.0"
+version = "0.41.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c026b4444579e8d754556c6c75d040d69c4a44283cdb648ab8a8d5965c2cfa8"
+checksum = "da9bba6f3506135e120a6586df05be18b48d18896600646a4bec8f993d91a594"
 dependencies = [
  "bitflags",
  "fallible-iterator",
