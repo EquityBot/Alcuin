@@ -7505,11 +7505,10 @@ fn duplicate_guard_admits_only_a_run_whose_worker_and_controller_are_dead() {
         store.update(earlier, |_| Ok(Some(saved.clone()))).unwrap();
         let before = store.stored_for_update(earlier).unwrap();
         let result = prepare(&store, &resolved, home.path());
+        // The refusal names the blocking session, so its owner knows what to reattach.
         assert_eq!(
-            result.as_ref().is_err_and(|error| error
-                .to_string()
-                .contains("An identical prompt is already running")),
-            blocked,
+            result.as_ref().err().map(ToString::to_string),
+            blocked.then(|| format!("An identical prompt is already running ({earlier}); reattach to the retained session with \"alcuin session {earlier}\"")),
             "{saved} {result:?}"
         );
         assert_eq!(store.stored_for_update(earlier).unwrap(), before);
