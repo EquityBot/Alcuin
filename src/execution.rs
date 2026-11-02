@@ -879,13 +879,10 @@ fn prepare_with_base(
         let signature = run_signature(&request.options);
         for meta in store.list(false)? {
             // Pending sessions also block: they hold an admitted dispatch that has not started.
-            // Reconciled listing status, as the reference guard listed sessions: a run whose
-            // worker is verifiably dead no longer counts as running.
-            if run_signature(&meta["options"]) == signature
-                && matches!(
-                    store.listed_status(&meta).as_str(),
-                    Some("pending" | "running")
-                )
+            // A run whose worker is verifiably dead no longer counts as running.
+            if matches!(meta["status"].as_str(), Some("pending" | "running"))
+                && run_signature(&meta["options"]) == signature
+                && !store.verified_dead_run(&meta)
             {
                 return Err(
                     DuplicatePrompt(meta["id"].as_str().unwrap_or("unknown").into()).into(),

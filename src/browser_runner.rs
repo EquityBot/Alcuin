@@ -283,15 +283,12 @@ fn prepare_with_base(
         Duration::from_secs(10),
     )?;
     if source.is_none() && request.options["force"] != true {
-        // Reconciled listing status, as the reference guard listed sessions: a run whose
-        // worker and controller are verifiably dead no longer counts as running.
+        // A run whose worker and controller are verifiably dead no longer counts as running.
         for current in store.list(false)? {
             anyhow::ensure!(
-                current["options"]["prompt"] != request.options["prompt"]
-                    || !matches!(
-                        store.listed_status(&current).as_str(),
-                        Some("pending" | "running")
-                    ),
+                !matches!(current["status"].as_str(), Some("pending" | "running"))
+                    || current["options"]["prompt"] != request.options["prompt"]
+                    || store.verified_dead_run(&current),
                 "An identical prompt is already running; reattach to the retained session"
             );
         }

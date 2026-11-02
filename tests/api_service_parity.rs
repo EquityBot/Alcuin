@@ -3,7 +3,7 @@
 use alcuin::{
     config::Environment,
     execution,
-    process::ProcessIdentity,
+    process::{Liveness, ProcessIdentity},
     providers::{
         self, ApiTransport, FailureReason, HttpProvider, ProviderError, ResponseObserver,
         ResponseProvider, Route, Secret,
@@ -541,12 +541,23 @@ fn over_budget_cli_runs_print_the_file_report_before_the_refusal() {
 }
 
 #[test]
-fn duplicate_guard_skips_a_run_whose_worker_is_dead() {
+fn duplicate_guard_admits_only_a_run_whose_worker_is_dead() {
     let live = ProcessIdentity::current().unwrap();
     let mut dead = live.clone();
     dead.pid = u32::MAX;
     dead.started_at_ms = 1.0;
-    for (owner, blocked) in [(dead, false), (live, true)] {
+    assert_eq!(dead.liveness(), Liveness::Dead);
+    let owned = |owner: &ProcessIdentity, status: &str| json!({"status":status,"lifecycle":{"processIdentity":owner,"workerPid":owner.pid,"workerProcessStartedAtMs":owner.started_at_ms}});
+    for (saved, blocked) in [
+        (owned(&dead, "running"), false),
+        (owned(&live, "running"), true),
+        (owned(&dead, "pending"), true),
+        // An unverified worker still blocks once the listing zombie rule would settle it.
+        (
+            json!({"status":"running","startedAt":"2026-01-01T00:00:00.000Z"}),
+            true,
+        ),
+    ] {
         let home = tempfile::tempdir().unwrap();
         let store = SessionStore::new(home.path());
         let request = execution::resolve(
@@ -560,10 +571,8 @@ fn duplicate_guard_skips_a_run_whose_worker_is_dead() {
             .create(request.options.clone(), home.path(), None)
             .unwrap();
         let earlier = earlier["id"].as_str().unwrap().to_owned();
-        store
-            .update(&earlier, |_| Ok(Some(json!({"status":"running","lifecycle":{"processIdentity":owner,"workerPid":owner.pid,"workerProcessStartedAtMs":owner.started_at_ms}}))))
-            .unwrap();
-        let saved = |store: &SessionStore| {
+        store.update(&earlier, |_| Ok(Some(saved.clone()))).unwrap();
+        let stored = |store: &SessionStore| {
             store
                 .list(false)
                 .unwrap()
@@ -571,7 +580,7 @@ fn duplicate_guard_skips_a_run_whose_worker_is_dead() {
                 .find(|meta| meta["id"] == earlier.as_str())
                 .unwrap()
         };
-        let before = saved(&store);
+        let before = stored(&store);
         let result = execution::prepare(
             &store,
             &request,
@@ -583,8 +592,8 @@ fn duplicate_guard_skips_a_run_whose_worker_is_dead() {
                 .as_ref()
                 .is_err_and(|error| error.downcast_ref::<execution::DuplicatePrompt>().is_some()),
             blocked,
-            "{result:?}"
+            "{saved} {result:?}"
         );
-        assert_eq!(saved(&store), before);
+        assert_eq!(stored(&store), before);
     }
 }

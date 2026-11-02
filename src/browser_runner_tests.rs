@@ -7471,12 +7471,24 @@ fn invalid_image_destinations_refuse_before_session_creation() {
     }
 }
 #[test]
-fn duplicate_guard_skips_a_run_whose_worker_and_controller_are_dead() {
+fn duplicate_guard_admits_only_a_run_whose_worker_and_controller_are_dead() {
     let live = ProcessIdentity::current().unwrap();
     let mut dead = live.clone();
     dead.pid = u32::MAX;
     dead.started_at_ms = 1.0;
-    for (owner, blocked) in [(dead, false), (live, true)] {
+    assert_eq!(dead.liveness(), Liveness::Dead);
+    // Shaped like the 2 November attempt child: sent, then its shared worker died.
+    let owned = |owner: &ProcessIdentity, status: &str| json!({"status":status,"lifecycle":{"processIdentity":owner,"workerPid":owner.pid,"workerProcessStartedAtMs":owner.started_at_ms},"browser":{"runtime":{"controllerPid":owner.pid,"controllerProcessStartedAtMs":owner.started_at_ms}},"dispatch":{"state":"acknowledged"},"recoveryRequired":true});
+    for (saved, blocked) in [
+        (owned(&dead, "running"), false),
+        (owned(&live, "running"), true),
+        (owned(&dead, "pending"), true),
+        // An unverified worker still blocks once the listing zombie rule would settle it.
+        (
+            json!({"status":"running","startedAt":"2026-01-01T00:00:00.000Z"}),
+            true,
+        ),
+    ] {
         let home = tempfile::tempdir().unwrap();
         let store = SessionStore::new(home.path().join(".oracle"));
         let resolved = crate::execution::resolve(
@@ -7490,7 +7502,7 @@ fn duplicate_guard_skips_a_run_whose_worker_and_controller_are_dead() {
             .create(resolved.options.clone(), home.path(), None)
             .unwrap();
         let earlier = earlier["id"].as_str().unwrap();
-        store.update(earlier, |_| Ok(Some(json!({"status":"running","lifecycle":{"processIdentity":owner,"workerPid":owner.pid,"workerProcessStartedAtMs":owner.started_at_ms},"browser":{"runtime":{"controllerPid":owner.pid,"controllerProcessStartedAtMs":owner.started_at_ms}}})))).unwrap();
+        store.update(earlier, |_| Ok(Some(saved.clone()))).unwrap();
         let before = store.stored_for_update(earlier).unwrap();
         let result = prepare(&store, &resolved, home.path());
         assert_eq!(
@@ -7498,7 +7510,7 @@ fn duplicate_guard_skips_a_run_whose_worker_and_controller_are_dead() {
                 .to_string()
                 .contains("An identical prompt is already running")),
             blocked,
-            "{result:?}"
+            "{saved} {result:?}"
         );
         assert_eq!(store.stored_for_update(earlier).unwrap(), before);
     }

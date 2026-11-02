@@ -753,6 +753,14 @@ impl SessionStore {
             .and_then(|current| self.reported(id, current))
             .map_or_else(|_| entry["status"].clone(), |meta| meta["status"].clone())
     }
+    /// Whether a running session's worker is verifiably dead and its browser controller, when
+    /// recorded, positively gone. Read-only; a failed check is not evidence of death.
+    pub fn verified_dead_run(&self, meta: &Value) -> bool {
+        meta["status"] == "running"
+            && meta["id"]
+                .as_str()
+                .is_some_and(|id| matches!(self.dead_worker_patch(id, meta), Ok(Some(_))))
+    }
     /// The detached-worker settlement patch for a worker whose exact saved identity is dead and
     /// whose browser controller, when recorded, is positively gone.
     fn dead_worker_patch(&self, id: &str, meta: &Value) -> Result<Option<Value>> {
