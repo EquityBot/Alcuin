@@ -21,7 +21,8 @@ env:
 
 jobs:
   # Offline checks only. Tests that need a signed-in browser or a live provider are
-  # #[ignore]d and run locally; live receipts never run in CI.
+  # #[ignore]d and run locally; live receipts never run in CI. The native-Chrome job
+  # below runs the privacy and Grok fixture test, which needs only an installed Chrome.
   check:
     strategy:
       fail-fast: false
@@ -73,6 +74,19 @@ jobs:
           name: coverage-rust
           path: coverage-rust.lcov
           retention-days: 1
+
+  # This fixture test is #[ignore]d only because it needs an installed Chrome. It drives
+  # intercepted, offline DOM fixtures in headless Chrome, which the runner image has.
+  native-chrome:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: cargo test --locked native_temporary_chat_predicate_and_retained_send_guard -- --ignored
 
   # The upload runs apart from the tests so the OIDC token is never available
   # while test code runs. A Codecov outage fails only this job.

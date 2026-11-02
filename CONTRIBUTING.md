@@ -33,4 +33,7 @@ input in `fuzz/artifacts/`; turn it into a test before fixing it.
 
 CI runs the offline tests only. Tests that need a signed-in browser or a live
 provider are marked `#[ignore]` and run only on request, with your own
-accounts.
+accounts. One ignored test needs only an installed Chrome: CI's `native-chrome`
+job runs it, and
+`cargo test --locked native_temporary_chat_predicate_and_retained_send_guard -- --ignored`
+runs it locally.
