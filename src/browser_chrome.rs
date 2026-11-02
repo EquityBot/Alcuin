@@ -96,6 +96,69 @@ impl AttachmentEndpoint {
         Ok(endpoint)
     }
 }
+/// Starts the user-config `remoteChromeLauncher` when a loopback `remoteChrome` endpoint is
+/// unreachable, then waits for its DevTools endpoint. The launcher owns the browser's flags
+/// and profile; it is never waited on or stopped. Without a launcher the error stands.
+async fn launch_remote(
+    config: &Value,
+    host: &str,
+    port: u16,
+    unreachable: anyhow::Error,
+    timeout: Duration,
+    cancel: &CancellationToken,
+) -> Result<AttachmentEndpoint> {
+    let Some(launcher) = config["remoteChromeLauncher"].as_str() else {
+        return Err(unreachable);
+    };
+    let launcher = PathBuf::from(launcher);
+    anyhow::ensure!(
+        crate::browser::normalise_host(host) == "loopback"
+            && launcher.is_absolute()
+            && launcher.is_file(),
+        "remoteChromeLauncher needs a loopback remoteChrome host and an absolute launcher file; {unreachable:#}"
+    );
+    let deadline = Instant::now() + timeout;
+    // Concurrent runs start the browser once: the first launches it, the rest find it open.
+    let _admission = startup_admission(timeout, cancel).await?;
+    let remaining = || deadline.saturating_duration_since(Instant::now());
+    if let Ok(endpoint) = AttachmentEndpoint::inspect(host, port, remaining(), cancel).await {
+        return Ok(endpoint);
+    }
+    let mut command = Command::new(&launcher);
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    std::os::windows::process::CommandExt::creation_flags(&mut command, 0x00000200 | 0x08000000);
+    let mut child = command.spawn().with_context(|| {
+        format!(
+            "Unable to start remoteChromeLauncher {}",
+            launcher.display()
+        )
+    })?;
+    // Reaped on its own thread; the browser it starts outlives it.
+    std::thread::spawn(move || child.wait());
+    eprintln!(
+        "[browser] DevTools endpoint {host}:{port} was unreachable; started remoteChromeLauncher {}.",
+        launcher.display()
+    );
+    loop {
+        let wait = remaining();
+        match AttachmentEndpoint::inspect(host, port, wait.min(Duration::from_secs(2)), cancel)
+            .await
+        {
+            Ok(endpoint) => return Ok(endpoint),
+            Err(error) if wait.is_zero() || cancel.is_cancelled() => {
+                return Err(error.context(format!(
+                    "remoteChromeLauncher {} did not open DevTools on {host}:{port}",
+                    launcher.display()
+                )));
+            }
+            Err(_) => tokio::time::sleep(wait.min(Duration::from_millis(250))).await,
+        }
+    }
+}
 #[cfg(test)]
 tokio::task_local! {
     pub(crate) static TEST_STARTUP_LOCK: PathBuf;
@@ -568,7 +631,10 @@ impl ChromeConnection {
                     browser_ws_endpoint: ws.into(),
                 }
             } else {
-                AttachmentEndpoint::inspect(host, port, timeout, cancel).await?
+                match AttachmentEndpoint::inspect(host, port, timeout, cancel).await {
+                    Ok(endpoint) => endpoint,
+                    Err(error) => launch_remote(config, host, port, error, timeout, cancel).await?,
+                }
             };
             Self::attach(endpoint, timeout, cancel).await?
         } else {
@@ -2239,6 +2305,91 @@ fn prefer_system_tmp(linux: bool, tmp: &Path, home: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// Serves `/json/version` on `port` once `marker` exists, as a launched browser would.
+    async fn devtools_after(marker: PathBuf, port: u16) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        while !marker.exists() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
+            .await
+            .unwrap();
+        loop {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0; 1024];
+            let _ = socket.read(&mut request).await;
+            let body = format!(
+                r#"{{"webSocketDebuggerUrl":"ws://127.0.0.1:{port}/devtools/browser/PUBLIC-launched"}}"#
+            );
+            let reply = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = socket.write_all(reply.as_bytes()).await;
+        }
+    }
+    #[tokio::test]
+    async fn an_unreachable_loopback_endpoint_starts_the_configured_launcher_once() {
+        let home = tempfile::tempdir().unwrap();
+        let marker = home.path().join("launched");
+        #[cfg(windows)]
+        let (launcher, script) = (
+            home.path().join("launch.cmd"),
+            format!("@echo off\r\necho launched>>\"{}\"\r\n", marker.display()),
+        );
+        #[cfg(unix)]
+        let (launcher, script) = (
+            home.path().join("launch.sh"),
+            format!("#!/bin/sh\necho launched >> '{}'\n", marker.display()),
+        );
+        fs::write(&launcher, script).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&launcher, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = free.local_addr().unwrap().port();
+        drop(free);
+        let config = serde_json::json!({"remoteChromeLauncher":launcher});
+        let cancel = CancellationToken::new();
+        let timeout = Duration::from_secs(10);
+        let lock = home.path().join("startup.lock");
+        let launch = |config: Value, host: &'static str| {
+            let cancel = cancel.clone();
+            TEST_STARTUP_LOCK.scope(lock.clone(), async move {
+                launch_remote(
+                    &config,
+                    host,
+                    port,
+                    anyhow::anyhow!("PUBLIC unreachable"),
+                    timeout,
+                    &cancel,
+                )
+                .await
+            })
+        };
+        // Without a launcher, or for a host that is not loopback, nothing starts.
+        let kept = launch(serde_json::json!({}), "127.0.0.1")
+            .await
+            .unwrap_err();
+        assert_eq!(kept.to_string(), "PUBLIC unreachable");
+        let refused = launch(config.clone(), "192.0.2.1").await.unwrap_err();
+        assert!(format!("{refused:#}").contains("loopback"), "{refused:#}");
+        assert!(!marker.exists());
+        let server = tokio::spawn(devtools_after(marker.clone(), port));
+        let endpoint = launch(config.clone(), "127.0.0.1").await.unwrap();
+        assert_eq!(
+            endpoint.browser_ws_endpoint,
+            format!("ws://127.0.0.1:{port}/devtools/browser/PUBLIC-launched")
+        );
+        // An endpoint that is open by the time the lock is held is not launched again.
+        launch(config, "127.0.0.1").await.unwrap();
+        // A second launcher, had one started, has written its marker line by now.
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        server.abort();
+        assert_eq!(fs::read_to_string(&marker).unwrap().lines().count(), 1);
+    }
     #[test]
     fn linux_dot_directory_temp_bases_prefer_the_system_tmp() {
         let home = Path::new("/home/public");

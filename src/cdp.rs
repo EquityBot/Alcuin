@@ -31,6 +31,17 @@ impl std::fmt::Display for PageReadStalled {
 }
 impl std::error::Error for PageReadStalled {}
 
+/// A CDP command, or a browser step, that certainly sent nothing. Its consultation may
+/// retry in a fresh tab only when the attempt's durable dispatch record agrees.
+#[derive(Debug)]
+pub(crate) struct NotSent(pub(crate) std::borrow::Cow<'static, str>);
+impl std::fmt::Display for NotSent {
+    fn fmt(&self, output: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        output.write_str(&self.0)
+    }
+}
+impl std::error::Error for NotSent {}
+
 struct Command {
     id: u64,
     message: Value,
@@ -225,7 +236,7 @@ impl Cdp {
         cancel: &CancellationToken,
     ) -> Result<Value> {
         if self.connection.shutdown.is_cancelled() {
-            bail!("CDP connection is closed; command was not sent.");
+            return Err(NotSent("CDP connection is closed; command was not sent.".into()).into());
         }
         if cancel.is_cancelled() {
             bail!("CDP command was cancelled before dispatch.");
@@ -237,7 +248,7 @@ impl Cdp {
         if let Some(session) = &self.session {
             message["sessionId"] = json!(session);
         }
-        tokio::select! {biased;_=cancel.cancelled()=>bail!("CDP command was cancelled before dispatch."),_=self.connection.shutdown.cancelled()=>bail!("CDP connection is closed; command was not sent."),result=tokio::time::timeout_at(deadline,self.connection.commands.send(Command{id,message,reply,cancel:cancel.clone(),deadline}))=>result.map_err(|_|anyhow::anyhow!("CDP command queue timed out; command was not sent."))?.map_err(|_|anyhow::anyhow!("CDP connection is closed; command was not sent."))?};
+        tokio::select! {biased;_=cancel.cancelled()=>bail!("CDP command was cancelled before dispatch."),_=self.connection.shutdown.cancelled()=>return Err(NotSent("CDP connection is closed; command was not sent.".into()).into()),result=tokio::time::timeout_at(deadline,self.connection.commands.send(Command{id,message,reply,cancel:cancel.clone(),deadline}))=>result.map_err(|_|NotSent("CDP command queue timed out; command was not sent.".into()))?.map_err(|_|NotSent("CDP connection is closed; command was not sent.".into()))?};
         let value = tokio::select! {biased;_=cancel.cancelled()=>bail!("CDP command was cancelled after reservation; acknowledgement is uncertain. Do not replay."),result=tokio::time::timeout_at(deadline,answer)=>result.map_err(|_|PageReadStalled(format!("CDP command timed out; acknowledgement is uncertain. Do not replay. Method: {method}.")))?.map_err(|_|anyhow::anyhow!("CDP command acknowledgement is unavailable."))?.map_err(anyhow::Error::msg)?};
         if value.get("error").is_some() {
             bail!("CDP command {method} was refused by the endpoint.");

@@ -407,6 +407,7 @@ impl SessionStore {
             if current["id"] != id {
                 bail!("Invalid stored metadata for session {id}.");
             }
+            self.index_target(id, &current)?;
             guard.leaf(&dir.join("meta.json"))?;
             match deadline {
                 Some(deadline) => atomic_json_until(&dir.join("meta.json"), &current, deadline)?,
@@ -477,6 +478,7 @@ impl SessionStore {
             if current["id"] != id {
                 bail!("Invalid stored metadata for session {id}.");
             }
+            self.index_target(id, &current)?;
             if model_patch.is_some() {
                 let models = guard.models()?;
                 let path = self.model_path(id, model)?;
@@ -692,30 +694,97 @@ impl SessionStore {
         output.sort_by(|a, b| b["createdAt"].as_str().cmp(&a["createdAt"].as_str()));
         Ok(output)
     }
-    /// The `list(true)` sessions whose stored metadata text contains `needle`, unsorted.
-    /// The text search parses no session, so an exact-identifier search stays cheap in a
-    /// large store. A field can equal an ASCII alphanumeric or '-' `needle` only if its JSON
-    /// text contains it: serde_json and the legacy JSON.stringify writers never escape those.
-    /// A file that exists but cannot be read is kept for `read_raw` to decide.
-    pub(crate) fn list_mentioning(&self, needle: &str) -> Result<Vec<Value>> {
-        let mut output = vec![];
-        let entries = match fs::read_dir(self.root()) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(output),
-            entries => entries?,
+    /// Beside the store: `targets/<target>/<session>` says the session's metadata has named
+    /// that `browser.runtime.chromeTargetId`; `covered/<session>` says every target the
+    /// session has named is indexed. Markers are only ever added, so the index is a superset.
+    fn target_index(&self) -> PathBuf {
+        self.home.join("sessions-target-index")
+    }
+    /// Written before the metadata that names the target, by both metadata writers, so a
+    /// covered session can name only indexed targets. A failure refuses the write.
+    fn index_target(&self, id: &str, meta: &Value) -> Result<()> {
+        let Some(target) = meta["browser"]["runtime"]["chromeTargetId"]
+            .as_str()
+            .filter(|target| indexable(target))
+        else {
+            return Ok(());
         };
-        for entry in entries.flatten() {
-            let id = entry.file_name().to_string_lossy().into_owned();
+        let directory = self.target_index().join("targets").join(target);
+        if directory.join(id).is_file() {
+            return Ok(());
+        }
+        private_dir(&directory)?;
+        marker(&directory.join(id))
+    }
+    /// Whether an uncovered session's metadata text mentions `target`; a file that exists but
+    /// cannot be read is not evidence of absence. A field can equal an ASCII alphanumeric or
+    /// '-' target only if its JSON text contains it: serde_json and the legacy JSON.stringify
+    /// writers never escape those. With `cover`, the same bytes are parsed, every target they
+    /// name indexed and the session covered, unless a file cannot be read or parsed.
+    fn mentions_uncovered(&self, id: &str, target: &str, cover: bool) -> Result<bool> {
+        let dir = self.directory(id)?;
+        let (mut mentions, mut clean, mut parsed) = (false, true, vec![]);
+        for name in ["meta.json", "session.json"] {
+            match fs::read(dir.join(name)) {
+                Ok(raw) => {
+                    mentions |= String::from_utf8_lossy(&raw).contains(target);
+                    if cover {
+                        match serde_json::from_slice::<Value>(&raw) {
+                            Ok(meta) => parsed.push(meta),
+                            Err(_) => clean = false,
+                        }
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => (mentions, clean) = (true, false),
+            }
+        }
+        if cover && clean {
+            for meta in &parsed {
+                self.index_target(id, meta)?;
+            }
+            let covered = self.target_index().join("covered");
+            private_dir(&covered)?;
+            marker(&covered.join(id))?;
+        }
+        Ok(mentions)
+    }
+    /// Every `list(true)` session whose metadata can name `target` as its
+    /// `browser.runtime.chromeTargetId`, unsorted. A covered session is read only when the
+    /// index names it; an uncovered one (new, legacy or unreadable) when its text mentions the
+    /// target. Covering parses each session once, so a bounded share is covered per call.
+    /// shortcut: a writer that bypasses this store (a legacy Node build) after a session is
+    /// covered is not indexed; Alcuin's own metadata writers all index first.
+    pub(crate) fn list_naming_target(&self, target: &str) -> Result<Vec<Value>> {
+        if !indexable(target) {
+            return self.list(true);
+        }
+        let names = |path: PathBuf| -> Result<std::collections::BTreeSet<String>> {
+            match fs::read_dir(path) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    Ok(Default::default())
+                }
+                Err(error) => Err(error.into()),
+                Ok(entries) => entries
+                    .map(|entry| Ok(entry?.file_name().to_string_lossy().into_owned()))
+                    .collect(),
+            }
+        };
+        let index = self.target_index();
+        let covered = names(index.join("covered"))?;
+        let named = names(index.join("targets").join(target))?;
+        let cover_until = Instant::now() + Duration::from_millis(250);
+        let mut output = vec![];
+        for id in names(self.root())? {
             if !valid_id(&id) {
                 continue;
             }
-            let dir = self.directory(&id)?;
-            let mentions = ["meta.json", "session.json"].into_iter().any(|name| {
-                match fs::read(dir.join(name)) {
-                    Ok(raw) => String::from_utf8_lossy(&raw).contains(needle),
-                    Err(error) => error.kind() != std::io::ErrorKind::NotFound,
-                }
-            });
-            if mentions && let Some(meta) = self.read_raw(&id, true)? {
+            let candidate = if covered.contains(&id) {
+                named.contains(&id)
+            } else {
+                self.mentions_uncovered(&id, target, Instant::now() < cover_until)?
+            };
+            if candidate && let Some(meta) = self.read_raw(&id, true)? {
                 output.push(meta);
             }
         }
@@ -968,6 +1037,22 @@ fn harden_entry(entry: &NativeEntry, path: &Path, directory: bool) -> Result<()>
     }
     Ok(())
 }
+/// A target the index can name as one path component; others fall back to a full read.
+fn indexable(target: &str) -> bool {
+    crate::browser_target::valid_id(target) && target.len() <= 128
+}
+fn marker(path: &Path) -> Result<()> {
+    match private_file(path, true) {
+        Err(error)
+            if error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|error| error.kind() == std::io::ErrorKind::AlreadyExists) =>
+        {
+            Ok(())
+        }
+        created => created.map(drop),
+    }
+}
 fn lone_terminal_run(meta: &Value, runs: &[Value]) -> bool {
     runs.len() == 1
         && runs[0]["model"] == meta["model"]
@@ -1194,7 +1279,7 @@ mod deadline_tests {
         assert_eq!(saved["marker"], "PUBLIC settled");
     }
     #[test]
-    fn target_search_reads_sessions_naming_it_and_keeps_unreadable_ones() {
+    fn target_index_reads_named_and_uncovered_sessions_only() {
         let home = tempfile::tempdir().unwrap();
         let store = SessionStore::new(home.path());
         let name = |prompt: &str, target: &str| {
@@ -1211,19 +1296,71 @@ mod deadline_tests {
                 .unwrap();
             id
         };
+        let found = |target: &str| {
+            store
+                .list_naming_target(target)
+                .unwrap()
+                .into_iter()
+                .map(|meta| meta["id"].as_str().unwrap().to_owned())
+                .collect::<std::collections::BTreeSet<_>>()
+        };
         let named = name("PUBLIC named", "PUBLIC-TARGET");
-        name("PUBLIC unrelated", "PUBLIC-OTHER");
+        // A session that later names the target stays found under both of its targets.
+        let moved = name("PUBLIC moved", "PUBLIC-OTHER");
+        store
+            .update(&moved, |_| {
+                Ok(Some(
+                    json!({"browser":{"runtime":{"chromeTargetId":"PUBLIC-TARGET"}}}),
+                ))
+            })
+            .unwrap();
         // A metadata file that exists but cannot be read is not evidence of absence.
         let unreadable = name("PUBLIC unreadable", "PUBLIC-OTHER");
         let dir = store.directory(&unreadable).unwrap();
         std::fs::rename(dir.join("meta.json"), dir.join("session.json")).unwrap();
         std::fs::create_dir(dir.join("meta.json")).unwrap();
-        let found = store
-            .list_mentioning("PUBLIC-TARGET")
-            .unwrap()
-            .into_iter()
-            .map(|meta| meta["id"].as_str().unwrap().to_owned())
-            .collect::<std::collections::BTreeSet<_>>();
-        assert_eq!(found, [named, unreadable].into());
+        // A legacy writer named the target without the index; it is read, then covered.
+        let legacy = name("PUBLIC legacy", "PUBLIC-OTHER");
+        let mut raw = store.stored_for_update(&legacy).unwrap();
+        raw["browser"]["runtime"]["chromeTargetId"] = json!("PUBLIC-TARGET");
+        atomic_json(&store.directory(&legacy).unwrap().join("meta.json"), &raw).unwrap();
+        let unrelated = name("PUBLIC unrelated", "PUBLIC-OTHER");
+        // The first search reads uncovered sessions as text and covers them; the second
+        // uses the index.
+        assert_eq!(
+            found("PUBLIC-TARGET"),
+            [&named, &moved, &unreadable, &legacy]
+                .map(String::to_owned)
+                .into()
+        );
+        assert!(
+            store
+                .target_index()
+                .join("covered")
+                .join(&unrelated)
+                .is_file()
+        );
+        assert_eq!(
+            found("PUBLIC-TARGET"),
+            [&named, &moved, &unreadable, &legacy]
+                .map(String::to_owned)
+                .into()
+        );
+        assert_eq!(
+            found("PUBLIC-OTHER"),
+            [&moved, &unreadable, &legacy, &unrelated]
+                .map(String::to_owned)
+                .into()
+        );
+        // Once covered, only the index decides: a session it does not name for the target
+        // is not read, so even a later write that bypassed the store is not seen.
+        let mut raw = store.stored_for_update(&unrelated).unwrap();
+        raw["browser"]["runtime"]["chromeTargetId"] = json!("PUBLIC-TARGET");
+        atomic_json(
+            &store.directory(&unrelated).unwrap().join("meta.json"),
+            &raw,
+        )
+        .unwrap();
+        assert!(!found("PUBLIC-TARGET").contains(&unrelated));
     }
 }

@@ -325,6 +325,12 @@ fn require_storage_binding(store: &SessionStore, link: &Link) -> Result<()> {
     Ok(())
 }
 
+#[derive(Clone, Copy)]
+enum Decision {
+    Switch,
+    Retry,
+}
+
 /// A single worker may reserve attempts. A partially written link remains a barrier.
 pub(crate) struct Parent {
     store: SessionStore,
@@ -463,7 +469,7 @@ impl Parent {
         let reserved = self.reserve_with(
             Provider::Grok,
             Some(environment),
-            Some((failed, decision)),
+            Some((Decision::Switch, failed, decision)),
             cancel,
         );
         match reserved {
@@ -478,6 +484,63 @@ impl Parent {
             }
             Err(error) => Err(error),
         }
+    }
+
+    /// One fresh-tab retry of a first ChatGPT attempt that stopped on a typed failure which
+    /// certainly sent nothing, recorded as the consultation's `retry` decision. Its durable
+    /// record must agree: no dispatch, or one that never started its Send. The failed child
+    /// stays inert evidence, and the retry is itself never retried or switched to Grok.
+    pub(crate) fn retry_unsent(
+        &mut self,
+        failed: &Link,
+        error: &anyhow::Error,
+        cancel: &CancellationToken,
+    ) -> Result<Option<Link>> {
+        let Some(cause) = error
+            .chain()
+            .find_map(|cause| cause.downcast_ref::<crate::cdp::NotSent>())
+        else {
+            return Ok(None);
+        };
+        if !self.retry_eligible(&self.store.require(&self.id)?, failed, cancel)? {
+            return Ok(None);
+        }
+        let decision = json!({"version":1,"from":failed,"failure":cause.0,
+            "dispatch":"not-started","decidedAt":crate::sessions::timestamp()});
+        self.reserve_with(
+            Provider::Chatgpt,
+            None,
+            Some((Decision::Retry, failed, decision)),
+            cancel,
+        )
+        .map(Some)
+    }
+
+    fn retry_eligible(
+        &self,
+        parent: &Value,
+        failed: &Link,
+        cancel: &CancellationToken,
+    ) -> Result<bool> {
+        let state = &parent["browser"]["consultation"];
+        if !(!cancel.is_cancelled()
+            && failed.provider == Provider::Chatgpt
+            && failed.ordinal == 1
+            && state["active"] == json!(failed)
+            && state["attempts"] == json!([failed])
+            && state["retry"].is_null()
+            && state["switch"].is_null()
+            && state["fallback"].is_null()
+            && state["callbackIssued"] == false
+            && state["selected"].is_null()
+            && state["adoption"].is_null())
+        {
+            return Ok(false);
+        }
+        let child = self.store.require(&failed.child_id)?;
+        Ok(child["browser"]["attempt"] == json!(failed)
+            && child["status"] == "error"
+            && unsent_grok(parent, &child))
     }
 
     /// After a Grok attempt that never started its single Send, make the original
@@ -555,13 +618,13 @@ impl Parent {
         self.reserve_with(provider, environment, None, cancel)
     }
 
-    /// A provider switch decision is written in the same parent update that makes
-    /// its Grok child active, so neither can exist without the other.
+    /// A provider switch or retry decision is written in the same parent update that makes
+    /// its new child active, so neither can exist without the other.
     fn reserve_with(
         &mut self,
         provider: Provider,
         environment: Option<&crate::config::Environment>,
-        decision: Option<(&Link, Value)>,
+        decision: Option<(Decision, &Link, Value)>,
         cancel: &CancellationToken,
     ) -> Result<Link> {
         let parent = self.store.require(&self.id)?;
@@ -657,8 +720,10 @@ impl Parent {
             child_directory: NativeEntry::open(&self.store.directory(&child_id)?, true)?.identity,
         };
         let mut proposed = self.state.clone();
-        if let Some((_, decision)) = &decision {
-            proposed["switch"] = decision.clone();
+        match &decision {
+            Some((Decision::Switch, _, decision)) => proposed["switch"] = decision.clone(),
+            Some((Decision::Retry, _, decision)) => proposed["retry"] = decision.clone(),
+            None => {}
         }
         proposed["active"] = json!(link);
         proposed["attempts"]
@@ -668,9 +733,12 @@ impl Parent {
         // No child lock is held whilst reserving its exact identity in the parent.
         self.store.update(&self.id, |current| {
             self.require(current,cancel)?;
-            if let Some((failed, _)) = &decision {
-                ensure!(self.switch_eligible(current, failed, cancel)?,
-                    "Provider switch evidence changed before its decision");
+            match &decision {
+                Some((Decision::Switch, failed, _)) => ensure!(self.switch_eligible(current, failed, cancel)?,
+                    "Provider switch evidence changed before its decision"),
+                Some((Decision::Retry, failed, _)) => ensure!(self.retry_eligible(current, failed, cancel)?,
+                    "Unsent attempt evidence changed before its retry decision"),
+                None => {}
             }
             Ok(Some(json!({"browser":merge_object(&current["browser"],&json!({"consultation":proposed}))})))
         })?;
@@ -742,7 +810,8 @@ thread_local! {
     static TEST_FAIL_AFTER_PARENT_RESERVATION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// A switch's Grok attempt that has the parent's owner, or none, and positively never sent.
+/// A switch's Grok attempt, or a first ChatGPT attempt before its retry, that has the
+/// parent's owner, or none, and positively never sent.
 /// A missing dispatch, or the not-started record failure writes only when none exists, proves
 /// no Send: the started record precedes the single physical Send.
 pub(super) fn unsent_grok(parent: &Value, child: &Value) -> bool {
@@ -1711,6 +1780,123 @@ mod tests {
                     .unwrap()
                     .is_none(),
                 "{case} switched twice"
+            );
+            assert_eq!(store.list(false).unwrap().len(), 3, "{case}");
+        }
+    }
+
+    #[test]
+    fn only_a_typed_unsent_failure_retries_once_in_a_fresh_chatgpt_attempt() {
+        let not_sent = || {
+            anyhow::Error::new(crate::cdp::NotSent(
+                "Picker cleanup is unconfirmed; refusing target reuse".into(),
+            ))
+            .context("PUBLIC model selection")
+        };
+        type Edit = fn(&SessionStore, &Switched);
+        fn absent(store: &SessionStore, f: &Switched) {
+            patch_meta(store, &f.first.child_id, |meta| {
+                meta.as_object_mut().unwrap().remove("dispatch");
+            })
+        }
+        // (case, error, state edit, expected); the fixture's dispatch is uncertain.
+        let cases: Vec<(&str, anyhow::Error, Edit, bool)> = vec![
+            ("no-dispatch", not_sent(), absent, true),
+            (
+                "not-started",
+                not_sent(),
+                |store, f| {
+                    patch_meta(store, &f.first.child_id, |meta| {
+                        meta["dispatch"]["state"] = json!("not-started");
+                    })
+                },
+                true,
+            ),
+            ("uncertain", not_sent(), |_, _| {}, false),
+            (
+                "untyped",
+                anyhow::anyhow!("Picker cleanup is unconfirmed; refusing target reuse"),
+                absent,
+                false,
+            ),
+            (
+                "captured",
+                not_sent(),
+                |store, f| {
+                    patch_meta(store, &f.first.child_id, |meta| {
+                        meta.as_object_mut().unwrap().remove("dispatch");
+                        meta["capturedAnswer"] = json!({"file":"PUBLIC"});
+                    })
+                },
+                false,
+            ),
+            (
+                "cancelled",
+                not_sent(),
+                |store, f| {
+                    absent(store, f);
+                    f.cancel.cancel();
+                },
+                false,
+            ),
+        ];
+        for (case, error, edit, expected) in cases {
+            let mut f = switch_fixture(json!({"browserFallback":"grok"}), json!({}));
+            edit(&f.store, &f);
+            let store = f.store.clone();
+            let before = store.require(&f.id).unwrap();
+            let (first, environment, cancel) =
+                (f.first.clone(), f.environment.clone(), f.cancel.clone());
+            let retried = f.coordinator.retry_unsent(&first, &error, &cancel).unwrap();
+            assert_eq!(retried.is_some(), expected, "{case}");
+            if !expected {
+                assert_eq!(
+                    store.require(&f.id).unwrap(),
+                    before,
+                    "{case} changed the parent"
+                );
+                assert_eq!(
+                    store.list(false).unwrap().len(),
+                    2,
+                    "{case} created a child"
+                );
+                continue;
+            }
+            let retry = retried.unwrap();
+            assert!(
+                retry.provider == Provider::Chatgpt && retry.ordinal == 2,
+                "{case}"
+            );
+            let state = store.require(&f.id).unwrap()["browser"]["consultation"].clone();
+            assert_eq!(state["active"], json!(retry), "{case}");
+            assert_eq!(state["attempts"], json!([first, retry]), "{case}");
+            assert_eq!(state["retry"]["from"], json!(first), "{case}");
+            assert_eq!(
+                state["retry"]["failure"], "Picker cleanup is unconfirmed; refusing target reuse",
+                "{case}"
+            );
+            assert_eq!(
+                require_child(&store, &retry.child_id, &cancel).unwrap(),
+                retry
+            );
+            assert!(
+                require_child(&store, &first.child_id, &cancel).is_err(),
+                "{case}"
+            );
+            // The retry is never retried or switched to Grok.
+            assert!(
+                f.coordinator
+                    .retry_unsent(&retry, &not_sent(), &cancel)
+                    .unwrap()
+                    .is_none(),
+                "{case} retried twice"
+            );
+            assert!(
+                f.coordinator
+                    .switch_to_grok(&retry, &typed(), &environment, &cancel)
+                    .unwrap()
+                    .is_none(),
+                "{case} switched after a retry"
             );
             assert_eq!(store.list(false).unwrap().len(), 3, "{case}");
         }
