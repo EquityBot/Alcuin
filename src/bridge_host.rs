@@ -864,6 +864,13 @@ pub async fn run(
             actual_driver(context).await
         })
     });
+    // Install the shutdown handlers before clients may stop the host: an uninstalled SIGTERM kills
+    // the process before `host.shutdown()`. A foreground host's clients act once it answers; a
+    // background child's wait for its readiness file, so a signal during its handoff or bootstrap
+    // still ends it at once.
+    let shutdown = startup_gate
+        .is_none()
+        .then(crate::remote_service::shutdown_signal);
     let host = RemoteHost::start(
         store.clone(),
         HostOptions {
@@ -920,6 +927,7 @@ pub async fn run(
             )));
         }
     }
+    let shutdown = shutdown.unwrap_or_else(crate::remote_service::shutdown_signal);
     let published = (|| {
         storage::atomic_json(
             &store.home().join("bridge-host-ready.json"),
@@ -947,7 +955,7 @@ pub async fn run(
         task
     });
     let (result, tunnel_joined) = tokio::select! {
-        biased; _=cancel.cancelled()=>(Ok(()),false),result=crate::remote_service::shutdown_signal()=>(result,false),
+        biased; _=cancel.cancelled()=>(Ok(()),false),result=shutdown=>(result,false),
         result=async {match tunnel.as_mut(){Some(task)=>task.await.context("Reverse SSH task failed")?,None=>std::future::pending().await}}=>(result,true)
     };
     stopped.cancel();

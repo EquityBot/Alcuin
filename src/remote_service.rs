@@ -173,18 +173,36 @@ pub fn browser_config(
     }
     Ok(browser)
 }
-pub(crate) async fn shutdown_signal() -> Result<()> {
+/// Installs the interrupt and termination handlers when called, not when first polled, so a
+/// signal sent before the caller awaits the result still ends it instead of killing the process.
+/// Tokio keeps the handlers for the rest of the process.
+pub(crate) fn shutdown_signal() -> impl Future<Output = Result<()>> {
     #[cfg(unix)]
-    {
-        let mut terminate =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-        tokio::select! {signal=tokio::signal::ctrl_c()=>signal.context("Service interrupt signal failed"),signal=terminate.recv()=>signal.context("Service termination signal handler closed")}
-    }
+    let handlers = {
+        use tokio::signal::unix::{SignalKind, signal};
+        (
+            signal(SignalKind::terminate()),
+            signal(SignalKind::interrupt()),
+        )
+    };
     #[cfg(not(unix))]
-    {
-        tokio::signal::ctrl_c()
-            .await
-            .context("Service interrupt signal failed")
+    let interrupt = tokio::signal::windows::ctrl_c();
+    async move {
+        #[cfg(unix)]
+        {
+            let (terminate, interrupt) = handlers;
+            let mut terminate = terminate?;
+            let mut interrupt = interrupt.context("Service interrupt signal failed")?;
+            tokio::select! {_=interrupt.recv()=>Ok(()),signal=terminate.recv()=>signal.context("Service termination signal handler closed")}
+        }
+        #[cfg(not(unix))]
+        {
+            interrupt
+                .context("Service interrupt signal failed")?
+                .recv()
+                .await;
+            Ok(())
+        }
     }
 }
 /// Returns false when the service must not start because ordinary sync found no session.
@@ -483,5 +501,33 @@ mod tests {
                 .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
         );
         assert_ne!(token, access_token());
+    }
+    #[cfg(unix)]
+    #[tokio::test]
+    #[ignore = "subprocess-only early termination fixture"]
+    async fn early_termination_fixture() {
+        let shutdown = shutdown_signal();
+        // SAFETY: signals only this fixture process.
+        assert_eq!(unsafe { libc::raise(libc::SIGTERM) }, 0);
+        tokio::time::timeout(Duration::from_secs(5), shutdown)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn shutdown_signal_ends_on_a_termination_sent_before_it_is_awaited() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "remote_service::tests::early_termination_fixture",
+                "--ignored",
+            ])
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(output.status.success(), "{}\n{stdout}", output.status);
+        assert!(stdout.contains("1 passed"), "{stdout}");
     }
 }
