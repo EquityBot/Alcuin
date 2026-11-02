@@ -137,6 +137,19 @@ pub(crate) const EDITOR_SETTLE: Duration = Duration::from_millis(500);
 /// Fixture editors never re-render, so tests keep the settle step but not its length.
 #[cfg(test)]
 pub(crate) const EDITOR_SETTLE: Duration = Duration::from_millis(10);
+#[cfg(test)]
+thread_local! {
+    /// Restores a real settle for the one fixture editor that re-renders.
+    pub(crate) static TEST_EDITOR_SETTLE: std::cell::Cell<Option<Duration>> = const { std::cell::Cell::new(None) };
+}
+/// How long staging waits after inserting for the editor to re-render.
+fn editor_settle() -> Duration {
+    #[cfg(test)]
+    if let Some(settle) = TEST_EDITOR_SETTLE.get() {
+        return settle;
+    }
+    EDITOR_SETTLE
+}
 const SEAL: &str = "(cfg) => window.__oracleAttachmentPromptGuards?.[cfg.guardId]?.seal?.()";
 const PROMPT_CLEAN: &str = "(cfg) => { const guards=window.__oracleAttachmentPromptGuards; const guard=guards?.[cfg.guardId]; if (!guard) return {cleaned:false}; guard.cleanup(); delete guards[cfg.guardId]; return {cleaned:true}; }";
 const PROMPT_ROLLBACK: &str = "(cfg) => { /* alcuin-dom:prompt-rollback */ return window.__oracleAttachmentPromptGuards?.[cfg.guardId]?.rollback?.() ?? {restored:false}; }";
@@ -327,7 +340,7 @@ impl PreparedPrompt {
                 .await?;
             require_prepared(&inserted, false)?;
             tokio::select! {
-                () = tokio::time::sleep(EDITOR_SETTLE) => {}
+                () = tokio::time::sleep(editor_settle()) => {}
                 () = cancel.cancelled() => bail!("Prompt preparation was cancelled; nothing was sent"),
             }
             let edited = reservation
