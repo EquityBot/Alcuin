@@ -9,6 +9,7 @@ use crate::{
     cdp::Cdp,
     process::{Liveness, ProcessIdentity},
     sessions::SessionStore,
+    storage::DirectoryLock,
 };
 use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
@@ -113,7 +114,469 @@ async fn reconcile_with_disposal(
             }
         }
     }
+    // Backstop for failed workers that exited before closing their own tabs.
+    if let Err(error) = close_failed_targets(
+        store,
+        browser,
+        endpoint,
+        None,
+        Instant::now() + FAILED_SWEEP_BUDGET,
+    )
+    .await
+    {
+        eprintln!("Failed runs' tabs remain open: {error:#}");
+    }
     Ok(())
+}
+
+/// Recovery reads this when a failed run's original tab was closed.
+pub(crate) const FAILED_RUN_TARGET_CLOSED: &str = "failed-run-target-closed";
+const FAILED_SWEEP_BUDGET: Duration = Duration::from_secs(5);
+const FAILED_TARGET_BUDGET: Duration = Duration::from_secs(2);
+const FAILED_ENDPOINT_BUDGET: Duration = Duration::from_secs(2);
+const FAILED_TARGET_MINIMUM: Duration = Duration::from_millis(250);
+
+/// Refuses tab-based recovery once the run's original tab was closed after failure. The
+/// journal is checked too: the session receipt is written after the close and can be missing.
+pub(crate) fn require_target_open(store: &SessionStore, meta: &Value) -> Result<()> {
+    let id = meta["id"].as_str().unwrap_or("(unknown)");
+    let refusal = || {
+        anyhow::anyhow!(
+            "Session {id}'s original tab was closed after the run failed, so its Temporary Chat cannot be read again; run the consultation again"
+        )
+    };
+    if meta["browser"]["runtime"]["recoveryUnavailable"] == FAILED_RUN_TARGET_CLOSED {
+        return Err(refusal());
+    }
+    let creator = &meta["browser"]["runtime"]["ownedRecoveryTarget"]["creator"];
+    if creator.is_object()
+        && creator["sessionId"] == meta["id"]
+        && let Ok(record) = TargetJournal::open(store)?.read(&creator["allocationId"])
+        && record["creator"] == *creator
+        && record["disposition"]["decision"] == "retired"
+        && record["disposition"]["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.starts_with("failed-run-"))
+    {
+        return Err(refusal());
+    }
+    Ok(())
+}
+
+fn on_endpoint(target: &Value, endpoint: &AttachmentEndpoint) -> bool {
+    target["host"].as_str().is_some_and(|host| {
+        browser::normalise_host(host) == browser::normalise_host(&endpoint.host)
+    }) && target["port"] == endpoint.port
+        // A target ID is meaningful only within the exact browser instance that created it.
+        && target["browserWSEndpoint"].as_str() == Some(endpoint.browser_ws_endpoint.as_str())
+}
+
+/// The creator's run failed and no parent consultation can still need its tab. A parent
+/// that completed (for example through the Grok fallback) no longer needs it either.
+fn failed_owner(store: &SessionStore, record: &Value, consultation: Option<&str>) -> Result<bool> {
+    let Some(id) = record["creator"]["sessionId"].as_str() else {
+        return Ok(false);
+    };
+    let session = store.stored_for_update(id)?;
+    if !matches!(session["status"].as_str(), Some("error" | "cancelled")) {
+        return Ok(false);
+    }
+    let parent = session["browser"]["attempt"]["parentId"].as_str();
+    let child =
+        crate::browser_attempt::internal(&session) || !session["browser"]["attempt"].is_null();
+    if child {
+        let Some(parent) = parent else {
+            return Ok(false);
+        };
+        let parent = store.stored_for_update(parent)?;
+        if !matches!(
+            parent["status"].as_str(),
+            Some("error" | "cancelled" | "completed")
+        ) {
+            return Ok(false);
+        }
+    }
+    Ok(consultation.is_none_or(|scope| scope == id || child && parent == Some(scope)))
+}
+
+/// The consultation's own uncommitted records, found through each session's saved creator
+/// rather than a journal scan. A record its session no longer names is left to the backstop.
+fn consultation_records(
+    store: &SessionStore,
+    journal: &TargetJournal,
+    id: &str,
+) -> Result<Vec<Value>> {
+    let parent = store.stored_for_update(id)?;
+    let mut sessions = vec![id.to_owned()];
+    for link in parent["browser"]["consultation"]["attempts"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
+        if let Some(child) = link["childId"].as_str() {
+            sessions.push(child.to_owned());
+        }
+    }
+    let mut records = vec![];
+    for session in sessions {
+        let Ok(meta) = store.stored_for_update(&session) else {
+            continue;
+        };
+        let creator = &meta["browser"]["runtime"]["ownedRecoveryTarget"]["creator"];
+        if !creator.is_object() {
+            continue;
+        }
+        if let Ok(record) = journal.read(&creator["allocationId"])
+            && record["creator"] == *creator
+            && record["commit"].is_null()
+            && record["disposition"]["decision"] != "retired"
+        {
+            records.push(record);
+        }
+    }
+    Ok(records)
+}
+
+fn failed_candidates(
+    store: &SessionStore,
+    journal: &TargetJournal,
+    endpoint: Option<&AttachmentEndpoint>,
+    consultation: Option<&str>,
+    deadline: Instant,
+) -> Result<Vec<Value>> {
+    let records = match consultation {
+        Some(id) => consultation_records(store, journal, id)?,
+        None => journal.uncommitted_records(deadline)?,
+    };
+    let mut candidates = records
+        .into_iter()
+        .filter(|record| {
+            let target = &record["creator"]["target"];
+            Instant::now() < deadline
+                && target["browserWSEndpoint"].is_string()
+                && endpoint.is_none_or(|endpoint| on_endpoint(target, endpoint))
+                && (crate::browser_disposition::creator_dead(record)
+                    || crate::browser_disposition::creator_is_current(record))
+                && failed_owner(store, record, consultation).is_ok_and(|failed| failed)
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by(|a, b| {
+        a["creator"]["allocationId"]
+            .as_str()
+            .cmp(&b["creator"]["allocationId"].as_str())
+    });
+    Ok(candidates)
+}
+
+/// Closes tabs that failed runs created on this exact browser, within `deadline`. Only a
+/// target named by an uncommitted journal record is closed, and only when its run and any
+/// parent consultation are terminal and its controller is dead or this process. The
+/// backstop resumes after the record it tried last, so a slow record cannot starve others.
+pub(crate) async fn close_failed_targets(
+    store: &SessionStore,
+    browser: &Cdp,
+    endpoint: &AttachmentEndpoint,
+    consultation: Option<&str>,
+    deadline: Instant,
+) -> Result<Vec<Value>> {
+    let journal = TargetJournal::open(store)?;
+    let mut candidates =
+        failed_candidates(store, &journal, Some(endpoint), consultation, deadline)?;
+    // The backstop sweeps one browser at a time, so each browser keeps its own progress.
+    let cursor_key = sha256(
+        format!(
+            "{}
+{}
+{}",
+            browser::normalise_host(&endpoint.host),
+            endpoint.port,
+            endpoint.browser_ws_endpoint
+        )
+        .as_bytes(),
+    );
+    if consultation.is_none() {
+        let cursor = journal.failed_sweep_cursor(&cursor_key);
+        let start = candidates
+            .iter()
+            .position(|record| {
+                record["creator"]["allocationId"]
+                    .as_str()
+                    .is_some_and(|id| id > cursor.as_str())
+            })
+            .unwrap_or(0);
+        candidates.rotate_left(start);
+    }
+    let mut closed = vec![];
+    for record in candidates {
+        // A record started without time to finish would only move the cursor past it.
+        if deadline.saturating_duration_since(Instant::now()) < FAILED_TARGET_MINIMUM {
+            break;
+        }
+        if consultation.is_none()
+            && let Some(id) = record["creator"]["allocationId"].as_str()
+            && let Err(error) = journal.set_failed_sweep_cursor(&cursor_key, id, deadline)
+        {
+            eprintln!("Failed-run sweep cursor was not saved: {error:#}");
+        }
+        let budget = deadline.min(Instant::now() + FAILED_TARGET_BUDGET);
+        match close_failed(store, &journal, browser, &record, budget).await {
+            Ok(Some(disposed)) => closed.push(disposed),
+            Ok(None) => {}
+            Err(error) => eprintln!(
+                "Failed run's tab {} remains open: {error:#}",
+                record["creator"]["target"]["targetId"]
+            ),
+        }
+    }
+    Ok(closed)
+}
+
+fn record_endpoint(record: &Value) -> Result<AttachmentEndpoint> {
+    let target = &record["creator"]["target"];
+    let endpoint = AttachmentEndpoint {
+        host: target["host"]
+            .as_str()
+            .context("Creator endpoint is missing")?
+            .into(),
+        port: u16::try_from(target["port"].as_u64().context("Creator port is missing")?)?,
+        browser_ws_endpoint: target["browserWSEndpoint"]
+            .as_str()
+            .context("Creator browser socket is missing")?
+            .into(),
+    };
+    endpoint.validate()?;
+    Ok(endpoint)
+}
+
+/// Called once a failed consultation has recorded its terminal status in this process.
+/// Each browser is handled on its own: one unreachable browser does not keep another's
+/// tabs open. Logs and never changes the run's own result.
+pub(crate) async fn close_failed_consultation(store: &SessionStore, id: &str) {
+    let deadline = Instant::now() + FAILED_SWEEP_BUDGET;
+    let candidates = TargetJournal::open(store)
+        .and_then(|journal| failed_candidates(store, &journal, None, Some(id), deadline));
+    let candidates = match candidates {
+        Ok(candidates) => candidates,
+        Err(error) => {
+            eprintln!("Failed run's tabs remain open: {error:#}");
+            return;
+        }
+    };
+    let mut endpoints = vec![];
+    for record in &candidates {
+        match record_endpoint(record) {
+            Ok(endpoint) if !endpoints.contains(&endpoint) => endpoints.push(endpoint),
+            Ok(_) => {}
+            Err(error) => eprintln!(
+                "Failed run's tab {} remains open: {error:#}",
+                record["creator"]["target"]["targetId"]
+            ),
+        }
+    }
+    for endpoint in endpoints {
+        // Each browser gets its own slice, so one that never completes its handshake
+        // cannot use up the time of the others.
+        let slice = deadline.min(Instant::now() + FAILED_ENDPOINT_BUDGET);
+        let result = async {
+            let browser = endpoint
+                .connect(remaining(slice)?, &CancellationToken::new())
+                .await?;
+            let closed = close_failed_targets(store, &browser, &endpoint, Some(id), slice).await;
+            // The close wait stays inside this browser's slice; a spent slice only disconnects.
+            match remaining(slice) {
+                Ok(wait) => {
+                    if let Err(error) = browser
+                        .disconnect_and_wait(wait.min(Duration::from_secs(1)))
+                        .await
+                    {
+                        eprintln!("Failed-run tab cleanup connection remains open: {error:#}");
+                    }
+                }
+                Err(_) => browser.disconnect(),
+            }
+            closed
+        }
+        .await;
+        if let Err(error) = result {
+            eprintln!(
+                "Failed run's tabs on {} remain open: {error:#}",
+                endpoint.browser_ws_endpoint
+            );
+        }
+    }
+}
+
+async fn close_failed(
+    store: &SessionStore,
+    journal: &TargetJournal,
+    browser: &Cdp,
+    record: &Value,
+    deadline: Instant,
+) -> Result<Option<Value>> {
+    let creator = &record["creator"];
+    let id = creator["sessionId"]
+        .as_str()
+        .context("Failed run's tab has no session")?;
+    let parent = store.stored_for_update(id)?["browser"]["attempt"]["parentId"]
+        .as_str()
+        .map(str::to_owned);
+    // Recovery holds these locks (parent first) while it reads a tab; never close under it.
+    let wait = deadline.min(Instant::now() + Duration::from_millis(250));
+    let parent_lock = parent
+        .as_deref()
+        .map(|parent| {
+            DirectoryLock::acquire_until(
+                &store
+                    .directory(parent)?
+                    .join("native-browser-recovery.lock"),
+                wait,
+            )
+        })
+        .transpose()
+        .context("Failed run's consultation is being recovered")?;
+    let lock = DirectoryLock::acquire_until(
+        &store.directory(id)?.join("native-browser-recovery.lock"),
+        wait,
+    )
+    .context("Failed run is being recovered")?;
+    let closed = async {
+        ensure!(
+            failed_owner(store, record, None)?,
+            "Failed run's session changed; retaining its tab"
+        );
+        let current = crate::browser_disposition::creator_is_current(record);
+        ensure!(
+            current || crate::browser_disposition::creator_dead(record),
+            "Failed run's controller is still live; retaining its tab"
+        );
+        let disposed = journal
+            .retire_uncommitted(creator, deadline, |record| async move {
+                close_exact(store, browser, &record, deadline, current).await
+            })
+            .await?;
+        let Some(disposed) = disposed else {
+            return Ok(None);
+        };
+        // The tab is gone; these receipts only record that. Their failures are logged.
+        let receipts = Instant::now() + Duration::from_secs(1);
+        if let Err(error) = store.update_until(id, receipts, |session| {
+            ensure!(
+                matches!(session["status"].as_str(), Some("error" | "cancelled")),
+                "Failed run's session changed before its closed-tab receipt"
+            );
+            Ok(Some(json!({"browser":crate::sessions::merge_object(&session["browser"],&json!({"runtime":crate::sessions::merge_object(&session["browser"]["runtime"],&json!({
+                "recoveryUnavailable":FAILED_RUN_TARGET_CLOSED,"targetDispositionPending":false,"targetRetiredAt":crate::sessions::timestamp()}))}))})))
+        }) {
+            eprintln!("Failed run's tab is closed but its session receipt was not recorded: {error:#}");
+        }
+        if let Some(path) = creator["lease"]["profileDir"].as_str()
+            && let Err(error) = ProfileRegistry::open_existing(Path::new(path)).and_then(|profile| {
+                profile.release_disposed(journal, creator, &disposed, receipts, current)
+            })
+        {
+            eprintln!("Failed run's tab is closed but its browser slot remains held: {error:#}");
+        }
+        Ok(Some(disposed))
+    }
+    .await;
+    for lock in [Some(lock), parent_lock].into_iter().flatten() {
+        if let Err(error) = lock.release() {
+            eprintln!("Failed-run recovery lock release remains pending: {error:#}");
+        }
+    }
+    closed
+}
+
+fn failed_claim_expression() -> String {
+    format!(
+        "(cfg)=>{{ /* alcuin-dom:failed-run-claim */ {} try {{if(window!==window.top)return 'foreign';const claim=readOracleTargetClaim();if(!claim)return 'unclaimed';return claim.id===cfg.claimId?'owned':'foreign';}}catch{{return 'foreign';}}}}",
+        include_str!("../browser-scripts/ownership-prelude.js")
+    )
+}
+/// Closes exactly the record's target, preserving the browser's final page.
+async fn close_exact(
+    store: &SessionStore,
+    browser: &Cdp,
+    record: &Value,
+    deadline: Instant,
+    allow_current_owner: bool,
+) -> Result<String> {
+    let operation_deadline = deadline
+        .checked_sub(Duration::from_millis(100))
+        .context("Target disposition deadline reached")?;
+    let creator = &record["creator"];
+    let id = creator["target"]["targetId"]
+        .as_str()
+        .context("Creator target is missing")?;
+    let rows = targets(browser, operation_deadline).await?;
+    require_controllers(store, creator, operation_deadline, allow_current_owner)?;
+    let Some(row) = rows.iter().find(|row| row["targetId"] == id) else {
+        return Ok("failed-run-already-absent".into());
+    };
+    // Live ownership witness: the exact page still carries the run's own claim. A tab
+    // that never received one (the run failed before ChatGPT loaded) is kept, because
+    // nothing then shows that the user or another tool has not taken it over.
+    ensure!(
+        row["type"] == "page",
+        "Failed run's target is not a page; retaining it"
+    );
+    let page = browser
+        .attach_target(
+            id,
+            remaining(operation_deadline)?,
+            &CancellationToken::new(),
+        )
+        .await?;
+    let claim = page
+        .evaluate_with_arguments(
+            &failed_claim_expression(),
+            &json!([{"claimId":creator["target"]["claimId"]}]),
+            remaining(operation_deadline)?,
+            &CancellationToken::new(),
+        )
+        .await?;
+    ensure!(
+        claim == "owned",
+        "Failed run's tab does not carry its original claim ({claim}); retaining it"
+    );
+    if !rows
+        .iter()
+        .any(|row| row["type"] == "page" && row["targetId"] != id)
+    {
+        let replacement = browser
+            .call(
+                "Target.createTarget",
+                json!({"url":"about:blank"}),
+                remaining(operation_deadline)?,
+                &CancellationToken::new(),
+            )
+            .await?;
+        ensure!(
+            replacement["targetId"]
+                .as_str()
+                .is_some_and(crate::browser_target::valid_id)
+                && replacement["targetId"] != id,
+            "Unable to preserve the browser's final page"
+        );
+    }
+    require_controllers(store, creator, operation_deadline, allow_current_owner)?;
+    let _ = browser
+        .close_owned_target(
+            id,
+            remaining(operation_deadline)?,
+            &CancellationToken::new(),
+        )
+        .await;
+    loop {
+        if targets(browser, operation_deadline)
+            .await?
+            .iter()
+            .all(|row| row["targetId"] != id)
+        {
+            return Ok("failed-run-closed".into());
+        }
+        tokio::time::sleep(Duration::from_millis(25).min(remaining(operation_deadline)?)).await;
+    }
 }
 fn settle_unused_authentication(
     store: &SessionStore,
@@ -498,7 +961,18 @@ pub(crate) fn require_target_controllers(
             }
         }
     }
-    for session in store.list(true)? {
+    // Retirement repeats this check up to 3 times within a 2 to 5 s deadline, and parsing
+    // all 4,096 sessions of a live store took about 1 s per check, so read only sessions
+    // whose metadata names the target. shortcut: still reads every metadata file; a
+    // per-target session index would remove the scan.
+    let sessions = match target["targetId"]
+        .as_str()
+        .filter(|id| crate::browser_target::valid_id(id))
+    {
+        Some(id) => store.list_mentioning(id)?,
+        None => store.list(true)?,
+    };
+    for session in sessions {
         remaining(deadline)?;
         if session["id"].as_str() == current_session {
             continue;
@@ -683,8 +1157,16 @@ async fn observe(
         .await?
         .report
         .context("Committed research report is unavailable")?;
+        // Report identity must match; drifted report text only warns in authorise().
+        let identity = |report: &Value| {
+            let mut report = report.clone();
+            if let Some(fields) = report.as_object_mut() {
+                fields.remove("textSha256");
+            }
+            report
+        };
         ensure!(
-            observed["report"] == commit["report"]
+            identity(&observed["report"]) == identity(&commit["report"])
                 && observed["stopExists"] == false
                 && observed["strongThinkingActive"] == false
                 && observed["completionVisible"] == true,
@@ -786,6 +1268,17 @@ fn copy_expression() -> String {
         include_str!("../browser-scripts/ownership-prelude.js")
     )
 }
+/// A live observation without its assistant content: every user, assistant, ownership
+/// and completion field stays.
+fn live_identity(observed: &Value) -> Value {
+    let mut identity = observed.clone();
+    if let Some(fields) = identity.as_object_mut() {
+        for key in ["text", "html", "images", "files", "withheld", "unloaded"] {
+            fields.remove(key);
+        }
+    }
+    identity
+}
 async fn authorise(
     store: &SessionStore,
     journal: &TargetJournal,
@@ -814,8 +1307,10 @@ async fn authorise(
             "meta":{"messageId":observed["lastAssistantMessageId"],"turnId":observed["lastAssistantTurnId"]}
         }]), remaining(deadline)?, &CancellationToken::new()).await?;
         let after = observe(store, record, page, marker, deadline).await?;
+        // Identity, ownership and completion must hold across the capture; re-rendered
+        // answer content may drift, as the final content check below tolerates.
         ensure!(
-            after == observed,
+            live_identity(&after) == live_identity(&observed),
             "Source or assistant changed during retirement Markdown capture"
         );
         ensure!(
@@ -838,10 +1333,15 @@ async fn authorise(
     } else {
         &commit["assistantContent"]["sha256"]
     };
-    ensure!(
-        sha256(content.as_bytes()) == *expected,
-        "Committed assistant content changed"
-    );
+    // The saved answer is already verified on disk and the tab's identity matched above.
+    // ChatGPT can re-render a finished turn, so drifted live text no longer keeps the tab.
+    let live = sha256(content.as_bytes());
+    if live != *expected {
+        eprintln!(
+            "Live tab text differs from the saved answer for target allocation {}; closing the tab anyway (saved {expected}, live {live})",
+            record["creator"]["allocationId"]
+        );
+    }
     require_controllers(store, &record["creator"], deadline, allow_current_owner)?;
     journal.verify(record)
 }
@@ -1191,6 +1691,9 @@ mod tests {
     enum Fault {
         None,
         ChangedAfterMarker,
+        AssistantChangedAfterMarker,
+        TextChangesDuringCopy,
+        AssistantChangesDuringCopy,
         UncertainClose,
         AssistantTurnOnly,
     }
@@ -1467,6 +1970,7 @@ mod tests {
             let mut marked = false;
             let mut closed = false;
             let mut replacement = false;
+            let mut copies = 0;
             while let Some(Ok(frame)) = peer.next().await {
                 if !frame.is_text() {
                     break;
@@ -1509,14 +2013,15 @@ mod tests {
                             marked = false;
                             json!(true)
                         } else if source.contains("alcuin-dom:disposition-copy") {
+                            copies += 1;
                             json!({"success":true,"markdown":if marked && matches!(fault, Fault::ChangedAfterMarker) {"**PUBLIC changed**"} else {"**PUBLIC native answer**"}})
                         } else {
                             assert!(source.contains("alcuin-dom:result"));
                             json!({"conversationId":"PUBLIC-conversation","origin":"https://chatgpt.com",
                                 "lastUserMessageId":"PUBLIC-user","lastUserText":"PUBLIC source",
-                                "lastAssistantMessageId":if matches!(fault, Fault::AssistantTurnOnly) {Value::Null} else {json!("PUBLIC-assistant")},"lastAssistantTurnId":"PUBLIC-turn",
+                                "lastAssistantMessageId":if matches!(fault, Fault::AssistantTurnOnly) {Value::Null} else if marked && matches!(fault, Fault::AssistantChangedAfterMarker) || copies > 0 && matches!(fault, Fault::AssistantChangesDuringCopy) {json!("PUBLIC-replaced")} else {json!("PUBLIC-assistant")},"lastAssistantTurnId":"PUBLIC-turn",
                                 "assistantFollowsLatestUser":true,"stopExists":false,"strongThinkingActive":false,"completionVisible":true,
-                                "text":if marked && matches!(fault, Fault::ChangedAfterMarker) {"PUBLIC changed"} else {"PUBLIC native answer"}})
+                                "text":if marked && matches!(fault, Fault::ChangedAfterMarker) {"PUBLIC changed".to_owned()} else if matches!(fault, Fault::TextChangesDuringCopy) {format!("PUBLIC native answer {copies}")} else {"PUBLIC native answer".to_owned()}})
                         };
                         json!({"result":{"value":value}})
                     }
@@ -1579,7 +2084,7 @@ mod tests {
         );
     }
     #[tokio::test]
-    async fn original_owner_retirement_closes_once_and_preserves_changed_or_uncertain_content() {
+    async fn original_owner_retirement_closes_drifted_content_once_and_preserves_uncertain_close() {
         for fault in [
             Fault::None,
             Fault::ChangedAfterMarker,
@@ -1590,15 +2095,14 @@ mod tests {
                 .iter()
                 .filter(|request| request["method"] == "Target.closeTarget")
                 .count();
-            if matches!(fault, Fault::None) {
-                assert_eq!(record["disposition"]["decision"], "retired");
-                assert_eq!(record["disposition"]["absence"], "confirmed-absent");
-                assert_eq!(closes, 1);
-            } else {
+            if matches!(fault, Fault::UncertainClose) {
                 assert_eq!(record["disposition"]["decision"], "retained");
                 assert_eq!(record["disposition"]["absence"], "unknown");
-                assert_eq!(closes, usize::from(matches!(fault, Fault::UncertainClose)));
+            } else {
+                assert_eq!(record["disposition"]["decision"], "retired");
+                assert_eq!(record["disposition"]["absence"], "confirmed-absent");
             }
+            assert_eq!(closes, 1);
         }
     }
     #[tokio::test]
@@ -1617,8 +2121,45 @@ mod tests {
         }
     }
     #[tokio::test]
-    async fn changed_content_rolls_back_before_close_and_uncertain_close_keeps_its_marker() {
+    async fn committed_target_with_drifted_live_content_retires() {
         let (record, requests) = fixture(true, false, Fault::ChangedAfterMarker).await;
+        assert_eq!(record["disposition"]["decision"], "retired");
+        assert_eq!(record["disposition"]["absence"], "confirmed-absent");
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request["method"] == "Target.closeTarget")
+                .count(),
+            1
+        );
+        assert!(requests.iter().all(|request| {
+            !request["params"]["expression"]
+                .as_str()
+                .is_some_and(|source| source.contains("alcuin-dom:retirement-rollback"))
+        }));
+    }
+    #[tokio::test]
+    async fn text_drift_during_markdown_capture_closes_once_but_assistant_change_does_not() {
+        let (record, requests) = fixture(true, false, Fault::TextChangesDuringCopy).await;
+        assert_eq!(record["disposition"]["decision"], "retired");
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request["method"] == "Target.closeTarget")
+                .count(),
+            1
+        );
+        let (record, requests) = fixture(true, false, Fault::AssistantChangesDuringCopy).await;
+        assert_eq!(record["disposition"]["decision"], "retained");
+        assert!(
+            requests
+                .iter()
+                .all(|request| request["method"] != "Target.closeTarget")
+        );
+    }
+    #[tokio::test]
+    async fn changed_identity_rolls_back_before_close_and_uncertain_close_keeps_its_marker() {
+        let (record, requests) = fixture(true, false, Fault::AssistantChangedAfterMarker).await;
         assert_eq!(record["disposition"]["decision"], "retained");
         assert!(
             requests
@@ -1644,5 +2185,868 @@ mod tests {
                 .as_str()
                 .is_some_and(|source| source.contains("alcuin-dom:retirement-rollback"))
         }));
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum Failed {
+        DeadController,
+        CurrentController,
+        ParentRunning,
+        LiveController,
+        OtherBrowser,
+        Committed,
+        ForeignClaim,
+        Unclaimed,
+        NotPage,
+        CrowdedStore,
+    }
+    fn live_foreign() -> (std::process::Child, ProcessIdentity) {
+        let child = if cfg!(windows) {
+            std::process::Command::new("ping")
+                .args(["-n", "30", "127.0.0.1"])
+                .stdout(std::process::Stdio::null())
+                .spawn()
+        } else {
+            std::process::Command::new("sleep").arg("30").spawn()
+        }
+        .unwrap();
+        let identity = ProcessIdentity::read(child.id()).unwrap().unwrap();
+        (child, identity)
+    }
+    /// Fake browser: `PUBLIC-failed-target` plus, unless `last_page`, a user page. The tab
+    /// reports `claim` to the failed-run ownership check.
+    async fn serve_failed<S>(
+        mut peer: WebSocketStream<S>,
+        last_page: bool,
+        target_type: &'static str,
+        claim: &'static str,
+        seen: Arc<Mutex<Vec<Value>>>,
+    ) where
+        S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+    {
+        let mut pages = vec![("PUBLIC-failed-target".to_owned(), target_type)];
+        if !last_page {
+            pages.push(("PUBLIC-user-page".into(), "page"));
+        }
+        while let Some(Ok(frame)) = peer.next().await {
+            if !frame.is_text() {
+                break;
+            }
+            let request: Value = serde_json::from_str(frame.to_text().unwrap()).unwrap();
+            seen.lock().unwrap().push(request.clone());
+            let result = match request["method"].as_str().unwrap() {
+                "Target.getTargets" => {
+                    json!({"targetInfos":pages.iter().map(|(id, kind)| json!({"targetId":id,"type":kind})).collect::<Vec<_>>()})
+                }
+                "Target.attachToTarget" => json!({"sessionId":"PUBLIC-attachment"}),
+                "Runtime.evaluate" => {
+                    let source = request["params"]["expression"].as_str().unwrap();
+                    assert!(source.contains("alcuin-dom:failed-run-claim"));
+                    json!({"result":{"value":claim}})
+                }
+                "Target.createTarget" => {
+                    pages.push(("PUBLIC-preserved-page".into(), "page"));
+                    json!({"targetId":"PUBLIC-preserved-page"})
+                }
+                "Target.closeTarget" => {
+                    pages.retain(|(id, _)| *id != request["params"]["targetId"]);
+                    json!({"success":true})
+                }
+                method => panic!("Unexpected failed-run cleanup command {method}"),
+            };
+            peer.send(Message::Text(
+                json!({"id":request["id"],"result":result})
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .unwrap();
+        }
+    }
+    fn session(store: &SessionStore, home: &Path, prompt: &str) -> String {
+        store
+            .create(
+                json!({"prompt":prompt,"model":"gpt-6-pro","mode":"browser"}),
+                home,
+                None,
+            )
+            .unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    }
+    /// A failed attempt of `parent` whose saved creator names `target` at `ws`. The record
+    /// moves to `allocation` so tests control journal order.
+    fn failed_attempt(
+        store: &SessionStore,
+        home: &Path,
+        parent: &str,
+        ws: &str,
+        allocation: &str,
+    ) -> (String, Value) {
+        failed_attempt_on(store, home, parent, ws, allocation, "PUBLIC-failed-target")
+    }
+    fn failed_attempt_on(
+        store: &SessionStore,
+        home: &Path,
+        parent: &str,
+        ws: &str,
+        allocation: &str,
+        target: &str,
+    ) -> (String, Value) {
+        let journal = TargetJournal::open(store).unwrap();
+        let child = session(store, home, "PUBLIC failed attempt");
+        let created = journal
+            .record_creation(
+                &TargetCreation::allocated(target),
+                &json!({"host":"127.0.0.1","port":9222,"browserWSEndpoint":ws,
+                    "targetId":target,"claimId":Uuid::new_v4().to_string()}),
+                &ProcessIdentity::current().unwrap(),
+                Some(&child),
+                None,
+            )
+            .unwrap();
+        let mut record = journal.read(&created["allocationId"]).unwrap();
+        let directory = store.home().join("target-dispositions");
+        std::fs::remove_file(directory.join(format!(
+            "{}.json",
+            created["allocationId"].as_str().unwrap()
+        )))
+        .unwrap();
+        record["creator"]["allocationId"] = json!(allocation);
+        record["disposition"]["allocationId"] = json!(allocation);
+        atomic_json(&directory.join(format!("{allocation}.json")), &record).unwrap();
+        let creator = record["creator"].clone();
+        store
+            .update(&child, |_| {
+                Ok(Some(json!({"status":"error","errorMessage":"PUBLIC attempt error",
+                    "lifecycle":{"workerPid":u32::MAX},
+                    "browser":{"attempt":{"parentId":parent},
+                        "runtime":{"chromeTargetId":target,"targetDispositionPending":true,
+                            "ownedRecoveryTarget":{"creator":creator},"PUBLIC-unrelated":"preserve"}}})))
+            })
+            .unwrap();
+        (child, creator)
+    }
+    struct FailedRun {
+        _home: tempfile::TempDir,
+        store: SessionStore,
+        record: Value,
+        session: Value,
+        requests: Vec<Value>,
+    }
+    /// A failed provider attempt whose tab is `PUBLIC-failed-target` on a fake browser.
+    async fn failed_fixture(case: Failed, last_page: bool) -> FailedRun {
+        let home = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(home.path().join(".oracle"));
+        let journal = TargetJournal::open(&store).unwrap();
+        let endpoint = AttachmentEndpoint {
+            host: "127.0.0.1".into(),
+            port: 9222,
+            browser_ws_endpoint: "ws://127.0.0.1:9222/devtools/browser/PUBLIC-browser".into(),
+        };
+        let parent = session(&store, home.path(), "PUBLIC failed consultation");
+        let ws = if case == Failed::OtherBrowser {
+            "ws://127.0.0.1:9222/devtools/browser/PUBLIC-earlier-browser"
+        } else {
+            endpoint.browser_ws_endpoint.as_str()
+        };
+        let (child, creator) = failed_attempt(
+            &store,
+            home.path(),
+            &parent,
+            ws,
+            &Uuid::new_v4().to_string(),
+        );
+        store
+            .update(&parent, |_| {
+                Ok(Some(
+                    json!({"status":if case == Failed::ParentRunning {"running"} else {"error"},
+                    "errorMessage":"PUBLIC parent error",
+                    "browser":{"consultation":{"attempts":[{"childId":child}]}}}),
+                ))
+            })
+            .unwrap();
+        let mut record = journal.read(&creator["allocationId"]).unwrap();
+        let (mut foreign_process, foreign) = live_foreign();
+        match case {
+            Failed::CurrentController => {}
+            Failed::LiveController => {
+                record["creator"]["controllerPid"] = json!(foreign.pid);
+                record["creator"]["controllerStartedAtMs"] = json!(foreign.started_at_ms);
+                record["nativeOwnerIdentity"] = json!(foreign);
+            }
+            _ => {
+                record["creator"]["controllerPid"] = json!(u32::MAX);
+                record["nativeOwnerIdentity"]["pid"] = json!(u32::MAX);
+            }
+        }
+        if case == Failed::Committed {
+            record["commit"] = json!({"version":1,"kind":"native","PUBLIC":"committed"});
+        }
+        atomic_json(
+            &store.home().join("target-dispositions").join(format!(
+                "{}.json",
+                creator["allocationId"].as_str().unwrap()
+            )),
+            &record,
+        )
+        .unwrap();
+        let saved_creator = record["creator"].clone();
+        store
+            .update(&child, |current| {
+                Ok(Some(
+                    json!({"browser":crate::sessions::merge_object(&current["browser"],&json!({"runtime":crate::sessions::merge_object(&current["browser"]["runtime"],&json!({"ownedRecoveryTarget":{"creator":saved_creator}}))}))}),
+                ))
+            })
+            .unwrap();
+        let (client, server) = tokio::io::duplex(262144);
+        let cdp = Cdp::from_socket(
+            WebSocketStream::from_raw_socket(client, Role::Client, None).await,
+            Duration::from_secs(1),
+        );
+        let peer = WebSocketStream::from_raw_socket(server, Role::Server, None).await;
+        let requests = Arc::new(Mutex::new(vec![]));
+        let claim = match case {
+            Failed::ForeignClaim => "foreign",
+            Failed::Unclaimed => "unclaimed",
+            _ => "owned",
+        };
+        let target_type = if case == Failed::NotPage {
+            "service_worker"
+        } else {
+            "page"
+        };
+        let worker = tokio::spawn(serve_failed(
+            peer,
+            last_page,
+            target_type,
+            claim,
+            requests.clone(),
+        ));
+        if case == Failed::CrowdedStore {
+            // Unrelated sessions large enough that parsing them all on each controller
+            // check outlasts the per-target budget (as 4,096 live sessions did).
+            let filler = (0..10_000)
+                .map(|index| json!({"PUBLIC":index}))
+                .collect::<Vec<_>>();
+            for index in 0..200 {
+                let id = format!("public-unrelated-{index}");
+                let directory = store.root().join(&id);
+                std::fs::create_dir_all(&directory).unwrap();
+                atomic_json(
+                    &directory.join("meta.json"),
+                    &json!({"id":id,"status":"completed","createdAt":"PUBLIC earlier","filler":filler}),
+                )
+                .unwrap();
+            }
+        }
+        if case == Failed::CurrentController {
+            // The failing worker's own cleanup, scoped to its consultation.
+            close_failed_targets(
+                &store,
+                &cdp,
+                &endpoint,
+                Some(&parent),
+                Instant::now() + Duration::from_secs(5),
+            )
+            .await
+            .unwrap();
+        } else {
+            reconcile(&store, &cdp, &endpoint).await.unwrap();
+        }
+        let record = journal.read(&creator["allocationId"]).unwrap();
+        let session = store.stored_for_update(&child).unwrap();
+        cdp.disconnect_and_wait(Duration::from_secs(1))
+            .await
+            .unwrap();
+        worker.await.unwrap();
+        let _ = foreign_process.kill();
+        let _ = foreign_process.wait();
+        let requests = requests.lock().unwrap().clone();
+        FailedRun {
+            _home: home,
+            store,
+            record,
+            session,
+            requests,
+        }
+    }
+    fn closes(requests: &[Value]) -> Vec<&Value> {
+        requests
+            .iter()
+            .filter(|request| request["method"] == "Target.closeTarget")
+            .map(|request| &request["params"]["targetId"])
+            .collect()
+    }
+    #[tokio::test]
+    async fn failed_run_target_closes_and_records_the_failure_closure() {
+        for (case, last_page) in [
+            (Failed::DeadController, true),
+            (Failed::CurrentController, false),
+            (Failed::CrowdedStore, false),
+        ] {
+            let run = failed_fixture(case, last_page).await;
+            let (record, session, requests) = (&run.record, &run.session, &run.requests);
+            assert_eq!(record["disposition"]["decision"], "retired", "{case:?}");
+            assert_eq!(record["disposition"]["absence"], "confirmed-absent");
+            assert_eq!(record["disposition"]["reason"], "failed-run-closed");
+            assert_eq!(closes(requests), [&json!("PUBLIC-failed-target")]);
+            assert_eq!(
+                requests
+                    .iter()
+                    .filter(|request| request["method"] == "Target.createTarget")
+                    .count(),
+                usize::from(last_page)
+            );
+            assert_eq!(session["status"], "error");
+            assert_eq!(session["errorMessage"], "PUBLIC attempt error");
+            let runtime = &session["browser"]["runtime"];
+            assert_eq!(runtime["recoveryUnavailable"], FAILED_RUN_TARGET_CLOSED);
+            assert_eq!(runtime["targetDispositionPending"], false);
+            assert_eq!(runtime["PUBLIC-unrelated"], "preserve");
+            let refused = require_target_open(&run.store, session)
+                .unwrap_err()
+                .to_string();
+            assert!(refused.contains("closed after the run failed"), "{refused}");
+        }
+    }
+    #[tokio::test]
+    async fn failed_run_target_is_kept_while_its_owner_or_browser_differs_or_it_committed() {
+        for case in [
+            Failed::ParentRunning,
+            Failed::LiveController,
+            Failed::OtherBrowser,
+            Failed::Committed,
+            Failed::ForeignClaim,
+            Failed::Unclaimed,
+            Failed::NotPage,
+        ] {
+            let run = failed_fixture(case, false).await;
+            assert_eq!(
+                run.record["disposition"]["decision"], "retained",
+                "{case:?}"
+            );
+            assert_eq!(
+                run.record["disposition"]["reason"], "commit-missing",
+                "{case:?}"
+            );
+            assert!(closes(&run.requests).is_empty(), "{case:?}");
+            assert!(
+                run.requests
+                    .iter()
+                    .all(|request| request["method"] != "Target.createTarget"),
+                "{case:?}"
+            );
+            assert!(run.session["browser"]["runtime"]["recoveryUnavailable"].is_null());
+            require_target_open(&run.store, &run.session).unwrap();
+        }
+    }
+    #[tokio::test]
+    async fn recovery_refuses_a_closed_failed_tab_without_its_session_receipt() {
+        let run = failed_fixture(Failed::DeadController, false).await;
+        let id = run.session["id"].as_str().unwrap();
+        // As if the receipt write had failed after the durable closure.
+        let session = run
+            .store
+            .update(id, |current| {
+                let mut browser = current["browser"].clone();
+                browser["runtime"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("recoveryUnavailable");
+                Ok(Some(json!({"browser":browser})))
+            })
+            .unwrap();
+        assert!(session["browser"]["runtime"]["recoveryUnavailable"].is_null());
+        let refused = require_target_open(&run.store, &session)
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("closed after the run failed"), "{refused}");
+    }
+    #[tokio::test]
+    async fn failed_consultation_cleanup_continues_past_an_unreachable_browser() {
+        let home = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(home.path().join(".oracle"));
+        let gone = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let gone_port = gone.local_addr().unwrap().port();
+        drop(gone);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let parent = session(&store, home.path(), "PUBLIC failed consultation");
+        // Journal order puts the unreachable browser first.
+        let (first, _) = failed_attempt(
+            &store,
+            home.path(),
+            &parent,
+            &format!("ws://127.0.0.1:{gone_port}/devtools/browser/PUBLIC-gone"),
+            "00000000-0000-4000-8000-000000000001",
+        );
+        let (second, creator) = failed_attempt(
+            &store,
+            home.path(),
+            &parent,
+            &format!("ws://127.0.0.1:{port}/devtools/browser/PUBLIC-live"),
+            "ffffffff-ffff-4fff-8fff-ffffffffffff",
+        );
+        // Both records name port 9222; the reachable one is rewritten to its real port.
+        let journal = TargetJournal::open(&store).unwrap();
+        for (id, port) in [
+            ("00000000-0000-4000-8000-000000000001", gone_port),
+            ("ffffffff-ffff-4fff-8fff-ffffffffffff", port),
+        ] {
+            let mut record = journal.read(&json!(id)).unwrap();
+            record["creator"]["target"]["port"] = json!(port);
+            record["disposition"]["target"]["port"] = json!(port);
+            atomic_json(
+                &store
+                    .home()
+                    .join("target-dispositions")
+                    .join(format!("{id}.json")),
+                &record,
+            )
+            .unwrap();
+            let child = record["creator"]["sessionId"].as_str().unwrap().to_owned();
+            let saved = record["creator"].clone();
+            store
+                .update(&child, |current| {
+                    Ok(Some(
+                        json!({"browser":crate::sessions::merge_object(&current["browser"],&json!({"runtime":crate::sessions::merge_object(&current["browser"]["runtime"],&json!({"ownedRecoveryTarget":{"creator":saved}}))}))}),
+                    ))
+                })
+                .unwrap();
+        }
+        store
+            .update(&parent, |_| {
+                Ok(Some(json!({"status":"error","errorMessage":"PUBLIC parent error",
+                    "browser":{"consultation":{"attempts":[{"childId":first},{"childId":second}]}}})))
+            })
+            .unwrap();
+        let requests = Arc::new(Mutex::new(vec![]));
+        let seen = requests.clone();
+        let mut server = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            let peer = tokio_tungstenite::accept_async(socket).await.unwrap();
+            serve_failed(peer, false, "page", "owned", seen).await;
+        });
+        close_failed_consultation(&store, &parent).await;
+        // Without per-browser handling nothing connects; fail instead of waiting forever.
+        if tokio::time::timeout(Duration::from_secs(2), &mut server)
+            .await
+            .is_err()
+        {
+            server.abort();
+        }
+        let record = journal.read(&creator["allocationId"]).unwrap();
+        assert_eq!(record["disposition"]["reason"], "failed-run-closed");
+        assert_eq!(
+            closes(&requests.lock().unwrap()),
+            [&json!("PUBLIC-failed-target")]
+        );
+        let unreachable = journal
+            .read(&json!("00000000-0000-4000-8000-000000000001"))
+            .unwrap();
+        assert_eq!(unreachable["disposition"]["reason"], "commit-missing");
+        assert_eq!(
+            store.stored_for_update(&parent).unwrap()["errorMessage"],
+            "PUBLIC parent error"
+        );
+    }
+    /// S6 measurement: `cargo test --lib failed_sweep_large_journal_timing -- --ignored --nocapture`.
+    #[tokio::test]
+    #[ignore = "timing measurement"]
+    async fn failed_sweep_large_journal_timing() {
+        let home = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(home.path().join(".oracle"));
+        let journal = TargetJournal::open(&store).unwrap();
+        let endpoint = AttachmentEndpoint {
+            host: "127.0.0.1".into(),
+            port: 9222,
+            browser_ws_endpoint: "ws://127.0.0.1:9222/devtools/browser/PUBLIC-browser".into(),
+        };
+        let parent = session(&store, home.path(), "PUBLIC failed consultation");
+        let (template_child, template) = failed_attempt(
+            &store,
+            home.path(),
+            &parent,
+            &endpoint.browser_ws_endpoint,
+            &Uuid::new_v4().to_string(),
+        );
+        let base = journal.read(&template["allocationId"]).unwrap();
+        let directory = store.home().join("target-dispositions");
+        let mut children = vec![json!({"childId":template_child})];
+        let mut targets = vec!["PUBLIC-failed-target".to_owned()];
+        let started = Instant::now();
+        for index in 0..1_200 {
+            let allocation = Uuid::new_v4().to_string();
+            let mut record = base.clone();
+            record["creator"]["allocationId"] = json!(allocation);
+            record["disposition"]["allocationId"] = json!(allocation);
+            record["creator"]["controllerPid"] = json!(u32::MAX);
+            record["nativeOwnerIdentity"]["pid"] = json!(u32::MAX);
+            let target = format!("PUBLIC-target-{index}");
+            record["creator"]["target"]["targetId"] = json!(target);
+            match index % 100 {
+                0..50 => record["disposition"]["decision"] = json!("retired"),
+                50..75 => record["commit"] = json!({"version":1,"kind":"native"}),
+                75..96 => record["creator"]["target"]["port"] = json!(9333),
+                96..99 => record["creator"]["sessionId"] = json!("public-pruned-session"),
+                _ => {
+                    let (child, creator) = failed_attempt(
+                        &store,
+                        home.path(),
+                        &parent,
+                        &endpoint.browser_ws_endpoint,
+                        &allocation,
+                    );
+                    record["creator"]["sessionId"] = json!(child);
+                    record["creator"]["claimId"] = creator["target"]["claimId"].clone();
+                    children.push(json!({"childId":child}));
+                    targets.push(target.clone());
+                    let saved = record["creator"].clone();
+                    store
+                        .update(&child, |current| {
+                            Ok(Some(json!({"browser":crate::sessions::merge_object(&current["browser"],&json!({"runtime":crate::sessions::merge_object(&current["browser"]["runtime"],&json!({"ownedRecoveryTarget":{"creator":saved}}))}))})))
+                        })
+                        .unwrap();
+                }
+            }
+            atomic_json(&directory.join(format!("{allocation}.json")), &record).unwrap();
+        }
+        eprintln!("built 1,200 records in {:?}", started.elapsed());
+        store
+            .update(&parent, |_| {
+                Ok(Some(
+                    json!({"status":"error","browser":{"consultation":{"attempts":children}}}),
+                ))
+            })
+            .unwrap();
+        let far = Instant::now() + Duration::from_secs(60);
+        let scan = Instant::now();
+        let backstop = failed_candidates(&store, &journal, Some(&endpoint), None, far).unwrap();
+        eprintln!(
+            "backstop candidate scan: {:?} for {} candidates",
+            scan.elapsed(),
+            backstop.len()
+        );
+        let scan = Instant::now();
+        let scoped = failed_candidates(&store, &journal, None, Some(&parent), far).unwrap();
+        eprintln!(
+            "consultation lookup: {:?} for {} candidates",
+            scan.elapsed(),
+            scoped.len()
+        );
+        let (client, server) = tokio::io::duplex(262144);
+        let cdp = Cdp::from_socket(
+            WebSocketStream::from_raw_socket(client, Role::Client, None).await,
+            Duration::from_secs(1),
+        );
+        let mut peer = WebSocketStream::from_raw_socket(server, Role::Server, None).await;
+        let worker = tokio::spawn(async move {
+            let mut pages = targets;
+            pages.push("PUBLIC-user-page".into());
+            while let Some(Ok(frame)) = peer.next().await {
+                if !frame.is_text() {
+                    break;
+                }
+                let request: Value = serde_json::from_str(frame.to_text().unwrap()).unwrap();
+                let result = match request["method"].as_str().unwrap() {
+                    "Target.getTargets" => {
+                        json!({"targetInfos":pages.iter().map(|id| json!({"targetId":id,"type":"page"})).collect::<Vec<_>>()})
+                    }
+                    "Target.attachToTarget" => json!({"sessionId":"PUBLIC-attachment"}),
+                    "Runtime.evaluate" => json!({"result":{"value":"owned"}}),
+                    "Target.closeTarget" => {
+                        pages.retain(|id| *id != request["params"]["targetId"]);
+                        json!({"success":true})
+                    }
+                    method => panic!("Unexpected command {method}"),
+                };
+                peer.send(Message::Text(
+                    json!({"id":request["id"],"result":result})
+                        .to_string()
+                        .into(),
+                ))
+                .await
+                .unwrap();
+            }
+        });
+        let sweep = Instant::now();
+        let closed = close_failed_targets(
+            &store,
+            &cdp,
+            &endpoint,
+            None,
+            Instant::now() + FAILED_SWEEP_BUDGET,
+        )
+        .await
+        .unwrap();
+        eprintln!(
+            "backstop sweep: {:?}, closed {}",
+            sweep.elapsed(),
+            closed.len()
+        );
+        let sweep = Instant::now();
+        let closed = close_failed_targets(
+            &store,
+            &cdp,
+            &endpoint,
+            Some(&parent),
+            Instant::now() + FAILED_SWEEP_BUDGET,
+        )
+        .await
+        .unwrap();
+        eprintln!(
+            "consultation cleanup after backstop: {:?}, closed {}",
+            sweep.elapsed(),
+            closed.len()
+        );
+        cdp.disconnect_and_wait(Duration::from_secs(1))
+            .await
+            .unwrap();
+        worker.await.unwrap();
+    }
+    /// Fake browser listing `pages`; it never answers attachment to a page named `*stall*`.
+    async fn serve_pages<S>(
+        mut peer: WebSocketStream<S>,
+        mut pages: Vec<String>,
+        seen: Arc<Mutex<Vec<Value>>>,
+    ) where
+        S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+    {
+        while let Some(Ok(frame)) = peer.next().await {
+            if !frame.is_text() {
+                break;
+            }
+            let request: Value = serde_json::from_str(frame.to_text().unwrap()).unwrap();
+            seen.lock().unwrap().push(request.clone());
+            let result = match request["method"].as_str().unwrap() {
+                "Target.getTargets" => {
+                    json!({"targetInfos":pages.iter().map(|id| json!({"targetId":id,"type":"page"})).collect::<Vec<_>>()})
+                }
+                "Target.attachToTarget" => {
+                    if request["params"]["targetId"]
+                        .as_str()
+                        .is_some_and(|id| id.contains("stall"))
+                    {
+                        continue;
+                    }
+                    json!({"sessionId":"PUBLIC-attachment"})
+                }
+                "Runtime.evaluate" => json!({"result":{"value":"owned"}}),
+                "Target.closeTarget" => {
+                    pages.retain(|id| *id != request["params"]["targetId"]);
+                    json!({"success":true})
+                }
+                method => panic!("Unexpected failed-run cleanup command {method}"),
+            };
+            peer.send(Message::Text(
+                json!({"id":request["id"],"result":result})
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .unwrap();
+        }
+    }
+    async fn fake_browser(
+        pages: Vec<String>,
+    ) -> (Cdp, tokio::task::JoinHandle<()>, Arc<Mutex<Vec<Value>>>) {
+        let (client, server) = tokio::io::duplex(262144);
+        let cdp = Cdp::from_socket(
+            WebSocketStream::from_raw_socket(client, Role::Client, None).await,
+            Duration::from_secs(1),
+        );
+        let peer = WebSocketStream::from_raw_socket(server, Role::Server, None).await;
+        let seen = Arc::new(Mutex::new(vec![]));
+        let worker = tokio::spawn(serve_pages(peer, pages, seen.clone()));
+        (cdp, worker, seen)
+    }
+    #[tokio::test]
+    async fn failed_consultation_cleanup_bounds_a_browser_that_never_completes_its_handshake() {
+        let home = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(home.path().join(".oracle"));
+        let silent = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let silent_port = silent.local_addr().unwrap().port();
+        // Accepts TCP and never answers the WebSocket upgrade.
+        let held = tokio::spawn(async move {
+            let mut sockets = vec![];
+            while let Ok((socket, _)) = silent.accept().await {
+                sockets.push(socket);
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let parent = session(&store, home.path(), "PUBLIC failed consultation");
+        let journal = TargetJournal::open(&store).unwrap();
+        let mut children = vec![];
+        let mut healthy = Value::Null;
+        for (allocation, port, ws) in [
+            (
+                "00000000-0000-4000-8000-000000000001",
+                silent_port,
+                format!("ws://127.0.0.1:{silent_port}/devtools/browser/PUBLIC-silent"),
+            ),
+            (
+                "ffffffff-ffff-4fff-8fff-ffffffffffff",
+                port,
+                format!("ws://127.0.0.1:{port}/devtools/browser/PUBLIC-live"),
+            ),
+        ] {
+            let (child, _) = failed_attempt(&store, home.path(), &parent, &ws, allocation);
+            let mut record = journal.read(&json!(allocation)).unwrap();
+            record["creator"]["target"]["port"] = json!(port);
+            record["disposition"]["target"]["port"] = json!(port);
+            atomic_json(
+                &store
+                    .home()
+                    .join("target-dispositions")
+                    .join(format!("{allocation}.json")),
+                &record,
+            )
+            .unwrap();
+            let saved = record["creator"].clone();
+            store
+                .update(&child, |current| {
+                    Ok(Some(
+                        json!({"browser":crate::sessions::merge_object(&current["browser"],&json!({"runtime":crate::sessions::merge_object(&current["browser"]["runtime"],&json!({"ownedRecoveryTarget":{"creator":saved}}))}))}),
+                    ))
+                })
+                .unwrap();
+            children.push(json!({"childId":child}));
+            healthy = record["creator"].clone();
+        }
+        store
+            .update(&parent, |_| {
+                Ok(Some(
+                    json!({"status":"error","errorMessage":"PUBLIC parent error",
+                    "browser":{"consultation":{"attempts":children}}}),
+                ))
+            })
+            .unwrap();
+        let requests = Arc::new(Mutex::new(vec![]));
+        let seen = requests.clone();
+        let mut server = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            let peer = tokio_tungstenite::accept_async(socket).await.unwrap();
+            serve_pages(
+                peer,
+                vec!["PUBLIC-failed-target".into(), "PUBLIC-user-page".into()],
+                seen,
+            )
+            .await;
+        });
+        close_failed_consultation(&store, &parent).await;
+        if tokio::time::timeout(Duration::from_secs(2), &mut server)
+            .await
+            .is_err()
+        {
+            server.abort();
+        }
+        held.abort();
+        let record = journal.read(&healthy["allocationId"]).unwrap();
+        assert_eq!(record["disposition"]["reason"], "failed-run-closed");
+        assert_eq!(
+            closes(&requests.lock().unwrap()),
+            [&json!("PUBLIC-failed-target")]
+        );
+    }
+    #[tokio::test]
+    async fn backstop_sweep_progress_is_kept_per_browser() {
+        let home = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(home.path().join(".oracle"));
+        let journal = TargetJournal::open(&store).unwrap();
+        let browser = |name: &str| AttachmentEndpoint {
+            host: "127.0.0.1".into(),
+            port: 9222,
+            browser_ws_endpoint: format!("ws://127.0.0.1:9222/devtools/browser/PUBLIC-{name}"),
+        };
+        let (a, b) = (browser("a"), browser("b"));
+        let parent = session(&store, home.path(), "PUBLIC failed consultation");
+        let mut children = vec![];
+        for (endpoint, allocation, target) in [
+            (
+                &a,
+                "00000000-0000-4000-8000-000000000001",
+                "PUBLIC-a-stall-1",
+            ),
+            (
+                &a,
+                "00000000-0000-4000-8000-000000000002",
+                "PUBLIC-a-stall-2",
+            ),
+            (
+                &a,
+                "00000000-0000-4000-8000-000000000003",
+                "PUBLIC-a-closable",
+            ),
+            (&b, "ffffffff-ffff-4fff-8fff-ffffffffffff", "PUBLIC-b-stall"),
+        ] {
+            let (child, _) = failed_attempt_on(
+                &store,
+                home.path(),
+                &parent,
+                &endpoint.browser_ws_endpoint,
+                allocation,
+                target,
+            );
+            children.push(json!({"childId":child}));
+        }
+        store
+            .update(&parent, |_| {
+                Ok(Some(
+                    json!({"status":"error","browser":{"consultation":{"attempts":children}}}),
+                ))
+            })
+            .unwrap();
+        let (cdp_a, worker_a, seen_a) = fake_browser(vec![
+            "PUBLIC-a-stall-1".into(),
+            "PUBLIC-a-stall-2".into(),
+            "PUBLIC-a-closable".into(),
+            "PUBLIC-user-page".into(),
+        ])
+        .await;
+        let (cdp_b, worker_b, _) =
+            fake_browser(vec!["PUBLIC-b-stall".into(), "PUBLIC-user-page".into()]).await;
+        let closable = json!("00000000-0000-4000-8000-000000000003");
+        // Each pass has time for one stalled record; alternating browsers must not reset A.
+        for _ in 0..4 {
+            close_failed_targets(
+                &store,
+                &cdp_a,
+                &a,
+                None,
+                Instant::now() + Duration::from_millis(600),
+            )
+            .await
+            .unwrap();
+            if journal.read(&closable).unwrap()["disposition"]["decision"] == "retired" {
+                break;
+            }
+            close_failed_targets(
+                &store,
+                &cdp_b,
+                &b,
+                None,
+                Instant::now() + Duration::from_millis(600),
+            )
+            .await
+            .unwrap();
+        }
+        assert_eq!(
+            journal.read(&closable).unwrap()["disposition"]["reason"],
+            "failed-run-closed"
+        );
+        assert_eq!(
+            closes(&seen_a.lock().unwrap()),
+            [&json!("PUBLIC-a-closable")]
+        );
+        for cdp in [cdp_a, cdp_b] {
+            cdp.disconnect_and_wait(Duration::from_secs(1))
+                .await
+                .unwrap();
+        }
+        worker_a.await.unwrap();
+        worker_b.await.unwrap();
     }
 }

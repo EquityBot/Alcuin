@@ -141,6 +141,7 @@ impl InspectionTarget {
         cancel: &CancellationToken,
     ) -> Result<Self> {
         ensure!(!cancel.is_cancelled(), "Browser inspection cancelled");
+        crate::browser_retirement::require_target_open(store, meta)?;
         if let Some((endpoint, reference)) =
             crate::browser_attempt::pinned_target(meta, options.reference.as_deref())?
         {

@@ -110,6 +110,77 @@ fn digest(value: &Value) -> bool {
                 .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
     })
 }
+/// The record's exact creating controller is positively dead.
+pub(crate) fn creator_dead(record: &Value) -> bool {
+    let creator = &record["creator"];
+    if creator["controllerStartedAtMs"].is_null() {
+        return false;
+    }
+    if let Some(identity) = record.get("nativeOwnerIdentity") {
+        serde_json::from_value::<ProcessIdentity>(identity.clone()).is_ok_and(|identity| {
+            creator["controllerPid"] == identity.pid
+                && creator["controllerStartedAtMs"].as_f64() == Some(identity.started_at_ms)
+                && identity.liveness() == crate::process::Liveness::Dead
+        })
+    } else {
+        creator["controllerPid"]
+            .as_u64()
+            .and_then(|pid| u32::try_from(pid).ok())
+            .is_some_and(|pid| match ProcessIdentity::read(pid) {
+                Ok(None) => true,
+                Ok(Some(actual)) => creator["controllerStartedAtMs"]
+                    .as_f64()
+                    .is_some_and(|start| start != actual.started_at_ms),
+                Err(_) => false,
+            })
+    }
+}
+/// The record's exact creating controller is this process.
+pub(crate) fn creator_is_current(record: &Value) -> bool {
+    let creator = &record["creator"];
+    ProcessIdentity::current().is_ok_and(|current| {
+        creator["controllerPid"] == current.pid
+            && creator["controllerStartedAtMs"].as_f64() == Some(current.started_at_ms)
+            && record.get("nativeOwnerIdentity").is_none_or(|identity| {
+                serde_json::from_value::<ProcessIdentity>(identity.clone())
+                    .is_ok_and(|identity| identity == current)
+            })
+    })
+}
+/// Browsers whose failed-run sweep progress is kept; each row is under 150 bytes.
+const FAILED_SWEEP_CURSORS: usize = 16;
+/// A saved `{"after":name}` cursor, or empty when it is missing or invalid.
+fn read_cursor(path: &Path) -> String {
+    read_bounded_json(path)
+        .and_then(|saved| saved["after"].as_str().map(str::to_owned))
+        .unwrap_or_default()
+}
+/// A cursor file of at most 4 KiB, or `None` when it is missing or invalid.
+fn read_bounded_json(path: &Path) -> Option<Value> {
+    (|| -> Result<Value> {
+        let mut entry = NativeEntry::open(path, false)?;
+        ensure!(
+            entry.handle.metadata()?.len() <= 4096,
+            "Reconciliation cursor exceeds its bound"
+        );
+        let mut bytes = vec![];
+        (&mut entry.handle).take(4097).read_to_end(&mut bytes)?;
+        ensure!(
+            bytes.len() <= 4096,
+            "Reconciliation cursor exceeds its bound"
+        );
+        entry.require_matches(path)?;
+        Ok(serde_json::from_slice(&bytes)?)
+    })()
+    .ok()
+}
+fn record_file(name: &str) -> bool {
+    name.len() == 41
+        && name.to_ascii_lowercase().ends_with(".json")
+        && name.as_bytes()[..36]
+            .iter()
+            .all(|byte| byte.is_ascii_hexdigit() || *byte == b'-')
+}
 fn disposition(creator: &Value, decision: &str, reason: &str, absence: &str) -> Value {
     json!({"version":1,"allocationId":creator["allocationId"],"decision":decision,"absence":absence,"reason":reason,"checkedAt":timestamp(),"target":creator["target"]})
 }
@@ -514,23 +585,7 @@ impl TargetJournal {
     {
         self.directory.require_matches(&self.path)?;
         let cursor_path = self.path.join("reconcile-cursor.json");
-        let cursor = (|| -> Result<String> {
-            let mut entry = NativeEntry::open(&cursor_path, false)?;
-            ensure!(
-                entry.handle.metadata()?.len() <= 4096,
-                "Reconciliation cursor exceeds its bound"
-            );
-            let mut bytes = vec![];
-            (&mut entry.handle).take(4097).read_to_end(&mut bytes)?;
-            ensure!(
-                bytes.len() <= 4096,
-                "Reconciliation cursor exceeds its bound"
-            );
-            entry.require_matches(&cursor_path)?;
-            let saved: Value = serde_json::from_slice(&bytes)?;
-            Ok(saved["after"].as_str().unwrap_or("").to_owned())
-        })()
-        .unwrap_or_default();
+        let cursor = read_cursor(&cursor_path);
         let mut reached = cursor.is_empty();
         let mut last = String::new();
         let mut checked = 0;
@@ -541,13 +596,7 @@ impl TargetJournal {
             }
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().into_owned();
-            if !entry.file_type()?.is_file()
-                || name.len() != 41
-                || !name.to_ascii_lowercase().ends_with(".json")
-                || !name.as_bytes()[..36]
-                    .iter()
-                    .all(|byte| byte.is_ascii_hexdigit() || *byte == b'-')
-            {
+            if !entry.file_type()?.is_file() || !record_file(&name) {
                 continue;
             }
             if !reached {
@@ -580,25 +629,7 @@ impl TargetJournal {
             if creator["controllerStartedAtMs"].is_null() {
                 continue;
             }
-            let dead = if let Some(identity) = record.get("nativeOwnerIdentity") {
-                serde_json::from_value::<ProcessIdentity>(identity.clone()).is_ok_and(|identity| {
-                    creator["controllerPid"] == identity.pid
-                        && creator["controllerStartedAtMs"].as_f64() == Some(identity.started_at_ms)
-                        && identity.liveness() == crate::process::Liveness::Dead
-                })
-            } else {
-                creator["controllerPid"]
-                    .as_u64()
-                    .and_then(|pid| u32::try_from(pid).ok())
-                    .is_some_and(|pid| match ProcessIdentity::read(pid) {
-                        Ok(None) => true,
-                        Ok(Some(actual)) => creator["controllerStartedAtMs"]
-                            .as_f64()
-                            .is_some_and(|start| start != actual.started_at_ms),
-                        Err(_) => false,
-                    })
-            };
-            if !dead && !own_completed {
+            if !creator_dead(&record) && !own_completed {
                 continue;
             }
             let result = self
@@ -618,6 +649,125 @@ impl TargetJournal {
             let _ = atomic_json_until(&cursor_path, &json!({"after":last}), deadline);
         }
         Ok(results)
+    }
+    /// The allocation the failed-run backstop last tried on the browser `key` identifies.
+    pub(crate) fn failed_sweep_cursor(&self, key: &str) -> String {
+        read_bounded_json(&self.path.join("failed-sweep-cursor.json"))
+            .and_then(|saved| {
+                saved["cursors"].as_array().and_then(|rows| {
+                    rows.iter()
+                        .find(|row| row["key"] == key)
+                        .and_then(|row| row["after"].as_str().map(str::to_owned))
+                })
+            })
+            .unwrap_or_default()
+    }
+    /// Keeps one cursor per browser, most recent last, bounded to the newest few browsers.
+    pub(crate) fn set_failed_sweep_cursor(
+        &self,
+        key: &str,
+        id: &str,
+        deadline: Instant,
+    ) -> Result<()> {
+        self.write_failed_sweep_cursor(key, id, deadline, &|| {})
+    }
+    /// Sweeps of different browsers share the file: the read-modify-write holds its lock.
+    /// A busy lock skips this write rather than delay the sweep.
+    fn write_failed_sweep_cursor(
+        &self,
+        key: &str,
+        id: &str,
+        deadline: Instant,
+        after_read: &dyn Fn(),
+    ) -> Result<()> {
+        ensure!(
+            digest(&json!(key)) && uuid(&json!(id)),
+            "Invalid failed-run sweep cursor"
+        );
+        self.directory.require_matches(&self.path)?;
+        let lock = DirectoryLock::acquire_until(
+            &self.path.join("failed-sweep-cursor.lock"),
+            deadline.min(Instant::now() + Duration::from_millis(250)),
+        )
+        .context("Failed-run sweep cursor is busy")?;
+        let path = self.path.join("failed-sweep-cursor.json");
+        let mut rows = read_bounded_json(&path)
+            .and_then(|saved| saved["cursors"].as_array().cloned())
+            .unwrap_or_default();
+        after_read();
+        rows.retain(|row| row["key"] != key && digest(&row["key"]) && uuid(&row["after"]));
+        rows.push(json!({"key":key,"after":id}));
+        let excess = rows.len().saturating_sub(FAILED_SWEEP_CURSORS);
+        rows.drain(..excess);
+        let written = atomic_json_until(&path, &json!({"version":1,"cursors":rows}), deadline);
+        if let Err(error) = lock.release() {
+            eprintln!("Failed-run sweep cursor lock release remains pending: {error:#}");
+        }
+        written
+    }
+    /// Uncommitted, unretired records, read in directory order until the deadline.
+    /// Unreadable records are skipped; nothing is locked or written.
+    pub(crate) fn uncommitted_records(&self, deadline: Instant) -> Result<Vec<Value>> {
+        self.directory.require_matches(&self.path)?;
+        let mut records = vec![];
+        for entry in fs::read_dir(&self.path)? {
+            if Instant::now() >= deadline {
+                break;
+            }
+            let entry = entry?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !entry.file_type()?.is_file() || !record_file(&name) {
+                continue;
+            }
+            let Ok(record) = self.read(&json!(&name[..36])) else {
+                continue;
+            };
+            if record["commit"].is_null() && record["disposition"]["decision"] != "retired" {
+                records.push(record);
+            }
+        }
+        Ok(records)
+    }
+    /// Retires an uncommitted record after `close` proves its exact target absent, while
+    /// the record is locked. Returns `None` if the record was committed or retired first.
+    /// A failed close leaves the saved disposition unchanged.
+    pub(crate) async fn retire_uncommitted<F, Fut>(
+        &self,
+        creator: &Value,
+        deadline: Instant,
+        close: F,
+    ) -> Result<Option<Value>>
+    where
+        F: FnOnce(Value) -> Fut,
+        Fut: Future<Output = Result<String>>,
+    {
+        let (lock, mut record) = self.locked_record_until(creator, deadline)?;
+        if !record["commit"].is_null() || record["disposition"]["decision"] == "retired" {
+            lock.release()?;
+            return Ok(None);
+        }
+        let closed = async {
+            let operation_deadline = deadline
+                .checked_sub(Duration::from_millis(100))
+                .context("Target retirement has no persistence budget")?;
+            tokio::time::timeout(remaining(operation_deadline)?, close(record.clone()))
+                .await
+                .context("Target retirement operation deadline reached")?
+        }
+        .await;
+        let reason = match closed {
+            Ok(reason) => reason,
+            Err(error) => {
+                if let Err(release) = lock.release() {
+                    eprintln!("Target record lock release remains pending: {release:#}");
+                }
+                return Err(error);
+            }
+        };
+        record["disposition"] = disposition(creator, "retired", &reason, "confirmed-absent");
+        let saved = self.save_until(&record, deadline)?;
+        lock.release()?;
+        Ok(Some(saved["disposition"].clone()))
     }
     pub fn commit(&self, creator: &Value, commit: &Value) -> Result<Value> {
         let saved = self.update(creator, |mut record| {
@@ -1220,6 +1370,49 @@ mod tests {
         let creator = record["creator"].clone();
         atomic_json(&journal.file(&creator["allocationId"]).unwrap(), &record).unwrap();
         creator
+    }
+    #[test]
+    fn concurrent_failed_sweep_cursor_writes_keep_both_browsers() {
+        let home = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(home.path().join(".oracle"));
+        let journal = TargetJournal::open(&store).unwrap();
+        let (a, b) = (sha256(b"PUBLIC-browser-a"), sha256(b"PUBLIC-browser-b"));
+        let read = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let writer = {
+            let (store, read, a) = (store.clone(), read.clone(), a.clone());
+            std::thread::spawn(move || {
+                TargetJournal::open(&store)
+                    .unwrap()
+                    .write_failed_sweep_cursor(
+                        &a,
+                        "00000000-0000-4000-8000-000000000001",
+                        Instant::now() + Duration::from_secs(5),
+                        &|| {
+                            // The other writer starts now; hold the read state briefly.
+                            read.wait();
+                            std::thread::sleep(Duration::from_millis(100));
+                        },
+                    )
+                    .unwrap();
+            })
+        };
+        read.wait();
+        journal
+            .set_failed_sweep_cursor(
+                &b,
+                "ffffffff-ffff-4fff-8fff-ffffffffffff",
+                Instant::now() + Duration::from_secs(5),
+            )
+            .unwrap();
+        writer.join().unwrap();
+        assert_eq!(
+            journal.failed_sweep_cursor(&a),
+            "00000000-0000-4000-8000-000000000001"
+        );
+        assert_eq!(
+            journal.failed_sweep_cursor(&b),
+            "ffffffff-ffff-4fff-8fff-ffffffffffff"
+        );
     }
     #[tokio::test]
     async fn reconciliation_advances_its_cursor_and_limits_each_pass_to_four() {
