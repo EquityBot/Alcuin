@@ -82,6 +82,9 @@ async fn cases(page: &Cdp, file: &std::path::Path) -> Result<()> {
     unrendered_completion_cases(page)
         .await
         .context("Unrendered answer completion regression")?;
+    answerless_tracker_cases(page)
+        .await
+        .context("Answerless completion tracker regression")?;
     deferred_editor_render_case(page)
         .await
         .context("Deferred composer render regression")?;
@@ -1277,15 +1280,107 @@ async fn unrendered_completion_cases(page: &Cdp) -> Result<()> {
     Ok(())
 }
 
+/// The completion tracker flags a turn ChatGPT announces complete without an answer only when the
+/// announcement follows the submitted message and activity after it, and an answer that mounts
+/// later clears the flag.
+async fn answerless_tracker_cases(page: &Cdp) -> Result<()> {
+    let cancel = CancellationToken::new();
+    let install = include_str!("../browser-scripts/completion-install.js");
+    let step = async |script: &str| -> Result<Value> {
+        page.evaluate(&format!("(() => {{ {script} }})()"), SHORT, &cancel)
+            .await
+    };
+    let flag = "const t = window.__oracleCurrentTurnCompletionV1; return [t.completeWithoutAnswer, t.completedTurnIndex !== null];";
+    let bare = "const turn = document.createElement('div'); turn.setAttribute('data-turn-key', 'PUBLIC-new'); turn.innerHTML = '<div data-content-search-unit-key=\"PUBLIC:0:user\">PUBLIC prompt</div>'; document.querySelector('main').append(turn); return true;";
+    let activity = "document.querySelector('[data-turn-key=\"PUBLIC-new\"]').insertAdjacentHTML('beforeend', '<div data-markdown-text-style=\"assistant-message\" data-markdown-text-tone=\"tertiary\">PUBLIC thinking</div>'); return true;";
+    let user = format!("{}{}", bare.trim_end_matches("return true;"), activity);
+    let announce = |text: &str| {
+        format!("document.querySelector('[role=\"status\"]').textContent = '{text}'; return true;")
+    };
+    let earlier = r#"<main><div data-turn-key="PUBLIC-old"><div data-content-search-unit-key="PUBLIC:0:user">PUBLIC earlier</div><div data-content-search-unit-key="PUBLIC:1:assistant">PUBLIC earlier answer</div></div><span role="status" aria-live="polite">STATUS</span></main>"#;
+    // A fresh chat: the announcement comes after the submitted turn, with no answer unit.
+    mount(
+        page,
+        r#"<main><span role="status" aria-live="polite"></span></main>"#,
+        "/c/PUBLIC-answerless?temporary-chat=true",
+        "",
+    )
+    .await?;
+    page.evaluate_with_arguments(install, &json!([{}]), SHORT, &cancel)
+        .await?;
+    step(&user).await?;
+    step(&announce("Response complete")).await?;
+    anyhow::ensure!(
+        step(flag).await? == json!([true, false]),
+        "answerless turn not flagged"
+    );
+    step("document.querySelector('[data-turn-key=\"PUBLIC-new\"]').insertAdjacentHTML('beforeend', '<div data-content-search-unit-key=\"PUBLIC:2:assistant\">PUBLIC answer</div>'); return true;").await?;
+    anyhow::ensure!(
+        step(flag).await? == json!([false, true]),
+        "a late answer did not clear the flag"
+    );
+    // An earlier turn's announcement still showing at install is stale, even when React replaces
+    // its node with an identical one, until it is cleared after the submitted turn's activity.
+    let path = "/c/PUBLIC-answerless?temporary-chat=true";
+    mount(
+        page,
+        &earlier.replace("STATUS", "Response complete"),
+        path,
+        "",
+    )
+    .await?;
+    page.evaluate_with_arguments(install, &json!([{}]), SHORT, &cancel)
+        .await?;
+    step(&user).await?;
+    anyhow::ensure!(
+        step(flag).await? == json!([false, false]),
+        "a stale announcement was flagged"
+    );
+    step("const node = document.querySelector('[role=\"status\"]'); node.replaceWith(node.cloneNode(true)); return true;").await?;
+    anyhow::ensure!(
+        step(flag).await? == json!([false, false]),
+        "a re-rendered stale announcement was flagged"
+    );
+    step(&announce("")).await?;
+    step(&announce("Response complete")).await?;
+    anyhow::ensure!(
+        step(flag).await? == json!([true, false]),
+        "a fresh announcement after a stale one was not flagged"
+    );
+    // An earlier turn's late announcement, before the submitted message or before its activity,
+    // does not count once the activity mounts.
+    let late = announce("Response complete");
+    for (order, steps) in [
+        ("before the message", [late.as_str(), bare, activity]),
+        ("before its activity", [bare, late.as_str(), activity]),
+    ] {
+        mount(page, &earlier.replace("STATUS", ""), path, "").await?;
+        page.evaluate_with_arguments(install, &json!([{}]), SHORT, &cancel)
+            .await?;
+        for script in steps {
+            step(script).await?;
+        }
+        anyhow::ensure!(
+            step(flag).await? == json!([false, false]),
+            "a late earlier announcement {order} was flagged"
+        );
+    }
+    step("window.__oracleCurrentTurnCompletionV1.observer.disconnect(); delete window.__oracleCurrentTurnCompletionV1; return true;").await?;
+    Ok(())
+}
+
 async fn deferred_editor_render_case(page: &Cdp) -> Result<()> {
     // October 2026: straight after insertText, ChatGPT's editor shows a blank line as a bare <br>
-    // paragraph, which reads as an extra newline until it re-renders with a trailing break.
+    // paragraph, which reads as an extra newline until it re-renders with a trailing break. The
+    // fixture re-renders within the test build's shortened settle, so staging must wait for it.
     let cancel = CancellationToken::new();
     let html = ACTIVE.replace(
         "<form><textarea id='prompt-textarea' name='prompt-textarea'></textarea>",
         "<form data-chatgpt-composer><div contenteditable='true' role='textbox'></div>",
     );
-    mount(page, &html, "/", r#"()=>{sessionStorage.removeItem('oracle:target-claim');const editor=document.querySelector('[role="textbox"]');let timer;editor.addEventListener('input',()=>{if(!editor.textContent.trim())return;const render=br=>'PUBLIC brief.\n\nPUBLIC question.'.split('\n').map(line=>`<p>${line||br}</p>`).join('');editor.innerHTML=render('<br>');clearTimeout(timer);timer=setTimeout(()=>{editor.innerHTML=render('<br class="ProseMirror-trailingBreak">');},100);});}"#).await?;
+    let setup = r#"()=>{sessionStorage.removeItem('oracle:target-claim');const editor=document.querySelector('[role="textbox"]');let timer;editor.addEventListener('input',()=>{if(!editor.textContent.trim())return;const render=br=>'PUBLIC brief.\n\nPUBLIC question.'.split('\n').map(line=>`<p>${line||br}</p>`).join('');editor.innerHTML=render('<br>');clearTimeout(timer);timer=setTimeout(()=>{editor.innerHTML=render('<br class="ProseMirror-trailingBreak">');},RENDER_MS);});}"#
+        .replace("RENDER_MS", &(browser_dom::EDITOR_SETTLE.as_millis() / 2).to_string());
+    mount(page, &html, "/", &setup).await?;
     let mut reservation =
         RendererReservation::acquire(page.clone(), "PUBLIC-deferred".into(), SHORT, &cancel)
             .await?;

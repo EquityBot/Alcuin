@@ -35,6 +35,9 @@ enum Fault {
     ResponseLoadFailedBesideImage,
     ContentWithheld,
     RetryOffered,
+    AnswerlessComplete,
+    AnswerlessBriefly,
+    AnswerNeverCompletes,
     ProviderLateCommit,
     ProviderLateCommitPendingAnswer,
     ProviderLateCommitStalledBeforeAnswer,
@@ -1023,6 +1026,12 @@ impl Exchange {
                 Fault::RetryOffered if cfg["uiErrors"] == true => {
                     return json!({"uiError":"temporary_unavailable"});
                 }
+                Fault::AnswerlessComplete => {
+                    return json!({"pending":true,"stopExists":false,"strongThinkingActive":false,"answerless":true});
+                }
+                Fault::AnswerlessBriefly if self.result_reads <= 3 => {
+                    return json!({"pending":true,"stopExists":false,"strongThinkingActive":false,"answerless":true});
+                }
                 _ => {}
             }
             let recovering = self.provider_recovery_started();
@@ -1031,6 +1040,7 @@ impl Exchange {
                 Fault::ProviderLateCommitPendingAnswer
                     | Fault::ProviderLateCommitStalledBeforeAnswer
                     | Fault::ProviderLateCommitChangedOwner
+                    | Fault::AnswerNeverCompletes
             ) || matches!(self.fault, Fault::ProviderLateAnswerDeadline) && !recovering
             {
                 result["completionVisible"] = json!(false);
@@ -4232,6 +4242,51 @@ async fn answerless_turns_are_refused_with_the_reference_failures() {
         assert_eq!(f.closes.load(Ordering::SeqCst), 0, "{fault:?}");
         stop(f).await;
     }
+}
+#[tokio::test]
+async fn a_bounded_read_polling_slowly_keeps_the_typed_answer_deadline() {
+    let f = fixture(Fault::AnswerNeverCompletes, false).await;
+    let mut bounded = recovery_limits();
+    // The bounded read's answer budget ends 50 ms before its observation deadline. A poll that
+    // slept past it let the observation's timeout replace the typed failure the Grok switch needs.
+    bounded.poll = Duration::from_secs(1);
+    let error = run_within(&f, &bounded).await.unwrap_err();
+    assert!(
+        matches!(
+            error.downcast_ref::<crate::browser_provider::Failure>(),
+            Some(crate::browser_provider::Failure::AnswerDeadline)
+        ),
+        "{error:#}"
+    );
+    assert_eq!(
+        f.store.require(&f.id).unwrap()["browser"]["runtime"]["providerReadRecovery"]["state"],
+        "expired"
+    );
+    assert_eq!(f.sends.load(Ordering::SeqCst), 1);
+    assert!(captured(&f.store, &f.id).is_err());
+    stop(f).await;
+}
+#[tokio::test]
+async fn a_lasting_answerless_completion_fails_typed_and_a_brief_one_completes() {
+    let f = fixture(Fault::AnswerlessComplete, false).await;
+    let result = run(&f).await.unwrap_err();
+    assert!(
+        matches!(
+            result.downcast_ref::<crate::browser_provider::Failure>(),
+            Some(crate::browser_provider::Failure::AnswerMissing)
+        ),
+        "{result:#}"
+    );
+    let meta = f.store.require(&f.id).unwrap();
+    assert_ne!(meta["status"], "completed");
+    assert!(captured(&f.store, &f.id).is_err());
+    assert_eq!(f.sends.load(Ordering::SeqCst), 1);
+    stop(f).await;
+    let f = fixture(Fault::AnswerlessBriefly, false).await;
+    run(&f).await.unwrap();
+    assert_eq!(f.store.require(&f.id).unwrap()["status"], "completed");
+    assert_eq!(f.sends.load(Ordering::SeqCst), 1);
+    stop(f).await;
 }
 #[tokio::test]
 async fn parent_attempt_capture_keeps_its_own_tab_until_adoption() {

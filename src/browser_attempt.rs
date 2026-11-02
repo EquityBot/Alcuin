@@ -874,6 +874,7 @@ fn switch_failure(error: &anyhow::Error) -> Option<&'static str> {
         Failure::CommitDeadline => Some("commit-deadline"),
         Failure::AnswerDeadline => Some("answer-deadline"),
         Failure::ResponseLoadFailed => Some("response-load-failed"),
+        Failure::AnswerMissing => Some("answer-missing"),
         Failure::CommitAmbiguous(_) | Failure::ContentWithheld(_) | Failure::RetryOffered => None,
     }
 }
@@ -1570,6 +1571,14 @@ mod tests {
                 true,
             ),
             (
+                "answer-missing",
+                consent.clone(),
+                json!({}),
+                anyhow::Error::new(Failure::AnswerMissing),
+                none,
+                true,
+            ),
+            (
                 "personal-config",
                 json!({}),
                 json!({"fallbackProvider":"grok"}),
@@ -1762,6 +1771,7 @@ mod tests {
             let failure = match case {
                 "commit" => "commit-deadline",
                 "response-load" => "response-load-failed",
+                "answer-missing" => "answer-missing",
                 _ => "answer-deadline",
             };
             assert_eq!(state["switch"]["failure"], failure, "{case}");

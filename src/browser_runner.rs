@@ -4727,11 +4727,14 @@ async fn wait_original_answer(
         })
         .await;
     match observed {
-        // Reference createAssistantTimeoutError; the typed deadline stays the source.
+        // Reference createAssistantTimeoutError; the typed failure stays the source.
         Err(error)
             if matches!(
                 error.downcast_ref::<crate::browser_provider::Failure>(),
-                Some(crate::browser_provider::Failure::AnswerDeadline)
+                Some(
+                    crate::browser_provider::Failure::AnswerDeadline
+                        | crate::browser_provider::Failure::AnswerMissing
+                )
             ) && store.require(id)?["browser"]["config"]["researchMode"] != "deep" =>
         {
             match crate::browser_page::ui_warning(
@@ -4750,6 +4753,9 @@ async fn wait_original_answer(
         other => other,
     }
 }
+/// How many terminal stability windows a 'Response complete' announcement with no answer unit
+/// must last before the wait fails (2 minutes at the default 1.2 s).
+const ANSWERLESS_WINDOWS: u32 = 100;
 /// How many command budgets the answer wait rides out page reads that give no result (10 minutes
 /// at the default 60 s). ChatGPT keeps generating meanwhile, and giving up loses the answer.
 const PAGE_STALL_COMMANDS: u32 = 10;
@@ -4792,11 +4798,19 @@ async fn wait_answer(
     cancel: &CancellationToken,
 ) -> Result<Value> {
     let started = Instant::now();
+    // A poll never sleeps past the answer deadline, so a bounded recovery read returns its typed
+    // AnswerDeadline before the observation's own timeout replaces it with an untyped error.
+    let nap = || {
+        limits
+            .poll
+            .min(limits.answer.saturating_sub(started.elapsed()))
+    };
     let mut gate = TerminalGate::default();
     let mut stalls = PageStalls {
         since: None,
         window: limits.command * PAGE_STALL_COMMANDS,
     };
+    let mut answerless: Option<Instant> = None;
     let metadata = store.require(id)?;
     let deep = metadata["browser"]["config"]["researchMode"] == "deep";
     let mut monitor = crate::browser_log::ThinkingMonitor::new(&metadata["options"]);
@@ -4840,7 +4854,7 @@ async fn wait_answer(
         let verified =
             crate::browser_privacy::require(reservation.page(), limits.command, cancel).await;
         if stalls.check(verified)?.is_none() {
-            pause(limits.poll, cancel).await?;
+            pause(nap(), cancel).await?;
             continue;
         }
         let cfg = json!({"owner":reservation.owner(),"receipt":receipt,"recovery":recovery,"cleanup":reservation.state()==crate::browser_renderer::DispatchState::Released,"uiErrors":true});
@@ -4952,7 +4966,7 @@ async fn wait_answer(
                 )
                 .await;
             let Some(read) = stalls.check(read)? else {
-                pause(limits.poll, cancel).await?;
+                pause(nap(), cancel).await?;
                 continue;
             };
             read
@@ -4973,6 +4987,17 @@ async fn wait_answer(
             })
         {
             observed = json!({"pending":true});
+        }
+        // A completion announcement beside no answer unit is final once it outlasts
+        // ANSWERLESS_WINDOWS stability windows, rather than holding the run to the answer deadline.
+        if observed["pending"] == true && observed["answerless"] == true {
+            if answerless.get_or_insert_with(Instant::now).elapsed()
+                >= Duration::from_millis(limits.stable_ms) * ANSWERLESS_WINDOWS
+            {
+                return Err(crate::browser_provider::Failure::AnswerMissing.into());
+            }
+        } else {
+            answerless = None;
         }
         if observed["pending"] != true {
             observed["providerText"] = observed["text"].clone();
@@ -5018,7 +5043,7 @@ async fn wait_answer(
                 return Ok(observed);
             }
         }
-        pause(limits.poll, cancel).await?;
+        pause(nap(), cancel).await?;
     }
 }
 async fn mark_completed_target(
