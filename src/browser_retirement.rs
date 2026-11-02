@@ -962,19 +962,14 @@ pub(crate) fn require_target_controllers(
         }
     }
     // Retirement repeats this check up to 3 times within a 2 to 5 s deadline, and parsing
-    // all 4,096 sessions of a live store took about 1 s per check. Only sessions changed
-    // since the target was created can name it. shortcut: a backward clock step beyond the
-    // slack could hide one; the profile lease check below still applies. A per-target
-    // session index would remove the directory scan.
-    let since = creator
-        .and_then(|creator| creator["createdAt"].as_str())
-        .and_then(|created| chrono::DateTime::parse_from_rfc3339(created).ok())
-        .and_then(|created| std::time::SystemTime::from(created).checked_sub(SESSION_SCAN_SLACK));
+    // all 4,096 sessions of a live store took about 1 s per check, so read only sessions
+    // whose metadata names the target. shortcut: still reads every metadata file; a
+    // per-target session index would remove the scan.
     let sessions = match target["targetId"]
         .as_str()
         .filter(|id| crate::browser_target::valid_id(id))
     {
-        Some(id) => store.list_mentioning(id, since)?,
+        Some(id) => store.list_mentioning(id)?,
         None => store.list(true)?,
     };
     for session in sessions {
@@ -1028,7 +1023,6 @@ pub(crate) fn require_target_controllers(
     remaining(deadline)?;
     Ok(())
 }
-const SESSION_SCAN_SLACK: Duration = Duration::from_secs(10 * 60);
 fn require_session_controller(session: &Value, creator: Option<&Value>) -> Result<()> {
     for (pid, started) in [
         (

@@ -692,17 +692,12 @@ impl SessionStore {
         output.sort_by(|a, b| b["createdAt"].as_str().cmp(&a["createdAt"].as_str()));
         Ok(output)
     }
-    /// The `list(true)` sessions whose stored metadata text contains `needle`, unsorted,
-    /// skipping session directories unchanged since `changed_since`. Metadata is replaced
-    /// through a temporary file in its session directory, which updates the directory's
-    /// modification time, so a skipped session cannot have gained `needle` since then.
-    /// Neither filter parses a session, so an exact-identifier search stays cheap in a
-    /// large store; a field can equal `needle` only if its JSON text contains it unescaped.
-    pub(crate) fn list_mentioning(
-        &self,
-        needle: &str,
-        changed_since: Option<std::time::SystemTime>,
-    ) -> Result<Vec<Value>> {
+    /// The `list(true)` sessions whose stored metadata text contains `needle`, unsorted.
+    /// The text search parses no session, so an exact-identifier search stays cheap in a
+    /// large store. A field can equal an ASCII alphanumeric or '-' `needle` only if its JSON
+    /// text contains it: serde_json and the legacy JSON.stringify writers never escape those.
+    /// A file that exists but cannot be read is kept for `read_raw` to decide.
+    pub(crate) fn list_mentioning(&self, needle: &str) -> Result<Vec<Value>> {
         let mut output = vec![];
         let entries = match fs::read_dir(self.root()) {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(output),
@@ -710,19 +705,15 @@ impl SessionStore {
         };
         for entry in entries.flatten() {
             let id = entry.file_name().to_string_lossy().into_owned();
-            let unchanged = changed_since.is_some_and(|since| {
-                entry
-                    .metadata()
-                    .and_then(|metadata| metadata.modified())
-                    .is_ok_and(|modified| modified < since)
-            });
-            if unchanged || !valid_id(&id) {
+            if !valid_id(&id) {
                 continue;
             }
             let dir = self.directory(&id)?;
             let mentions = ["meta.json", "session.json"].into_iter().any(|name| {
-                fs::read(dir.join(name))
-                    .is_ok_and(|raw| String::from_utf8_lossy(&raw).contains(needle))
+                match fs::read(dir.join(name)) {
+                    Ok(raw) => String::from_utf8_lossy(&raw).contains(needle),
+                    Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+                }
             });
             if mentions && let Some(meta) = self.read_raw(&id, true)? {
                 output.push(meta);
@@ -1203,7 +1194,7 @@ mod deadline_tests {
         assert_eq!(saved["marker"], "PUBLIC settled");
     }
     #[test]
-    fn target_search_reads_only_sessions_naming_it_and_changed_since() {
+    fn target_search_reads_sessions_naming_it_and_keeps_unreadable_ones() {
         let home = tempfile::tempdir().unwrap();
         let store = SessionStore::new(home.path());
         let name = |prompt: &str, target: &str| {
@@ -1220,26 +1211,19 @@ mod deadline_tests {
                 .unwrap();
             id
         };
-        let earlier = name("PUBLIC earlier", "PUBLIC-TARGET");
+        let named = name("PUBLIC named", "PUBLIC-TARGET");
         name("PUBLIC unrelated", "PUBLIC-OTHER");
-        let found = |since| {
-            store
-                .list_mentioning("PUBLIC-TARGET", since)
-                .unwrap()
-                .into_iter()
-                .map(|meta| meta["id"].as_str().unwrap().to_owned())
-                .collect::<std::collections::BTreeSet<_>>()
-        };
-        assert_eq!(found(None), [earlier.clone()].into());
-        // Coarse directory timestamps must not place the later write before `since`.
-        std::thread::sleep(Duration::from_millis(1100));
-        let since = std::time::SystemTime::now();
-        std::thread::sleep(Duration::from_millis(1100));
-        assert!(found(Some(since)).is_empty());
-        let later = name("PUBLIC later", "PUBLIC-TARGET");
-        store
-            .update(&earlier, |_| Ok(Some(json!({"marker":"PUBLIC rewritten"}))))
-            .unwrap();
-        assert_eq!(found(Some(since)), [earlier, later].into());
+        // A metadata file that exists but cannot be read is not evidence of absence.
+        let unreadable = name("PUBLIC unreadable", "PUBLIC-OTHER");
+        let dir = store.directory(&unreadable).unwrap();
+        std::fs::rename(dir.join("meta.json"), dir.join("session.json")).unwrap();
+        std::fs::create_dir(dir.join("meta.json")).unwrap();
+        let found = store
+            .list_mentioning("PUBLIC-TARGET")
+            .unwrap()
+            .into_iter()
+            .map(|meta| meta["id"].as_str().unwrap().to_owned())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(found, [named, unreadable].into());
     }
 }
