@@ -4709,6 +4709,9 @@ async fn wait_original_answer(
         other => other,
     }
 }
+/// How many terminal stability windows a 'Response complete' announcement with no answer unit
+/// must last before the wait fails (2 minutes at the default 1.2 s).
+const ANSWERLESS_WINDOWS: u32 = 100;
 /// How many command budgets the answer wait rides out page reads that give no result (10 minutes
 /// at the default 60 s). ChatGPT keeps generating meanwhile, and giving up loses the answer.
 const PAGE_STALL_COMMANDS: u32 = 10;
@@ -4934,10 +4937,12 @@ async fn wait_answer(
         {
             observed = json!({"pending":true});
         }
-        // A completion announcement beside no answer unit is final once it outlasts two command
-        // budgets, instead of holding the run until the answer deadline.
+        // A completion announcement beside no answer unit is final once it outlasts
+        // ANSWERLESS_WINDOWS stability windows, rather than holding the run to the answer deadline.
         if observed["pending"] == true && observed["answerless"] == true {
-            if answerless.get_or_insert_with(Instant::now).elapsed() >= limits.command * 2 {
+            if answerless.get_or_insert_with(Instant::now).elapsed()
+                >= Duration::from_millis(limits.stable_ms) * ANSWERLESS_WINDOWS
+            {
                 return Err(crate::browser_provider::Failure::AnswerMissing.into());
             }
         } else {

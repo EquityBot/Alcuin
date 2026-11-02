@@ -1702,6 +1702,7 @@ mod tests {
             let failure = match case {
                 "commit" => "commit-deadline",
                 "response-load" => "response-load-failed",
+                "answer-missing" => "answer-missing",
                 _ => "answer-deadline",
             };
             assert_eq!(state["switch"]["failure"], failure, "{case}");
