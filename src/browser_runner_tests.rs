@@ -7470,6 +7470,39 @@ fn invalid_image_destinations_refuse_before_session_creation() {
         assert!(!store.home().exists());
     }
 }
+#[test]
+fn duplicate_guard_skips_a_run_whose_worker_and_controller_are_dead() {
+    let live = ProcessIdentity::current().unwrap();
+    let mut dead = live.clone();
+    dead.pid = u32::MAX;
+    dead.started_at_ms = 1.0;
+    for (owner, blocked) in [(dead, false), (live, true)] {
+        let home = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(home.path().join(".oracle"));
+        let resolved = crate::execution::resolve(
+            &json!({"prompt":"PUBLIC consultation whose first run died","engine":"browser"}),
+            &json!({}),
+            &Environment::new(),
+            home.path(),
+        )
+        .unwrap();
+        let earlier = store
+            .create(resolved.options.clone(), home.path(), None)
+            .unwrap();
+        let earlier = earlier["id"].as_str().unwrap();
+        store.update(earlier, |_| Ok(Some(json!({"status":"running","lifecycle":{"processIdentity":owner,"workerPid":owner.pid,"workerProcessStartedAtMs":owner.started_at_ms},"browser":{"runtime":{"controllerPid":owner.pid,"controllerProcessStartedAtMs":owner.started_at_ms}}})))).unwrap();
+        let before = store.stored_for_update(earlier).unwrap();
+        let result = prepare(&store, &resolved, home.path());
+        assert_eq!(
+            result.as_ref().is_err_and(|error| error
+                .to_string()
+                .contains("An identical prompt is already running")),
+            blocked,
+            "{result:?}"
+        );
+        assert_eq!(store.stored_for_update(earlier).unwrap(), before);
+    }
+}
 #[tokio::test]
 async fn persisted_button_images_never_bypass_an_uncertain_second_download() {
     let f = fixture(Fault::MultiButtonLostImage, false).await;
