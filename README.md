@@ -13,11 +13,13 @@
 [![OpenSSF Scorecard](https://raw.githubusercontent.com/ryanduguid/.github/badges/EquityBot/Alcuin.svg)](https://scorecard.dev/viewer/?uri=github.com/EquityBot/Alcuin)<br>
 [![rust: 1.99+](.github/assets/badges/rust.svg)](https://www.rust-lang.org/) [![licence: FSL-1.1-ALv2](.github/assets/badges/licence.svg)](LICENSE)
 
+[Install](#install) · [Use](#use) · [Settings and storage](#settings-and-storage) · [Known limitations](#known-limitations) · [Security](#security) · [Licence](#licence)
+
 </div>
 
 Alcuin sends a question and the source files you choose to ChatGPT, or to the OpenAI or Azure OpenAI API, and saves the answer as a durable session. It runs as a CLI (`alcuin`) and a stdio MCP server (`alcuin-mcp`) on Windows and Linux.
 
-It is a Rust port of a maintained fork of [Oracle](https://github.com/steipete/oracle) by Peter Steinberger.
+It is a Rust port of a maintained fork of [Oracle](https://github.com/steipete/oracle) by Peter Steinberger. Use Oracle itself on macOS, or for Gemini, Claude or multi-model runs: see [Known limitations](#known-limitations).
 
 ## Install
 
@@ -64,7 +66,7 @@ Run `alcuin --help --verbose` for every option.
 
 ## Settings and storage
 
-Alcuin keeps Oracle's names so existing setups carry over: settings use `ORACLE_*` environment variables and sessions, profiles and config live in `~/.oracle` (`--oracle-home-dir` or `ORACLE_HOME_DIR` moves it).
+Alcuin keeps Oracle's names so existing setups carry over: settings use `ORACLE_*` environment variables and sessions, profiles and config live in `~/.oracle` (set `ORACLE_HOME_DIR` to move it).
 
 ## Known limitations
 
@@ -86,8 +88,8 @@ Read [SECURITY.md](SECURITY.md) before attaching files: everything you attach go
 
 FSL-1.1-ALv2 (Functional Source License, Version 1.1, ALv2 Future License); see [LICENSE](LICENSE). Each version also becomes available under Apache-2.0 two years after its release. Oracle's MIT notice and third-party notices are in [NOTICE](NOTICE).
 
-The banner's lettering and emblem are drawn from Cascadia Mono glyphs (SIL OFL 1.1).
+The banner's lettering and emblem are drawn from Cascadia Mono and Besley glyphs (SIL OFL 1.1).
 
 ---
 
-<p align="center"><sub>Made by <a href="https://github.com/EquityBot">EquityBot</a>. <i>Ad gloriam eius, non meam.</i></sub></p>
+<p align="center"><sub>Plans succeed with many advisers (cf. Proverbs 15:22, NET).<br>Made by <a href="https://github.com/EquityBot">EquityBot</a>. <i>Ad gloriam eius, non meam.</i></sub></p>
