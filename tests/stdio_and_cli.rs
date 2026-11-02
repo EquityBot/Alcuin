@@ -1383,6 +1383,44 @@ fn browser_fallback_accepts_only_none_or_grok_before_creating_a_session() {
 }
 
 #[test]
+fn browser_provider_grok_accepts_only_text_prompts_before_creating_a_session() {
+    let home = tempfile::tempdir().unwrap();
+    let file = home.path().join("PUBLIC-source.txt");
+    std::fs::write(&file, "PUBLIC source").unwrap();
+    let file = file.to_string_lossy().into_owned();
+    for (value, extra, accepted) in [
+        ("grok", vec![], true),
+        ("chatgpt", vec![], true),
+        ("chatgpt", vec!["--file", file.as_str()], true),
+        ("grok", vec!["--file", file.as_str()], false),
+        ("grok", vec!["--browser-research", "deep"], false),
+        ("Grok", vec![], false),
+        ("xai", vec![], false),
+    ] {
+        let mut args = vec![
+            "--prompt",
+            "PUBLIC provider choice",
+            "--engine",
+            "browser",
+            "--model",
+            "gpt-6-pro",
+            "--browser-provider",
+            value,
+            "--dry-run",
+        ];
+        args.extend(extra.iter().copied());
+        let output = cli(home.path(), &args);
+        assert_eq!(
+            output.status.success(),
+            accepted,
+            "{value} {extra:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!home.path().join("sessions").exists());
+    }
+}
+
+#[test]
 fn required_file_export_flags_keep_browser_and_answer_path_preflight_contracts() {
     let home = tempfile::tempdir().unwrap();
     for (args, message) in [

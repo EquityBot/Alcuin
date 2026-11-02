@@ -603,6 +603,23 @@ fn resolve_origin(
         engine != "browser" || browser["captureProviderNative"] != true,
         "browser.captureProviderNative (provider-native capture): this build does not support it. Remove the setting from your configuration."
     );
+    // Grok-direct is a request choice only; configuration never selects a provider.
+    match input.get("browserProvider") {
+        None => {}
+        Some(value) if *value == "chatgpt" => {}
+        Some(value) if *value == "grok" => {
+            ensure!(
+                file_inputs.is_empty(),
+                "--browser-provider grok sends text prompts only; put the files' contents in the prompt instead of --file."
+            );
+            ensure!(
+                browser["researchMode"] != "deep",
+                "--browser-provider grok does not support deep research."
+            );
+            options["browserProvider"] = json!("grok");
+        }
+        Some(_) => bail!("Browser provider must be chatgpt or grok"),
+    }
     if engine == "browser" {
         options["browserConfig"] = browser.clone();
     }

@@ -291,6 +291,9 @@
     "flags": "--browser-fallback <provider>"
   },
   {
+    "flags": "--browser-provider <provider>"
+  },
+  {
     "flags": "--browser-follow-up <prompt>"
   },
   {

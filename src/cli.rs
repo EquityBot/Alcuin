@@ -496,6 +496,11 @@ async fn run_command(args: Vec<OsString>) -> Result<i32> {
             "auto, always, never",
         ),
         (
+            "browser-provider",
+            "--browser-provider <provider>",
+            "chatgpt, grok",
+        ),
+        (
             "browser-attachments",
             "--browser-attachments <mode>",
             "auto, never, always",
@@ -1236,6 +1241,7 @@ async fn run_command(args: Vec<OsString>) -> Result<i32> {
         ("browser-research", "browserResearchMode"),
         ("browser-archive", "browserArchive"),
         ("browser-fallback", "browserFallback"),
+        ("browser-provider", "browserProvider"),
         ("browser-attachments", "browserAttachments"),
         ("browser-bundle-format", "browserBundleFormat"),
         // Gemini web options: saved as in the reference, which ignores them for GPT-6.
@@ -2032,6 +2038,7 @@ const ROOT_RUN_FLAGS: &[&str] = &[
     "browser-research",
     "browser-archive",
     "browser-fallback",
+    "browser-provider",
     "browser-follow-up",
     "browser-attachments",
     "browser-inline-files",

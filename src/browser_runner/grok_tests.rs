@@ -118,7 +118,7 @@ pub(crate) async fn native_cases(browser: &Cdp, endpoint: &AttachmentEndpoint) -
             ),
         ]);
         let resolved = crate::execution::resolve(
-            &json!({"prompt":prompt,"engine":"browser","model":"gpt-6-pro","writeOutputPath":output}),
+            &json!({"prompt":prompt,"engine":"browser","model":"gpt-6-pro","writeOutputPath":output,"browserProvider":"grok"}),
             &json!({"browser":{"manualLogin":true,"cookieSync":false}}),
             &environment,
             home.path(),
@@ -130,7 +130,7 @@ pub(crate) async fn native_cases(browser: &Cdp, endpoint: &AttachmentEndpoint) -
         start_owner(&store, parent_id, &identity)?;
         let mut coordinator =
             crate::browser_attempt::Parent::begin(&store, parent_id, &identity, &cancel)?;
-        let link = coordinator.reserve_grok_fixture(&environment, &cancel)?;
+        let link = coordinator.reserve_first_grok(&environment, &cancel)?;
         start_owner(&store, &link.child_id, &identity)?;
         let child = store.require(&link.child_id)?;
         let profile = ProfileRegistry::open(Path::new(
