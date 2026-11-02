@@ -8,8 +8,10 @@ issue.
 ## Pull requests
 
 Propose changes as a pull request against `main`. A change lands on `main` only
-when the `check (ubuntu-latest)` and `check (windows-latest)` checks from
-[ci.yml](.github/workflows/ci.yml) and the `Attribution policy` check pass. The
+when the `check (ubuntu-latest)`, `check (windows-latest)` and `native-chrome`
+checks from [ci.yml](.github/workflows/ci.yml), the `audit` check from
+[audit.yml](.github/workflows/audit.yml) and the `Attribution policy` check
+pass. The
 attribution check fails a pull request whose title, commit trailers or
 identities credit an AI tool.
 
