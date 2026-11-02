@@ -895,28 +895,9 @@ async fn retirement_close_cases(
         if clean {
             reservation.release_clean(SHORT).await?;
         } else {
+            // Retirement checks identity, ownership and completion, not answer text (#52):
+            // a finished turn that re-rendered still closes once its answer is saved.
             owned.evaluate("document.querySelector('[data-role=assistant] [data-testid]').textContent='PUBLIC changed answer';true",SHORT,&cancel).await?;
-            let retained = crate::browser_retirement::retire_committed(
-                &store, &journal, &browser, endpoint, &creator,
-            )
-            .await?;
-            ensure!(
-                retained["decision"] == "retained" && retained["absence"] == "unknown",
-                "Changed Grok answer obtained close authority"
-            );
-            ensure!(
-                browser
-                    .call(
-                        "Target.getTargetInfo",
-                        json!({"targetId":target}),
-                        SHORT,
-                        &cancel
-                    )
-                    .await?["targetInfo"]["targetId"]
-                    == target,
-                "Changed Grok target closed"
-            );
-            owned.evaluate("document.querySelector('[data-role=assistant] [data-testid]').textContent='PUBLIC verified answer';true",SHORT,&cancel).await?;
         }
         let disposed = crate::browser_retirement::retire_committed(
             &store, &journal, &browser, endpoint, &creator,
