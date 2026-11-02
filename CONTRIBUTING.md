@@ -25,6 +25,12 @@ cargo audit --deny warnings
 New functionality and bug fixes come with automated tests, in `tests/` or the
 module's `#[cfg(test)]` tests, run by `cargo test --locked` in CI.
 
+Changes to the remote JSON canonical form or the notification preview should also
+survive the fuzz targets in `fuzz/`, which CI runs for 5 minutes each every
+Monday. They need a nightly toolchain and `cargo install cargo-fuzz`; run one
+with `cargo +nightly fuzz run remote_json` (or `preview`). A crash leaves its
+input in `fuzz/artifacts/`; turn it into a test before fixing it.
+
 CI runs the offline tests only. Tests that need a signed-in browser or a live
 provider are marked `#[ignore]` and run only on request, with your own
 accounts.
