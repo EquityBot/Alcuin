@@ -82,6 +82,9 @@ async fn cases(page: &Cdp, file: &std::path::Path) -> Result<()> {
     unrendered_completion_cases(page)
         .await
         .context("Unrendered answer completion regression")?;
+    answerless_tracker_cases(page)
+        .await
+        .context("Answerless completion tracker regression")?;
     deferred_editor_render_case(page)
         .await
         .context("Deferred composer render regression")?;
@@ -1274,6 +1277,59 @@ async fn unrendered_completion_cases(page: &Cdp) -> Result<()> {
             "raw streamed text ({proof}): {pending}"
         );
     }
+    Ok(())
+}
+
+/// The completion tracker flags a turn ChatGPT announces complete without an answer only when the
+/// announcement arrives after its install, and an answer that mounts later clears the flag.
+async fn answerless_tracker_cases(page: &Cdp) -> Result<()> {
+    let cancel = CancellationToken::new();
+    let install = include_str!("../browser-scripts/completion-install.js");
+    let step = async |script: &str| -> Result<Value> {
+        page.evaluate(&format!("(() => {{ {script} }})()"), SHORT, &cancel)
+            .await
+    };
+    let flag = "const t = window.__oracleCurrentTurnCompletionV1; return [t.completeWithoutAnswer, t.completedTurnIndex !== null];";
+    let user = "const turn = document.createElement('div'); turn.setAttribute('data-turn-key', 'PUBLIC-new'); turn.innerHTML = '<div data-content-search-unit-key=\"PUBLIC:0:user\">PUBLIC prompt</div><div data-markdown-text-style=\"assistant-message\" data-markdown-text-tone=\"tertiary\">PUBLIC thinking</div>'; document.querySelector('main').append(turn); return true;";
+    let announce = |text: &str| {
+        format!("document.querySelector('[role=\"status\"]').textContent = '{text}'; return true;")
+    };
+    // A fresh chat: the announcement comes after the submitted turn, with no answer unit.
+    mount(
+        page,
+        r#"<main><span role="status" aria-live="polite"></span></main>"#,
+        "/c/PUBLIC-answerless?temporary-chat=true",
+        "",
+    )
+    .await?;
+    page.evaluate_with_arguments(install, &json!([{}]), SHORT, &cancel)
+        .await?;
+    step(user).await?;
+    step(&announce("Response complete")).await?;
+    anyhow::ensure!(
+        step(flag).await? == json!([true, false]),
+        "answerless turn not flagged"
+    );
+    step("document.querySelector('[data-turn-key=\"PUBLIC-new\"]').insertAdjacentHTML('beforeend', '<div data-content-search-unit-key=\"PUBLIC:2:assistant\">PUBLIC answer</div>'); return true;").await?;
+    anyhow::ensure!(
+        step(flag).await? == json!([false, true]),
+        "a late answer did not clear the flag"
+    );
+    // An earlier turn's announcement still showing at install is stale until it is cleared.
+    mount(page, r#"<main><div data-turn-key="PUBLIC-old"><div data-content-search-unit-key="PUBLIC:0:user">PUBLIC earlier</div><div data-content-search-unit-key="PUBLIC:1:assistant">PUBLIC earlier answer</div></div><span role="status" aria-live="polite">Response complete</span></main>"#, "/c/PUBLIC-answerless?temporary-chat=true", "").await?;
+    page.evaluate_with_arguments(install, &json!([{}]), SHORT, &cancel)
+        .await?;
+    step(user).await?;
+    anyhow::ensure!(
+        step(flag).await? == json!([false, false]),
+        "a stale announcement was flagged"
+    );
+    step(&announce("")).await?;
+    step(&announce("Response complete")).await?;
+    anyhow::ensure!(
+        step(flag).await? == json!([true, false]),
+        "a fresh announcement after a stale one was not flagged"
+    );
     Ok(())
 }
 

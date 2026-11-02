@@ -53,6 +53,9 @@ return (() => {
       priorCompleteNode: completeNode(),
       sawIncomplete: false,
       completedTurnIndex: null,
+      // 'Response complete' announced after this submission with no assistant turn after the
+      // baseline; an answer that mounts later clears it.
+      completeWithoutAnswer: false,
       observer: null,
     };
     tracker.sawIncomplete = !tracker.priorCompleteNode;
@@ -61,6 +64,7 @@ return (() => {
       if (!currentCompleteNode) {
         tracker.sawIncomplete = true;
         tracker.priorCompleteNode = null;
+        tracker.completeWithoutAnswer = false;
         return;
       }
       if (!tracker.sawIncomplete && currentCompleteNode === tracker.priorCompleteNode) return;
@@ -68,11 +72,13 @@ return (() => {
       for (let index = currentTurns.length - 1; index >= baseline; index -= 1) {
         if (!isAssistant(currentTurns[index])) continue;
         tracker.completedTurnIndex = index;
+        tracker.completeWithoutAnswer = false;
         tracker.sawIncomplete = false;
         tracker.priorCompleteNode = currentCompleteNode;
         tracker.observer?.disconnect();
         return;
       }
+      tracker.completeWithoutAnswer = true;
     };
     tracker.observer = new MutationObserver(observe);
     tracker.observer.observe(document.body, { childList: true, subtree: true, characterData: true });

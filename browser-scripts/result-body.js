@@ -68,9 +68,12 @@ for (let index = turns.length - 1; index >= 0; index--) {
 }
 if (!assistant || assistantIndex < user.index || !(user.user.compareDocumentPosition(assistant) & 4)) {
   // ChatGPT can announce a finished turn that holds only activity summaries and no answer unit.
-  // Rust decides only after this has persisted, since a stale announcement can precede generation.
-  const answerless = !stopExists && !strongThinkingActive && Array.from(document.querySelectorAll('[role="status"][aria-live="polite"]'))
-    .some(node => (node.textContent || '').trim() === 'Response complete');
+  // Only an announcement the completion tracker saw arrive after this submission counts, and
+  // Rust decides only once it has persisted.
+  const answerless = !stopExists && !strongThinkingActive &&
+    window.__oracleCurrentTurnCompletionV1?.completeWithoutAnswer === true &&
+    Array.from(document.querySelectorAll('[role="status"][aria-live="polite"]'))
+      .some(node => (node.textContent || '').trim() === 'Response complete');
   return { pending:true, stopExists, strongThinkingActive, answerless };
 }
 const ids = [assistant.getAttribute('data-message-id'), assistant.getAttribute('data-chatgpt-selection-message-id'),
