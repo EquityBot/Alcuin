@@ -2832,6 +2832,23 @@ mod tests {
             assert_eq!(pruned, before, "{patch}");
         }
     }
+    #[tokio::test]
+    async fn lost_allocation_with_a_malformed_identity_is_refused_and_never_freed() {
+        let exited = exited_identity();
+        let (_home, registry) = lost_allocation_record(&exited).await;
+        let malformed = json!({"pid":exited.pid});
+        let stored = registry.transaction(|records, _| {
+            records["leases"][0]["processIdentity"] = malformed.clone();
+            Ok(())
+        });
+        assert!(stored.is_err());
+        // A record read from elsewhere still needs a parsed identity verified dead.
+        let mut records = registry.records().unwrap();
+        records["leases"][0]["processIdentity"] = malformed;
+        let before = records.clone();
+        prune(&mut records, chrono::Utc::now().timestamp_millis()).unwrap();
+        assert_eq!(records, before);
+    }
     fn exited_identity() -> ProcessIdentity {
         let mut child = std::process::Command::new(std::env::current_exe().unwrap())
             .arg("--list")
