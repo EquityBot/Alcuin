@@ -287,9 +287,7 @@ pub(crate) async fn native_cases(browser: &Cdp, endpoint: &AttachmentEndpoint) -
         drop(heartbeat);
         // This fixture allocated the target. Its error teardown never runs in production.
         if !private_loss.is_empty() || refused || checked.is_err() {
-            let _ = browser
-                .close_owned_target(&target_id, limits.command, &CancellationToken::new())
-                .await;
+            close_fixture_target(browser, &target_id, limits.command).await;
         }
         checked?;
     }
@@ -351,6 +349,26 @@ fn target_ids(rows: &Value) -> std::collections::BTreeSet<String> {
         .filter(|row| row["type"] == "page")
         .filter_map(|row| row["targetId"].as_str().map(str::to_owned))
         .collect()
+}
+
+/// Closes a fixture-allocated target and waits until Chromium stops listing it, so the next
+/// case's baseline cannot include a target that is still closing.
+async fn close_fixture_target(browser: &Cdp, target_id: &str, command: Duration) {
+    let cancel = CancellationToken::new();
+    let _ = browser
+        .close_owned_target(target_id, command, &cancel)
+        .await;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if let Ok(rows) = browser
+            .call("Target.getTargets", json!({}), command, &cancel)
+            .await
+            && !target_ids(&rows).contains(target_id)
+        {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 }
 
 /// A genuine worker crash after the single Send, then public parent recovery from this
@@ -640,9 +658,7 @@ async fn recovery_case(
     .await;
     if checked.is_err() || !damage.is_empty() {
         // This fixture allocated the target. Its error teardown never runs in production.
-        let _ = browser
-            .close_owned_target(target_id, limits.command, &CancellationToken::new())
-            .await;
+        close_fixture_target(browser, target_id, limits.command).await;
     }
     checked
 }
