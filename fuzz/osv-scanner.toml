@@ -1,0 +1,14 @@
+# The advisories ../osv-scanner.toml ignores, for fuzz/Cargo.lock: OSV-Scanner reads only the
+# file beside each lockfile. Keep both in step with .cargo/audit.toml.
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0370"
+reason = "zvariant unmaintained, no vulnerability; via zbus 5 <- secret-service, Linux only (.cargo/audit.toml)"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0371"
+reason = "zbus_names unmaintained, no vulnerability; via zbus 5 <- secret-service, Linux only (.cargo/audit.toml)"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0372"
+reason = "zvariant_derive unmaintained, no vulnerability; via zbus 5 <- secret-service, Linux only (.cargo/audit.toml)"
