@@ -1990,6 +1990,10 @@ const CHROME_BASENAMES: &[&str] = &[
     "google-chrome-stable",
     "chrome-headless-shell",
     "chrome-headless-shell.exe",
+    // Brave is Chromium with the same profile and DevTools contract; the Grok profile is signed in there.
+    "brave",
+    "brave.exe",
+    "brave-browser",
 ];
 fn chrome_basename(name: &str) -> bool {
     CHROME_BASENAMES
