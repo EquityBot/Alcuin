@@ -126,10 +126,6 @@ async fn launch_remote(
         Ok(endpoint) => return Ok(endpoint),
         Err(error) => error,
     };
-    anyhow::ensure!(
-        !cancel.is_cancelled() && !remaining().is_zero(),
-        "remoteChromeLauncher not started: the connection deadline passed; {unreachable:#}"
-    );
     // A port that accepts connections but gives no DevTools endpoint belongs to something else.
     let address = (host.trim_start_matches('[').trim_end_matches(']'), port);
     let probe = tokio::net::TcpStream::connect(address);
@@ -138,6 +134,11 @@ async fn launch_remote(
             "remoteChromeLauncher not started: {host}:{port} accepts connections but gives no DevTools endpoint; {unreachable:#}"
         );
     }
+    // Checked last, just before the spawn, so neither the lock wait nor the probe outlasts it.
+    anyhow::ensure!(
+        !cancel.is_cancelled() && !remaining().is_zero(),
+        "remoteChromeLauncher not started: the connection deadline passed; {unreachable:#}"
+    );
     let mut command = Command::new(&launcher);
     command
         .stdin(Stdio::null())
