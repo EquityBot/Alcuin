@@ -596,7 +596,9 @@ impl TargetJournal {
             }
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().into_owned();
-            if !entry.file_type()?.is_file() || !record_file(&name) {
+            // std documents DirEntry::file_type as free (no extra system call) on Windows and most Unix.
+            let is_file = entry.file_type()?.is_file(); // NOSONAR: rust:S7493 does not apply
+            if !is_file || !record_file(&name) {
                 continue;
             }
             if !reached {
