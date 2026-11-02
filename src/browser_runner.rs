@@ -4683,11 +4683,14 @@ async fn wait_original_answer(
         })
         .await;
     match observed {
-        // Reference createAssistantTimeoutError; the typed deadline stays the source.
+        // Reference createAssistantTimeoutError; the typed failure stays the source.
         Err(error)
             if matches!(
                 error.downcast_ref::<crate::browser_provider::Failure>(),
-                Some(crate::browser_provider::Failure::AnswerDeadline)
+                Some(
+                    crate::browser_provider::Failure::AnswerDeadline
+                        | crate::browser_provider::Failure::AnswerMissing
+                )
             ) && store.require(id)?["browser"]["config"]["researchMode"] != "deep" =>
         {
             match crate::browser_page::ui_warning(
@@ -4753,6 +4756,7 @@ async fn wait_answer(
         since: None,
         window: limits.command * PAGE_STALL_COMMANDS,
     };
+    let mut answerless: Option<Instant> = None;
     let metadata = store.require(id)?;
     let deep = metadata["browser"]["config"]["researchMode"] == "deep";
     let mut monitor = crate::browser_log::ThinkingMonitor::new(&metadata["options"]);
@@ -4929,6 +4933,15 @@ async fn wait_answer(
             })
         {
             observed = json!({"pending":true});
+        }
+        // A completion announcement beside no answer unit is final once it outlasts two command
+        // budgets, instead of holding the run until the answer deadline.
+        if observed["pending"] == true && observed["answerless"] == true {
+            if answerless.get_or_insert_with(Instant::now).elapsed() >= limits.command * 2 {
+                return Err(crate::browser_provider::Failure::AnswerMissing.into());
+            }
+        } else {
+            answerless = None;
         }
         if observed["pending"] != true {
             observed["providerText"] = observed["text"].clone();

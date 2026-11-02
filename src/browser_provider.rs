@@ -16,6 +16,8 @@ pub(crate) enum Failure {
     ContentWithheld(String),
     /// The submitted turn shows a Retry control (reference chatgpt-ui-warning).
     RetryOffered,
+    /// ChatGPT announced the submitted turn complete without any assistant answer.
+    AnswerMissing,
 }
 impl std::fmt::Display for Failure {
     fn fmt(&self, output: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -26,6 +28,7 @@ impl std::fmt::Display for Failure {
             Self::ResponseLoadFailed => output.write_str("ChatGPT could not load the answer to the submitted turn in this tab; the reply may still be in the conversation. Reattach to read it again; do not resubmit."),
             Self::ContentWithheld(notice) => write!(output,"ChatGPT finished the submitted assistant turn without showing an answer: {notice}"),
             Self::RetryOffered => output.write_str("ChatGPT could not generate the submitted assistant turn and offered Retry."),
+            Self::AnswerMissing => output.write_str("ChatGPT marked the submitted turn complete without an answer."),
         }
     }
 }

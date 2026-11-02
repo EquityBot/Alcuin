@@ -805,6 +805,7 @@ fn switch_failure(error: &anyhow::Error) -> Option<&'static str> {
         Failure::CommitDeadline => Some("commit-deadline"),
         Failure::AnswerDeadline => Some("answer-deadline"),
         Failure::ResponseLoadFailed => Some("response-load-failed"),
+        Failure::AnswerMissing => Some("answer-missing"),
         Failure::CommitAmbiguous(_) | Failure::ContentWithheld(_) | Failure::RetryOffered => None,
     }
 }
@@ -1497,6 +1498,14 @@ mod tests {
                 consent.clone(),
                 json!({}),
                 anyhow::Error::new(Failure::ResponseLoadFailed),
+                none,
+                true,
+            ),
+            (
+                "answer-missing",
+                consent.clone(),
+                json!({}),
+                anyhow::Error::new(Failure::AnswerMissing),
                 none,
                 true,
             ),
