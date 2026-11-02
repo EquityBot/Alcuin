@@ -788,6 +788,23 @@ impl SessionStore {
                 output.push(meta);
             }
         }
+        #[cfg(test)]
+        AFTER_TARGET_SCAN.with_borrow_mut(|hook| hook.take().map(|hook| hook()));
+        // Writers index before they publish, so one that named the target during the scan is
+        // read here: no session is missed that a full read-once scan would have found.
+        let listed: std::collections::BTreeSet<_> = output
+            .iter()
+            .filter_map(|meta| meta["id"].as_str().map(str::to_owned))
+            .collect();
+        for id in names(index.join("targets").join(target))? {
+            if valid_id(&id)
+                && !named.contains(&id)
+                && !listed.contains(&id)
+                && let Some(meta) = self.read_raw(&id, true)?
+            {
+                output.push(meta);
+            }
+        }
         Ok(output)
     }
     pub async fn wait(
@@ -1036,6 +1053,12 @@ fn harden_entry(entry: &NativeEntry, path: &Path, directory: bool) -> Result<()>
         }
     }
     Ok(())
+}
+#[cfg(test)]
+thread_local! {
+    /// Runs once on this thread between a target scan and its index recheck.
+    static AFTER_TARGET_SCAN: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
 }
 /// A target the index can name as one path component; others fall back to a full read.
 fn indexable(target: &str) -> bool {
@@ -1362,5 +1385,20 @@ mod deadline_tests {
         )
         .unwrap();
         assert!(!found("PUBLIC-TARGET").contains(&unrelated));
+        // A covered session that names the target while the scan runs is still found.
+        let late = name("PUBLIC late", "PUBLIC-OTHER");
+        assert!(!found("PUBLIC-TARGET").contains(&late));
+        let writer = store.clone();
+        let renamed = late.clone();
+        AFTER_TARGET_SCAN.set(Some(Box::new(move || {
+            writer
+                .update(&renamed, |_| {
+                    Ok(Some(
+                        json!({"browser":{"runtime":{"chromeTargetId":"PUBLIC-TARGET"}}}),
+                    ))
+                })
+                .unwrap();
+        })));
+        assert!(found("PUBLIC-TARGET").contains(&late));
     }
 }

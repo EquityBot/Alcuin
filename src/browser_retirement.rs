@@ -180,18 +180,31 @@ pub(crate) fn require_target_open(store: &SessionStore, meta: &Value) -> Result<
 pub(crate) fn cleanup_error(text: &str) -> String {
     const LIMIT: usize = 600;
     match text.char_indices().nth(LIMIT) {
-        Some((end, _)) => format!("{}...", &text[..end]),
+        Some(_) => {
+            let end = text.char_indices().nth(LIMIT - 3).map_or(0, |(end, _)| end);
+            format!("{}...", &text[..end])
+        }
         None => text.to_owned(),
     }
 }
 
+/// Whether two browser WebSocket endpoints name different browser instances. Only the
+/// browser id counts: one browser can be reached under several host spellings.
+fn other_browser(saved: &str, current: &str) -> bool {
+    let id = |ws: &str| {
+        ws.rsplit_once("/devtools/browser/")
+            .map(|(_, id)| id.to_owned())
+    };
+    id(saved).is_some_and(|saved| id(current).is_some_and(|current| saved != current))
+}
+
 /// The record's browser restarted on the endpoint this connection still holds: the same
-/// host and port answer with another browser socket, so the old instance has exited.
+/// host and port answer with another browser id, so the old instance has exited.
 fn restarted(target: &Value, endpoint: &AttachmentEndpoint, browser: &Cdp) -> bool {
     browser.is_open()
         && target["browserWSEndpoint"]
             .as_str()
-            .is_some_and(|ws| ws != endpoint.browser_ws_endpoint)
+            .is_some_and(|ws| other_browser(ws, &endpoint.browser_ws_endpoint))
         && target["host"].as_str().is_some_and(|host| {
             browser::normalise_host(host) == browser::normalise_host(&endpoint.host)
         })
@@ -2788,6 +2801,26 @@ mod tests {
                 .iter()
                 .all(|request| request["method"] != "Target.attachToTarget")
         );
+    }
+    #[test]
+    fn only_another_browser_id_counts_as_a_restart_and_cleanup_errors_stay_bounded() {
+        let ws = |host: &str, id: &str| format!("ws://{host}:9333/devtools/browser/{id}");
+        assert!(!other_browser(
+            &ws("localhost", "PUBLIC-same"),
+            &ws("127.0.0.1", "PUBLIC-same")
+        ));
+        assert!(other_browser(
+            &ws("127.0.0.1", "PUBLIC-earlier"),
+            &ws("127.0.0.1", "PUBLIC-current")
+        ));
+        assert!(!other_browser(
+            "PUBLIC-not-an-endpoint",
+            &ws("127.0.0.1", "PUBLIC-current")
+        ));
+        assert_eq!(cleanup_error(&"é".repeat(600)), "é".repeat(600));
+        let long = cleanup_error(&"é".repeat(601));
+        assert_eq!(long.chars().count(), 600);
+        assert!(long.ends_with("é..."));
     }
     #[test]
     fn failed_tab_claim_is_owned_only_when_exact_and_idle() {

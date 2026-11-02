@@ -97,14 +97,16 @@ impl AttachmentEndpoint {
     }
 }
 /// Starts the user-config `remoteChromeLauncher` when a loopback `remoteChrome` endpoint is
-/// unreachable, then waits for its DevTools endpoint. The launcher owns the browser's flags
-/// and profile; it is never waited on or stopped. Without a launcher the error stands.
+/// unreachable, then waits for its DevTools endpoint until `deadline`. The launcher owns the
+/// browser's flags and profile; it is never waited on or stopped. Each caller launches at most
+/// once, and only if the port still refuses connections under the startup lock. Without a
+/// launcher the error stands.
 async fn launch_remote(
     config: &Value,
     host: &str,
     port: u16,
     unreachable: anyhow::Error,
-    timeout: Duration,
+    deadline: Instant,
     cancel: &CancellationToken,
 ) -> Result<AttachmentEndpoint> {
     let Some(launcher) = config["remoteChromeLauncher"].as_str() else {
@@ -117,12 +119,24 @@ async fn launch_remote(
             && launcher.is_file(),
         "remoteChromeLauncher needs a loopback remoteChrome host and an absolute launcher file; {unreachable:#}"
     );
-    let deadline = Instant::now() + timeout;
-    // Concurrent runs start the browser once: the first launches it, the rest find it open.
-    let _admission = startup_admission(timeout, cancel).await?;
     let remaining = || deadline.saturating_duration_since(Instant::now());
-    if let Ok(endpoint) = AttachmentEndpoint::inspect(host, port, remaining(), cancel).await {
-        return Ok(endpoint);
+    // Concurrent runs start the browser once: the first launches it, the rest find it open.
+    let _admission = startup_admission(remaining(), cancel).await?;
+    let unreachable = match AttachmentEndpoint::inspect(host, port, remaining(), cancel).await {
+        Ok(endpoint) => return Ok(endpoint),
+        Err(error) => error,
+    };
+    anyhow::ensure!(
+        !cancel.is_cancelled() && !remaining().is_zero(),
+        "remoteChromeLauncher not started: the connection deadline passed; {unreachable:#}"
+    );
+    // A port that accepts connections but gives no DevTools endpoint belongs to something else.
+    let address = (host.trim_start_matches('[').trim_end_matches(']'), port);
+    let probe = tokio::net::TcpStream::connect(address);
+    if let Ok(Ok(_)) = tokio::time::timeout(remaining().min(Duration::from_secs(1)), probe).await {
+        bail!(
+            "remoteChromeLauncher not started: {host}:{port} accepts connections but gives no DevTools endpoint; {unreachable:#}"
+        );
     }
     let mut command = Command::new(&launcher);
     command
@@ -631,9 +645,12 @@ impl ChromeConnection {
                     browser_ws_endpoint: ws.into(),
                 }
             } else {
+                let started = Instant::now();
                 match AttachmentEndpoint::inspect(host, port, timeout, cancel).await {
                     Ok(endpoint) => endpoint,
-                    Err(error) => launch_remote(config, host, port, error, timeout, cancel).await?,
+                    Err(error) => {
+                        launch_remote(config, host, port, error, started + timeout, cancel).await?
+                    }
                 }
             };
             Self::attach(endpoint, timeout, cancel).await?
@@ -2355,7 +2372,7 @@ mod tests {
         let cancel = CancellationToken::new();
         let timeout = Duration::from_secs(10);
         let lock = home.path().join("startup.lock");
-        let launch = |config: Value, host: &'static str| {
+        let launch = |config: Value, host: &'static str, port: u16, deadline: Instant| {
             let cancel = cancel.clone();
             TEST_STARTUP_LOCK.scope(lock.clone(), async move {
                 launch_remote(
@@ -2363,28 +2380,60 @@ mod tests {
                     host,
                     port,
                     anyhow::anyhow!("PUBLIC unreachable"),
-                    timeout,
+                    deadline,
                     &cancel,
                 )
                 .await
             })
         };
-        // Without a launcher, or for a host that is not loopback, nothing starts.
-        let kept = launch(serde_json::json!({}), "127.0.0.1")
+        let soon = || Instant::now() + timeout;
+        // Without a launcher, for a host that is not loopback, after the deadline, or for a
+        // port another service answers, nothing starts.
+        let kept = launch(serde_json::json!({}), "127.0.0.1", port, soon())
             .await
             .unwrap_err();
         assert_eq!(kept.to_string(), "PUBLIC unreachable");
-        let refused = launch(config.clone(), "192.0.2.1").await.unwrap_err();
+        let refused = launch(config.clone(), "192.0.2.1", port, soon())
+            .await
+            .unwrap_err();
         assert!(format!("{refused:#}").contains("loopback"), "{refused:#}");
+        let expired = launch(config.clone(), "127.0.0.1", port, Instant::now())
+            .await
+            .unwrap_err();
+        assert!(format!("{expired:#}").contains("deadline"), "{expired:#}");
+        let occupied = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let other = occupied.local_addr().unwrap().port();
+        let foreign = tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            loop {
+                let (mut socket, _) = occupied.accept().await.unwrap();
+                let _ = socket.read(&mut [0; 1024]).await;
+                let _ = socket
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+                    )
+                    .await;
+            }
+        });
+        let answered = launch(config.clone(), "127.0.0.1", other, soon())
+            .await
+            .unwrap_err();
+        foreign.abort();
+        assert!(
+            format!("{answered:#}").contains("accepts connections"),
+            "{answered:#}"
+        );
         assert!(!marker.exists());
         let server = tokio::spawn(devtools_after(marker.clone(), port));
-        let endpoint = launch(config.clone(), "127.0.0.1").await.unwrap();
+        let endpoint = launch(config.clone(), "127.0.0.1", port, soon())
+            .await
+            .unwrap();
         assert_eq!(
             endpoint.browser_ws_endpoint,
             format!("ws://127.0.0.1:{port}/devtools/browser/PUBLIC-launched")
         );
         // An endpoint that is open by the time the lock is held is not launched again.
-        launch(config, "127.0.0.1").await.unwrap();
+        launch(config, "127.0.0.1", port, soon()).await.unwrap();
         // A second launcher, had one started, has written its marker line by now.
         tokio::time::sleep(Duration::from_secs(2)).await;
         server.abort();
