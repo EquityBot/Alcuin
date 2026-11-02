@@ -37,6 +37,7 @@ enum Fault {
     RetryOffered,
     AnswerlessComplete,
     AnswerlessBriefly,
+    AnswerNeverCompletes,
     ProviderLateCommit,
     ProviderLateCommitPendingAnswer,
     ProviderLateCommitStalledBeforeAnswer,
@@ -1039,6 +1040,7 @@ impl Exchange {
                 Fault::ProviderLateCommitPendingAnswer
                     | Fault::ProviderLateCommitStalledBeforeAnswer
                     | Fault::ProviderLateCommitChangedOwner
+                    | Fault::AnswerNeverCompletes
             ) || matches!(self.fault, Fault::ProviderLateAnswerDeadline) && !recovering
             {
                 result["completionVisible"] = json!(false);
@@ -4240,6 +4242,29 @@ async fn answerless_turns_are_refused_with_the_reference_failures() {
         assert_eq!(f.closes.load(Ordering::SeqCst), 0, "{fault:?}");
         stop(f).await;
     }
+}
+#[tokio::test]
+async fn a_bounded_read_polling_slowly_keeps_the_typed_answer_deadline() {
+    let f = fixture(Fault::AnswerNeverCompletes, false).await;
+    let mut bounded = recovery_limits();
+    // The bounded read's answer budget ends 50 ms before its observation deadline. A poll that
+    // slept past it let the observation's timeout replace the typed failure the Grok switch needs.
+    bounded.poll = Duration::from_secs(1);
+    let error = run_within(&f, &bounded).await.unwrap_err();
+    assert!(
+        matches!(
+            error.downcast_ref::<crate::browser_provider::Failure>(),
+            Some(crate::browser_provider::Failure::AnswerDeadline)
+        ),
+        "{error:#}"
+    );
+    assert_eq!(
+        f.store.require(&f.id).unwrap()["browser"]["runtime"]["providerReadRecovery"]["state"],
+        "expired"
+    );
+    assert_eq!(f.sends.load(Ordering::SeqCst), 1);
+    assert!(captured(&f.store, &f.id).is_err());
+    stop(f).await;
 }
 #[tokio::test]
 async fn a_lasting_answerless_completion_fails_typed_and_a_brief_one_completes() {
