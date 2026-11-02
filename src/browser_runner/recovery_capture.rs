@@ -15,7 +15,7 @@ pub(crate) async fn recover_child_capture(
     let saved = store.stored_for_update(id)?;
     guard.require_session(id, &saved)?;
     crate::browser_attempt::require_child(store, id, cancel)?;
-    crate::browser_retirement::require_target_open(&saved)?;
+    crate::browser_retirement::require_target_open(store, &saved)?;
     let witness = ExecutionWitness::capture_recovery(store, id, guard.clone())?;
     let committed = request(store, id)?;
     let runtime = &saved["browser"]["runtime"];

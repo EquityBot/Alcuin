@@ -349,6 +349,7 @@ pub(crate) async fn harvest_target_within(
     let meta = store.require(id)?;
     // Check explicit null before connecting to any browser.
     browser_tabs::ready_for_session(&meta, &Value::Null, explicit)?;
+    crate::browser_retirement::require_target_open(store, &meta)?;
     let pinned = crate::browser_attempt::pinned_target(&meta, Some(reference))?;
     if let Some((saved, _)) = &pinned {
         ensure!(

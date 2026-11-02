@@ -147,6 +147,26 @@ pub(crate) fn creator_is_current(record: &Value) -> bool {
             })
     })
 }
+/// A saved `{"after":name}` cursor, or empty when it is missing or invalid.
+fn read_cursor(path: &Path) -> String {
+    (|| -> Result<String> {
+        let mut entry = NativeEntry::open(path, false)?;
+        ensure!(
+            entry.handle.metadata()?.len() <= 4096,
+            "Reconciliation cursor exceeds its bound"
+        );
+        let mut bytes = vec![];
+        (&mut entry.handle).take(4097).read_to_end(&mut bytes)?;
+        ensure!(
+            bytes.len() <= 4096,
+            "Reconciliation cursor exceeds its bound"
+        );
+        entry.require_matches(path)?;
+        let saved: Value = serde_json::from_slice(&bytes)?;
+        Ok(saved["after"].as_str().unwrap_or("").to_owned())
+    })()
+    .unwrap_or_default()
+}
 fn record_file(name: &str) -> bool {
     name.len() == 41
         && name.to_ascii_lowercase().ends_with(".json")
@@ -558,23 +578,7 @@ impl TargetJournal {
     {
         self.directory.require_matches(&self.path)?;
         let cursor_path = self.path.join("reconcile-cursor.json");
-        let cursor = (|| -> Result<String> {
-            let mut entry = NativeEntry::open(&cursor_path, false)?;
-            ensure!(
-                entry.handle.metadata()?.len() <= 4096,
-                "Reconciliation cursor exceeds its bound"
-            );
-            let mut bytes = vec![];
-            (&mut entry.handle).take(4097).read_to_end(&mut bytes)?;
-            ensure!(
-                bytes.len() <= 4096,
-                "Reconciliation cursor exceeds its bound"
-            );
-            entry.require_matches(&cursor_path)?;
-            let saved: Value = serde_json::from_slice(&bytes)?;
-            Ok(saved["after"].as_str().unwrap_or("").to_owned())
-        })()
-        .unwrap_or_default();
+        let cursor = read_cursor(&cursor_path);
         let mut reached = cursor.is_empty();
         let mut last = String::new();
         let mut checked = 0;
@@ -638,6 +642,19 @@ impl TargetJournal {
             let _ = atomic_json_until(&cursor_path, &json!({"after":last}), deadline);
         }
         Ok(results)
+    }
+    /// The allocation the failed-run backstop tried last.
+    pub(crate) fn failed_sweep_cursor(&self) -> String {
+        read_cursor(&self.path.join("failed-sweep-cursor.json"))
+    }
+    pub(crate) fn set_failed_sweep_cursor(&self, id: &str, deadline: Instant) -> Result<()> {
+        ensure!(uuid(&json!(id)), "Invalid target allocation identity");
+        self.directory.require_matches(&self.path)?;
+        atomic_json_until(
+            &self.path.join("failed-sweep-cursor.json"),
+            &json!({"after":id}),
+            deadline,
+        )
     }
     /// Uncommitted, unretired records, read in directory order until the deadline.
     /// Unreadable records are skipped; nothing is locked or written.

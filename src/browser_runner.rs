@@ -1702,6 +1702,10 @@ async fn run_native_consultation(
             return store.require(id);
         }
         let completed=parent.complete(cancel)?;
+        if attempt.provider==crate::browser_attempt::Provider::Grok {
+            // The consultation completed through Grok; the failed ChatGPT attempt's tab is unused now.
+            crate::browser_retirement::close_failed_consultation(store,id).await;
+        }
         let text=String::from_utf8(captured(store,id)?)?;
         crate::notify::completed(&completed,&text).await;
         if let Err(error)=crate::browser_attempt::settle_selected_saved(store,id,cancel).await {
@@ -6168,7 +6172,7 @@ async fn recover_existing_inner(
         runtime.get("borrowedTarget").is_none_or(Value::is_null),
         "A --browser-tab run borrowed the user's tab and holds no recovery authority; read its answer with alcuin session <id> --harvest."
     );
-    crate::browser_retirement::require_target_open(&saved)?;
+    crate::browser_retirement::require_target_open(store, &saved)?;
     let followups = crate::browser_turns::prompts(&saved["options"])?;
     let turn_index = crate::browser_turns::index(&saved)?;
     if !followups.is_empty() && saved["status"] != "completed" {

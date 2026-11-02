@@ -206,7 +206,6 @@ pub(crate) fn pinned_target(
     if !crate::browser_attempt::internal(meta) {
         return Ok(None);
     }
-    crate::browser_retirement::require_target_open(meta)?;
     let runtime = &meta["browser"]["runtime"];
     let endpoint = AttachmentEndpoint {
         host: runtime["chromeHost"]
