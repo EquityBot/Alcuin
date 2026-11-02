@@ -8908,3 +8908,50 @@ async fn remote_host_downloads_are_not_redirected_into_local_directories() {
     assert!(log.lines().any(|row| row == "[browser] WARNING: 1 downloadable candidate(s) existed, but no local browser-host artifact was saved; bridge artifact-ready will not be emitted until ChatGPT file capture succeeds."), "{log}");
     stop(f).await;
 }
+
+#[test]
+fn a_failed_attempt_reports_nothing_sent_only_without_dispatch_or_tab() {
+    let (_root, manifest) = dead_provider_attempt();
+    let store =
+        SessionStore::new(std::path::Path::new(manifest["home"].as_str().unwrap()).join(".oracle"));
+    let parent = manifest["parentId"].as_str().unwrap();
+    let child = manifest["childId"].as_str().unwrap();
+    // Rewrites the child as a run leaves it: an unwritten dispatch record has no key at all.
+    let write = |dispatch: Option<Value>, target: Option<&str>| {
+        let path = store.directory(child).unwrap().join("meta.json");
+        let mut meta: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        let record = meta.as_object_mut().unwrap();
+        record.remove("recoveryRequired");
+        record.remove("dispatch");
+        if let Some(dispatch) = dispatch {
+            record.insert("dispatch".into(), dispatch);
+        }
+        let runtime = meta["browser"]["runtime"].as_object_mut().unwrap();
+        runtime.remove("chromeTargetId");
+        if let Some(target) = target {
+            runtime.insert("chromeTargetId".into(), json!(target));
+        }
+        fs::write(&path, serde_json::to_vec(&meta).unwrap()).unwrap();
+    };
+    write(Some(json!({"state":"started"})), None);
+    let started = attempt_failure(&store, parent, child);
+    assert!(started.contains("recovery evidence"), "{started}");
+    write(None, Some("PUBLIC-target"));
+    let tab = attempt_failure(&store, parent, child);
+    assert!(tab.contains("recovery evidence"), "{tab}");
+    write(None, None);
+    let unsent = attempt_failure(&store, parent, child);
+    assert!(unsent.contains("nothing was sent"), "{unsent}");
+    // An unsent-looking child proves nothing unless it is the parent's active attempt.
+    let other = attempt_failure(&store, parent, "PUBLIC-other-child");
+    assert!(other.contains("recovery evidence"), "{other}");
+    store
+        .update(parent, |current| {
+            let mut browser = current["browser"].clone();
+            browser["consultation"]["active"] = Value::Null;
+            Ok(Some(json!({ "browser": browser })))
+        })
+        .unwrap();
+    let unlinked = attempt_failure(&store, parent, child);
+    assert!(unlinked.contains("recovery evidence"), "{unlinked}");
+}

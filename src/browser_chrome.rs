@@ -166,7 +166,7 @@ async fn launch_remote(
             Ok(endpoint) => return Ok(endpoint),
             Err(error) if wait.is_zero() || cancel.is_cancelled() => {
                 return Err(error.context(format!(
-                    "remoteChromeLauncher {} did not open DevTools on {host}:{port}",
+                    "remoteChromeLauncher {} did not open DevTools on {host}:{port}; one possible cause is a browser already running on its profile without DevTools, which ignores the launcher's flags: if so, close it and rerun",
                     launcher.display()
                 )));
             }

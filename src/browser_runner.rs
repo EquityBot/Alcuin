@@ -1619,6 +1619,22 @@ pub(crate) async fn run_native_with_capture(
     ))
     .await
 }
+/// What a failed first attempt leaves behind. Recovery-free attempts (no dispatch record, no tab,
+/// no fresh profile) cannot have sent, so the consult wrapper may send the packet by another route.
+fn attempt_failure(store: &SessionStore, parent: &str, child: &str) -> String {
+    // Only proof about this child counts: needs_recovery is also false with no active attempt.
+    let unsent = store.require(parent).is_ok_and(|parent| {
+        parent["browser"]["consultation"]["active"]["childId"] == child
+            && !crate::browser_attempt::needs_recovery(store, &parent)
+    });
+    if !unsent {
+        format!(
+            "Provider attempt {child} failed; its recovery evidence is retained and its tab is closed once the consultation ends"
+        )
+    } else {
+        format!("Provider attempt {child} failed before sending its prompt; nothing was sent")
+    }
+}
 /// Own the public session separately from the provider's dispatch and recovery capability.
 async fn run_native_consultation(
     store: &SessionStore,
@@ -1666,7 +1682,7 @@ async fn run_native_consultation(
         let attempt=match Box::pin(run_native_prepared(store,&first.child_id,environment,identity,cancel,CaptureBoundary::ParentAttempt,bootstrap)).await {
             Ok(_) => first,
             Err(error) => {
-                let retained=format!("Provider attempt {} failed; its recovery evidence is retained and its tab is closed once the consultation ends",first.child_id);
+                let retained=attempt_failure(store,id,&first.child_id);
                 // Remote runs never retry or switch: their capture belongs to the remote client.
                 let retry=if capture.is_none() {
                     parent.retry_unsent(&first,&error,cancel)
