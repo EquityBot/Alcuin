@@ -1548,6 +1548,19 @@ impl ProfileRegistry {
         Ok(removed)
     }
 }
+/// An allocation that never recorded a target. Every send needs an `OwnedTarget`, issued only
+/// after its id reaches this record, so nothing can have been sent through it. At worst its exited
+/// controller left an unidentified blank tab. A native identity marks a record this build's
+/// admission wrote; legacy and unknown records stay capacity blockers.
+fn targetless_allocation(lease: &Value) -> bool {
+    lease["targetDispositionPending"] == true
+        && lease["chromeTargetId"].is_null()
+        && lease["targetDispositionAllocationId"].is_null()
+        && lease["promptSubmitted"] != true
+        && lease.get("uncertainSubmission").is_none()
+        && lease.get("processIdentity").is_some()
+        && text_id(&lease["sessionId"])
+}
 fn prune(registry: &mut Value, now: i64) -> Result<()> {
     let leases = registry["leases"]
         .as_array_mut()
@@ -1556,11 +1569,13 @@ fn prune(registry: &mut Value, now: i64) -> Result<()> {
     for mut lease in std::mem::take(leases) {
         if lease["capacityReleased"] == true
             || fresh(&lease, now)
-            || lease["targetDispositionPending"] == true && !recoverable(&lease)
+            || lease["targetDispositionPending"] == true
+                && !recoverable(&lease)
+                && !targetless_allocation(&lease)
             || record_liveness(&lease) != Liveness::Dead
         {
             retained.push(lease);
-        } else if lease["targetDispositionPending"] == true {
+        } else if lease["targetDispositionPending"] == true && recoverable(&lease) {
             lease["capacityReleased"] = json!(true);
             retained.push(lease);
         }
@@ -2725,6 +2740,114 @@ mod tests {
             "ambiguous"
         );
         assert_eq!(retained["leases"][0]["chromeTargetId"], "PUBLIC-TARGET");
+    }
+    /// A lease as the live runner leaves it after `Target.createTarget` fails, owned by `owner`.
+    async fn lost_allocation_record(
+        owner: &ProcessIdentity,
+    ) -> (tempfile::TempDir, Arc<ProfileRegistry>) {
+        let home = tempfile::tempdir().unwrap();
+        let registry = ProfileRegistry::open(home.path()).unwrap();
+        let lease = registry
+            .acquire(
+                "public-lost-allocation",
+                Duration::from_secs(1),
+                &CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        lease
+            .update(&json!({"chromeHost":"127.0.0.1","chromePort":9333}))
+            .unwrap();
+        lease
+            .begin_allocation(None, std::time::Instant::now() + Duration::from_secs(5))
+            .unwrap();
+        registry
+            .transaction(|records, _| {
+                let record = &mut records["leases"][0];
+                record["pid"] = json!(owner.pid);
+                record["processStartedAtMs"] = json!(owner.started_at_ms);
+                record["processIdentity"] = json!(owner);
+                record["updatedAt"] = json!("2000-01-01T00:00:00Z");
+                Ok(())
+            })
+            .unwrap();
+        (home, registry)
+    }
+    #[tokio::test]
+    async fn exited_controller_with_a_lost_allocation_frees_its_slot() {
+        let (_home, registry) = lost_allocation_record(&exited_identity()).await;
+        let next = registry
+            .acquire_with_limit(
+                "public-next",
+                1,
+                Duration::from_secs(5),
+                &CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        let records = registry.records().unwrap();
+        let rows = records["leases"].as_array().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["sessionId"], "public-next");
+        next.release().unwrap();
+    }
+    #[tokio::test]
+    async fn lost_allocation_keeps_its_slot_without_proof_that_nothing_was_sent() {
+        let exited = exited_identity();
+        let current = ProcessIdentity::current().unwrap();
+        let mut unknown = exited.clone();
+        unknown.native_start = 0;
+        // Each record stays exactly as it was: live or unknown owners, recent records, and any
+        // record that shows a target or a send.
+        let cases: [(&ProcessIdentity, Value); 8] = [
+            (&current, json!({})),
+            (&unknown, json!({})),
+            (&exited, json!({"updatedAt":timestamp()})),
+            (&exited, json!({"promptSubmitted":true})),
+            (
+                &exited,
+                json!({"uncertainSubmission":{"state":"ambiguous"}}),
+            ),
+            (
+                &exited,
+                json!({"targetDispositionAllocationId":Uuid::new_v4().to_string()}),
+            ),
+            (&exited, json!({"chromeTargetId":""})),
+            (&exited, json!({"processIdentity":null})),
+        ];
+        for (owner, patch) in cases {
+            let (_home, registry) = lost_allocation_record(owner).await;
+            let before = registry
+                .transaction(|records, _| {
+                    let record = &mut records["leases"][0];
+                    *record = merge_object(record, &patch);
+                    if patch.get("processIdentity").is_some() {
+                        record.as_object_mut().unwrap().remove("processIdentity");
+                    }
+                    Ok(records.clone())
+                })
+                .unwrap();
+            let mut pruned = before.clone();
+            prune(&mut pruned, chrono::Utc::now().timestamp_millis()).unwrap();
+            assert_eq!(pruned, before, "{patch}");
+        }
+    }
+    #[tokio::test]
+    async fn lost_allocation_with_a_malformed_identity_is_refused_and_never_freed() {
+        let exited = exited_identity();
+        let (_home, registry) = lost_allocation_record(&exited).await;
+        let malformed = json!({"pid":exited.pid});
+        let stored = registry.transaction(|records, _| {
+            records["leases"][0]["processIdentity"] = malformed.clone();
+            Ok(())
+        });
+        assert!(stored.is_err());
+        // A record read from elsewhere still needs a parsed identity verified dead.
+        let mut records = registry.records().unwrap();
+        records["leases"][0]["processIdentity"] = malformed;
+        let before = records.clone();
+        prune(&mut records, chrono::Utc::now().timestamp_millis()).unwrap();
+        assert_eq!(records, before);
     }
     fn exited_identity() -> ProcessIdentity {
         let mut child = std::process::Command::new(std::env::current_exe().unwrap())
