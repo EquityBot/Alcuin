@@ -539,3 +539,52 @@ fn over_budget_cli_runs_print_the_file_report_before_the_refusal() {
     assert!(stdout.contains("PUBLIC-notes.txt"), "{stdout}");
     assert!(stderr.contains("Input too large ("), "{stderr}");
 }
+
+#[test]
+fn duplicate_guard_skips_a_run_whose_worker_is_dead() {
+    let live = ProcessIdentity::current().unwrap();
+    let mut dead = live.clone();
+    dead.pid = u32::MAX;
+    dead.started_at_ms = 1.0;
+    for (owner, blocked) in [(dead, false), (live, true)] {
+        let home = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(home.path());
+        let request = execution::resolve(
+            &json!({"prompt":PROMPT,"engine":"api"}),
+            &json!({}),
+            &Environment::new(),
+            home.path(),
+        )
+        .unwrap();
+        let earlier = store
+            .create(request.options.clone(), home.path(), None)
+            .unwrap();
+        let earlier = earlier["id"].as_str().unwrap().to_owned();
+        store
+            .update(&earlier, |_| Ok(Some(json!({"status":"running","lifecycle":{"processIdentity":owner,"workerPid":owner.pid,"workerProcessStartedAtMs":owner.started_at_ms}}))))
+            .unwrap();
+        let saved = |store: &SessionStore| {
+            store
+                .list(false)
+                .unwrap()
+                .into_iter()
+                .find(|meta| meta["id"] == earlier.as_str())
+                .unwrap()
+        };
+        let before = saved(&store);
+        let result = execution::prepare(
+            &store,
+            &request,
+            home.path(),
+            route(ApiTransport::Responses, "https://synthetic.example/v1"),
+        );
+        assert_eq!(
+            result
+                .as_ref()
+                .is_err_and(|error| error.downcast_ref::<execution::DuplicatePrompt>().is_some()),
+            blocked,
+            "{result:?}"
+        );
+        assert_eq!(saved(&store), before);
+    }
+}
