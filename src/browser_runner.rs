@@ -284,12 +284,14 @@ fn prepare_with_base(
     )?;
     if source.is_none() && request.options["force"] != true {
         // A run whose worker and controller are verifiably dead no longer counts as running.
-        for current in store.list(false)? {
+        // Summaries skip finished sessions' model runs, which status and prompt do not need.
+        for current in store.list(true)? {
+            let id = current["id"].as_str().unwrap_or("unknown");
             anyhow::ensure!(
                 !matches!(current["status"].as_str(), Some("pending" | "running"))
                     || current["options"]["prompt"] != request.options["prompt"]
                     || store.verified_dead_run(&current),
-                "An identical prompt is already running; reattach to the retained session"
+                "An identical prompt is already running ({id}); reattach to the retained session with \"alcuin session {id}\""
             );
         }
     }
