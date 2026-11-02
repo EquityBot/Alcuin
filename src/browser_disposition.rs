@@ -669,20 +669,41 @@ impl TargetJournal {
         id: &str,
         deadline: Instant,
     ) -> Result<()> {
+        self.write_failed_sweep_cursor(key, id, deadline, &|| {})
+    }
+    /// Sweeps of different browsers share the file: the read-modify-write holds its lock.
+    /// A busy lock skips this write rather than delay the sweep.
+    fn write_failed_sweep_cursor(
+        &self,
+        key: &str,
+        id: &str,
+        deadline: Instant,
+        after_read: &dyn Fn(),
+    ) -> Result<()> {
         ensure!(
             digest(&json!(key)) && uuid(&json!(id)),
             "Invalid failed-run sweep cursor"
         );
         self.directory.require_matches(&self.path)?;
+        let lock = DirectoryLock::acquire_until(
+            &self.path.join("failed-sweep-cursor.lock"),
+            deadline.min(Instant::now() + Duration::from_millis(250)),
+        )
+        .context("Failed-run sweep cursor is busy")?;
         let path = self.path.join("failed-sweep-cursor.json");
         let mut rows = read_bounded_json(&path)
             .and_then(|saved| saved["cursors"].as_array().cloned())
             .unwrap_or_default();
+        after_read();
         rows.retain(|row| row["key"] != key && digest(&row["key"]) && uuid(&row["after"]));
         rows.push(json!({"key":key,"after":id}));
         let excess = rows.len().saturating_sub(FAILED_SWEEP_CURSORS);
         rows.drain(..excess);
-        atomic_json_until(&path, &json!({"version":1,"cursors":rows}), deadline)
+        let written = atomic_json_until(&path, &json!({"version":1,"cursors":rows}), deadline);
+        if let Err(error) = lock.release() {
+            eprintln!("Failed-run sweep cursor lock release remains pending: {error:#}");
+        }
+        written
     }
     /// Uncommitted, unretired records, read in directory order until the deadline.
     /// Unreadable records are skipped; nothing is locked or written.
@@ -1349,6 +1370,49 @@ mod tests {
         let creator = record["creator"].clone();
         atomic_json(&journal.file(&creator["allocationId"]).unwrap(), &record).unwrap();
         creator
+    }
+    #[test]
+    fn concurrent_failed_sweep_cursor_writes_keep_both_browsers() {
+        let home = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(home.path().join(".oracle"));
+        let journal = TargetJournal::open(&store).unwrap();
+        let (a, b) = (sha256(b"PUBLIC-browser-a"), sha256(b"PUBLIC-browser-b"));
+        let read = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let writer = {
+            let (store, read, a) = (store.clone(), read.clone(), a.clone());
+            std::thread::spawn(move || {
+                TargetJournal::open(&store)
+                    .unwrap()
+                    .write_failed_sweep_cursor(
+                        &a,
+                        "00000000-0000-4000-8000-000000000001",
+                        Instant::now() + Duration::from_secs(5),
+                        &|| {
+                            // The other writer starts now; hold the read state briefly.
+                            read.wait();
+                            std::thread::sleep(Duration::from_millis(100));
+                        },
+                    )
+                    .unwrap();
+            })
+        };
+        read.wait();
+        journal
+            .set_failed_sweep_cursor(
+                &b,
+                "ffffffff-ffff-4fff-8fff-ffffffffffff",
+                Instant::now() + Duration::from_secs(5),
+            )
+            .unwrap();
+        writer.join().unwrap();
+        assert_eq!(
+            journal.failed_sweep_cursor(&a),
+            "00000000-0000-4000-8000-000000000001"
+        );
+        assert_eq!(
+            journal.failed_sweep_cursor(&b),
+            "ffffffff-ffff-4fff-8fff-ffffffffffff"
+        );
     }
     #[tokio::test]
     async fn reconciliation_advances_its_cursor_and_limits_each_pass_to_four() {

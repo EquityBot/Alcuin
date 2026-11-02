@@ -382,8 +382,17 @@ pub(crate) async fn close_failed_consultation(store: &SessionStore, id: &str) {
                 .connect(remaining(slice)?, &CancellationToken::new())
                 .await?;
             let closed = close_failed_targets(store, &browser, &endpoint, Some(id), slice).await;
-            if let Err(error) = browser.disconnect_and_wait(Duration::from_secs(1)).await {
-                eprintln!("Failed-run tab cleanup connection remains open: {error:#}");
+            // The close wait stays inside this browser's slice; a spent slice only disconnects.
+            match remaining(slice) {
+                Ok(wait) => {
+                    if let Err(error) = browser
+                        .disconnect_and_wait(wait.min(Duration::from_secs(1)))
+                        .await
+                    {
+                        eprintln!("Failed-run tab cleanup connection remains open: {error:#}");
+                    }
+                }
+                Err(_) => browser.disconnect(),
             }
             closed
         }
