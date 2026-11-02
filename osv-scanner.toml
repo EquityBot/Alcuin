@@ -1,0 +1,15 @@
+# OSV-Scanner reads this file next to Cargo.lock, and OpenSSF Scorecard's Vulnerabilities check runs
+# OSV-Scanner. These are the advisories .cargo/audit.toml already ignores, with the same reasons;
+# review both files together. fuzz/osv-scanner.toml repeats them for fuzz/Cargo.lock.
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0370"
+reason = "zvariant unmaintained, no vulnerability; via zbus 5 <- secret-service, Linux only (.cargo/audit.toml)"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0371"
+reason = "zbus_names unmaintained, no vulnerability; via zbus 5 <- secret-service, Linux only (.cargo/audit.toml)"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0372"
+reason = "zvariant_derive unmaintained, no vulnerability; via zbus 5 <- secret-service, Linux only (.cargo/audit.toml)"
