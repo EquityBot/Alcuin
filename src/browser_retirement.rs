@@ -391,8 +391,10 @@ async fn retire_restarted(
         let retired = journal
             .retire_uncommitted(&record["creator"], budget, |record| async move {
                 let original = record_endpoint(&record)?;
+                // Half the budget: an earlier socket that never answers must still leave
+                // time to save the retirement before the operation deadline.
                 let connected = original
-                    .connect(remaining(budget)?, &CancellationToken::new())
+                    .connect(remaining(budget)? / 2, &CancellationToken::new())
                     .await;
                 if let Ok(original) = connected {
                     original.disconnect();
@@ -2424,6 +2426,7 @@ mod tests {
         Settled,
         Restarted,
         RestartedLive,
+        RestartedHung,
         UncertainRecent,
         UncertainExpired,
         UncertainAnswered,
@@ -2592,21 +2595,30 @@ mod tests {
         let store = SessionStore::new(home.path().join(".oracle"));
         let journal = TargetJournal::open(&store).unwrap();
         // A restarted browser's endpoint is a real local port: its earlier socket is refused
-        // there, or for RestartedLive still accepted.
+        // there, for RestartedLive still accepted, and for RestartedHung never answered.
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = match case {
-            Failed::Restarted | Failed::RestartedLive => listener.local_addr().unwrap().port(),
+            Failed::Restarted | Failed::RestartedLive | Failed::RestartedHung => {
+                listener.local_addr().unwrap().port()
+            }
             _ => 9222,
         };
-        let earlier = if case == Failed::RestartedLive {
-            tokio::spawn(async move {
+        let earlier = match case {
+            Failed::RestartedLive => tokio::spawn(async move {
                 while let Ok((socket, _)) = listener.accept().await {
                     let _socket = tokio_tungstenite::accept_async(socket).await;
                 }
-            })
-        } else {
-            drop(listener);
-            tokio::spawn(async {})
+            }),
+            Failed::RestartedHung => tokio::spawn(async move {
+                let mut held = vec![];
+                while let Ok((socket, _)) = listener.accept().await {
+                    held.push(socket);
+                }
+            }),
+            _ => {
+                drop(listener);
+                tokio::spawn(async {})
+            }
         };
         let endpoint = AttachmentEndpoint {
             host: "127.0.0.1".into(),
@@ -2618,7 +2630,7 @@ mod tests {
             Failed::OtherBrowser => {
                 "ws://127.0.0.1:9223/devtools/browser/PUBLIC-other-browser".into()
             }
-            Failed::Restarted | Failed::RestartedLive => {
+            Failed::Restarted | Failed::RestartedLive | Failed::RestartedHung => {
                 format!("ws://127.0.0.1:{port}/devtools/browser/PUBLIC-earlier-browser")
             }
             _ => endpoint.browser_ws_endpoint.clone(),
@@ -2863,16 +2875,19 @@ mod tests {
     }
     #[tokio::test]
     async fn a_restarted_browsers_uncommitted_record_is_marked_absent_without_a_close() {
-        let run = failed_fixture(Failed::Restarted, false).await;
-        assert_eq!(run.record["disposition"]["decision"], "retired");
-        assert_eq!(run.record["disposition"]["absence"], "confirmed-absent");
-        assert_eq!(run.record["disposition"]["reason"], "browser-restarted");
-        assert!(closes(&run.requests).is_empty());
-        assert!(
-            run.requests
-                .iter()
-                .all(|request| request["method"] != "Target.attachToTarget")
-        );
+        // A refused or unanswered earlier socket both leave time to save the retirement.
+        for case in [Failed::Restarted, Failed::RestartedHung] {
+            let run = failed_fixture(case, false).await;
+            assert_eq!(run.record["disposition"]["decision"], "retired", "{case:?}");
+            assert_eq!(run.record["disposition"]["absence"], "confirmed-absent");
+            assert_eq!(run.record["disposition"]["reason"], "browser-restarted");
+            assert!(closes(&run.requests).is_empty());
+            assert!(
+                run.requests
+                    .iter()
+                    .all(|request| request["method"] != "Target.attachToTarget")
+            );
+        }
     }
     #[test]
     fn only_another_browser_id_counts_as_a_restart_and_cleanup_errors_stay_bounded() {
@@ -3070,7 +3085,13 @@ mod tests {
         assert_eq!(parent["errorMessage"], "PUBLIC parent error");
         // The open tab's real error is kept with the consultation.
         let warning = parent["failedTabCleanupWarning"]["error"].as_str().unwrap();
-        assert!(warning.contains("CDP endpoint is unavailable"), "{warning}");
+        // The transport error itself varies: a refusal, or a timeout where the OS retries.
+        assert!(
+            warning.contains(&format!(
+                "127.0.0.1:{gone_port}/devtools/browser/PUBLIC-gone"
+            )),
+            "{warning}"
+        );
         assert!(parent["failedTabCleanupWarning"]["checkedAt"].is_string());
     }
     #[tokio::test]
