@@ -342,8 +342,18 @@ pub(crate) async fn observe_retirement(
         )
         .await?;
     accept_saved_answer(&request, session, &observed)?;
+    // Identity must match exactly. Drifted answer text only warns: the saved answer is
+    // verified on disk, and retirement compares its content hash (also warning only).
+    let identity = |observation: &Value| {
+        let mut observation = observation.clone();
+        if let Some(fields) = observation.as_object_mut() {
+            fields.remove("text");
+            fields.remove("providerText");
+        }
+        observation
+    };
     ensure!(
-        observed == session["browser"]["runtime"]["acceptedObservation"],
+        identity(&observed) == identity(&session["browser"]["runtime"]["acceptedObservation"]),
         "Grok original Private answer changed before retirement"
     );
     Ok(observed)

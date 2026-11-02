@@ -7478,11 +7478,13 @@ fn duplicate_guard_admits_only_a_run_whose_worker_and_controller_are_dead() {
     dead.started_at_ms = 1.0;
     assert_eq!(dead.liveness(), Liveness::Dead);
     // Shaped like the 2 November attempt child: sent, then its shared worker died.
-    let owned = |owner: &ProcessIdentity, status: &str| json!({"status":status,"lifecycle":{"processIdentity":owner,"workerPid":owner.pid,"workerProcessStartedAtMs":owner.started_at_ms},"browser":{"runtime":{"controllerPid":owner.pid,"controllerProcessStartedAtMs":owner.started_at_ms}},"dispatch":{"state":"acknowledged"},"recoveryRequired":true});
+    let owned = |worker: &ProcessIdentity, controller: &ProcessIdentity, status: &str| json!({"status":status,"lifecycle":{"processIdentity":worker,"workerPid":worker.pid,"workerProcessStartedAtMs":worker.started_at_ms},"browser":{"runtime":{"controllerPid":controller.pid,"controllerProcessStartedAtMs":controller.started_at_ms}},"dispatch":{"state":"acknowledged"},"recoveryRequired":true});
     for (saved, blocked) in [
-        (owned(&dead, "running"), false),
-        (owned(&live, "running"), true),
-        (owned(&dead, "pending"), true),
+        (owned(&dead, &dead, "running"), false),
+        (owned(&live, &live, "running"), true),
+        // A live recorded browser controller keeps blocking after its worker dies.
+        (owned(&dead, &live, "running"), true),
+        (owned(&dead, &dead, "pending"), true),
         // An unverified worker still blocks once the listing zombie rule would settle it.
         (
             json!({"status":"running","startedAt":"2026-01-01T00:00:00.000Z"}),

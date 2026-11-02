@@ -692,6 +692,35 @@ impl SessionStore {
         output.sort_by(|a, b| b["createdAt"].as_str().cmp(&a["createdAt"].as_str()));
         Ok(output)
     }
+    /// The `list(true)` sessions whose stored metadata text contains `needle`, unsorted.
+    /// The text search parses no session, so an exact-identifier search stays cheap in a
+    /// large store. A field can equal an ASCII alphanumeric or '-' `needle` only if its JSON
+    /// text contains it: serde_json and the legacy JSON.stringify writers never escape those.
+    /// A file that exists but cannot be read is kept for `read_raw` to decide.
+    pub(crate) fn list_mentioning(&self, needle: &str) -> Result<Vec<Value>> {
+        let mut output = vec![];
+        let entries = match fs::read_dir(self.root()) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(output),
+            entries => entries?,
+        };
+        for entry in entries.flatten() {
+            let id = entry.file_name().to_string_lossy().into_owned();
+            if !valid_id(&id) {
+                continue;
+            }
+            let dir = self.directory(&id)?;
+            let mentions = ["meta.json", "session.json"].into_iter().any(|name| {
+                match fs::read(dir.join(name)) {
+                    Ok(raw) => String::from_utf8_lossy(&raw).contains(needle),
+                    Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+                }
+            });
+            if mentions && let Some(meta) = self.read_raw(&id, true)? {
+                output.push(meta);
+            }
+        }
+        Ok(output)
+    }
     pub async fn wait(
         &self,
         id: &str,
@@ -1171,5 +1200,38 @@ mod deadline_tests {
             })
             .unwrap();
         assert_eq!(saved["marker"], "PUBLIC settled");
+    }
+    #[test]
+    fn target_search_reads_sessions_naming_it_and_keeps_unreadable_ones() {
+        let home = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(home.path());
+        let name = |prompt: &str, target: &str| {
+            let meta = store
+                .create(json!({"prompt":prompt}), home.path(), None)
+                .unwrap();
+            let id = meta["id"].as_str().unwrap().to_owned();
+            store
+                .update(&id, |_| {
+                    Ok(Some(
+                        json!({"browser":{"runtime":{"chromeTargetId":target}}}),
+                    ))
+                })
+                .unwrap();
+            id
+        };
+        let named = name("PUBLIC named", "PUBLIC-TARGET");
+        name("PUBLIC unrelated", "PUBLIC-OTHER");
+        // A metadata file that exists but cannot be read is not evidence of absence.
+        let unreadable = name("PUBLIC unreadable", "PUBLIC-OTHER");
+        let dir = store.directory(&unreadable).unwrap();
+        std::fs::rename(dir.join("meta.json"), dir.join("session.json")).unwrap();
+        std::fs::create_dir(dir.join("meta.json")).unwrap();
+        let found = store
+            .list_mentioning("PUBLIC-TARGET")
+            .unwrap()
+            .into_iter()
+            .map(|meta| meta["id"].as_str().unwrap().to_owned())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(found, [named, unreadable].into());
     }
 }

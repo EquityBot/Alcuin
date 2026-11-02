@@ -1670,7 +1670,7 @@ async fn run_native_consultation(
         let attempt=match Box::pin(run_native_prepared(store,&first.child_id,environment,identity,cancel,CaptureBoundary::ParentAttempt,bootstrap)).await {
             Ok(_) => first,
             Err(error) => {
-                let retained=format!("Provider attempt {} failed; its original target and recovery evidence are retained",first.child_id);
+                let retained=format!("Provider attempt {} failed; its recovery evidence is retained and its tab is closed once the consultation ends",first.child_id);
                 // Remote runs never switch: their capture belongs to the remote client.
                 let switched=if capture.is_none() {
                     parent.switch_to_grok(&first,&error,environment,cancel)
@@ -1681,7 +1681,7 @@ async fn run_native_consultation(
                 let Some(grok)=switched else {
                     return Err(error.context(retained));
                 };
-                eprintln!("[browser] ChatGPT attempt {} failed after bounded original-target recovery; consulting grok.com once in its separate Private profile. The ChatGPT records and target are retained.",first.child_id);
+                eprintln!("[browser] ChatGPT attempt {} failed after bounded original-target recovery; consulting grok.com once in its separate Private profile. The ChatGPT records are retained; a later cleanup closes its tab.",first.child_id);
                 let ran=match start_owner(store,&grok.child_id,identity) {
                     Ok(_) => Box::pin(run_native_prepared(store,&grok.child_id,environment,identity,cancel,CaptureBoundary::ParentAttempt,None)).await,
                     Err(failed) => Err(failed),
@@ -1699,13 +1699,17 @@ async fn run_native_consultation(
         parent.adopt(&attempt.child_id,cancel)?;
         if attempt.provider==crate::browser_attempt::Provider::Grok {
             let mode=store.require(&attempt.child_id)?["browser"]["runtime"]["modelSelection"]["selectedMode"].as_str().unwrap_or("unknown").to_owned();
-            eprintln!("[browser] Answer adopted from Grok {mode} (verified Private Chat) after the provider switch; ChatGPT attempt {} keeps its retained target.",first_child);
+            eprintln!("[browser] Answer adopted from Grok {mode} (verified Private Chat) after the provider switch; ChatGPT attempt {} keeps its records; a later cleanup closes its tab.",first_child);
         }
         if let Some(hook)=capture {
             parent.issue_capture(&hook,cancel)?;
             return store.require(id);
         }
         let completed=parent.complete(cancel)?;
+        if attempt.provider==crate::browser_attempt::Provider::Grok {
+            // The consultation completed through Grok; the failed ChatGPT attempt's tab is unused now.
+            crate::browser_retirement::close_failed_consultation(store,id).await;
+        }
         let text=String::from_utf8(captured(store,id)?)?;
         crate::notify::completed(&completed,&text).await;
         if let Err(error)=crate::browser_attempt::settle_selected_saved(store,id,cancel).await {
@@ -1725,6 +1729,8 @@ async fn run_native_consultation(
             "completedAt":timestamp(),"errorMessage":format!("{error:#}"),
             "recoveryRequired":current["recoveryRequired"]==true || crate::browser_attempt::needs_recovery(store,current)})
         })?;
+        // The consultation and its attempts are terminal now: close their tabs.
+        crate::browser_retirement::close_failed_consultation(store, id).await;
     }
     result
 }
@@ -6170,6 +6176,7 @@ async fn recover_existing_inner(
         runtime.get("borrowedTarget").is_none_or(Value::is_null),
         "A --browser-tab run borrowed the user's tab and holds no recovery authority; read its answer with alcuin session <id> --harvest."
     );
+    crate::browser_retirement::require_target_open(store, &saved)?;
     let followups = crate::browser_turns::prompts(&saved["options"])?;
     let turn_index = crate::browser_turns::index(&saved)?;
     if !followups.is_empty() && saved["status"] != "completed" {
