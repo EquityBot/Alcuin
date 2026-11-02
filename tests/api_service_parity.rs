@@ -3,7 +3,7 @@
 use alcuin::{
     config::Environment,
     execution,
-    process::ProcessIdentity,
+    process::{Liveness, ProcessIdentity},
     providers::{
         self, ApiTransport, FailureReason, HttpProvider, ProviderError, ResponseObserver,
         ResponseProvider, Route, Secret,
@@ -538,4 +538,62 @@ fn over_budget_cli_runs_print_the_file_report_before_the_refusal() {
     assert!(stdout.contains("File Token Usage"), "{stdout}");
     assert!(stdout.contains("PUBLIC-notes.txt"), "{stdout}");
     assert!(stderr.contains("Input too large ("), "{stderr}");
+}
+
+#[test]
+fn duplicate_guard_admits_only_a_run_whose_worker_is_dead() {
+    let live = ProcessIdentity::current().unwrap();
+    let mut dead = live.clone();
+    dead.pid = u32::MAX;
+    dead.started_at_ms = 1.0;
+    assert_eq!(dead.liveness(), Liveness::Dead);
+    let owned = |owner: &ProcessIdentity, status: &str| json!({"status":status,"lifecycle":{"processIdentity":owner,"workerPid":owner.pid,"workerProcessStartedAtMs":owner.started_at_ms}});
+    for (saved, blocked) in [
+        (owned(&dead, "running"), false),
+        (owned(&live, "running"), true),
+        (owned(&dead, "pending"), true),
+        // An unverified worker still blocks once the listing zombie rule would settle it.
+        (
+            json!({"status":"running","startedAt":"2026-01-01T00:00:00.000Z"}),
+            true,
+        ),
+    ] {
+        let home = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(home.path());
+        let request = execution::resolve(
+            &json!({"prompt":PROMPT,"engine":"api"}),
+            &json!({}),
+            &Environment::new(),
+            home.path(),
+        )
+        .unwrap();
+        let earlier = store
+            .create(request.options.clone(), home.path(), None)
+            .unwrap();
+        let earlier = earlier["id"].as_str().unwrap().to_owned();
+        store.update(&earlier, |_| Ok(Some(saved.clone()))).unwrap();
+        let stored = |store: &SessionStore| {
+            store
+                .list(false)
+                .unwrap()
+                .into_iter()
+                .find(|meta| meta["id"] == earlier.as_str())
+                .unwrap()
+        };
+        let before = stored(&store);
+        let result = execution::prepare(
+            &store,
+            &request,
+            home.path(),
+            route(ApiTransport::Responses, "https://synthetic.example/v1"),
+        );
+        assert_eq!(
+            result
+                .as_ref()
+                .is_err_and(|error| error.downcast_ref::<execution::DuplicatePrompt>().is_some()),
+            blocked,
+            "{saved} {result:?}"
+        );
+        assert_eq!(stored(&store), before);
+    }
 }
