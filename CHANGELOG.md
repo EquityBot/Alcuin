@@ -21,4 +21,5 @@ First public release. Alcuin is a Rust port of a maintained fork of [Oracle](htt
 - The answer wait keeps polling for up to 10 command budgets when a page read after the send times out or throws, instead of failing the run while ChatGPT is still answering. A privacy refusal or a closed connection still ends it at once.
 - A tab retirement that has reached its outcome always records it: a slow disk write at the end of the 5 s budget no longer reports a false cleanup failure and leaves the record undecided, with the tab already closed.
 - An answer wait reached just after the bounded original-target observation ended reports the answer deadline, as it does just before: a stall there no longer replaces that failure with an untyped error that withholds the Grok fallback.
+- A browser slot held by an exited controller whose tab allocation failed before it recorded a target is freed. Nothing can have been sent through such a lease, yet it kept its slot for good, so later runs timed out waiting for a free slot.
 - Licensed under FSL-1.1-ALv2; each version also becomes available under Apache-2.0 two years after its release.

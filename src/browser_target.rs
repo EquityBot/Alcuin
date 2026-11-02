@@ -102,7 +102,8 @@ impl TargetAcquisition {
         let token = cancel.clone();
         let (reply, answer) = oneshot::channel();
         // Keep observing allocation after caller cancellation. The raw acknowledgement supplies
-        // the exact late target identity; a lost acknowledgement leaves admission retained.
+        // the exact late target identity; a lost acknowledgement leaves admission retained until
+        // this controller has exited.
         tokio::spawn(async move {
             let result = async {
                 let raw = browser
