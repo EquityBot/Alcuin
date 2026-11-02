@@ -961,7 +961,23 @@ pub(crate) fn require_target_controllers(
             }
         }
     }
-    for session in store.list(true)? {
+    // Retirement repeats this check up to 3 times within a 2 to 5 s deadline, and parsing
+    // all 4,096 sessions of a live store took about 1 s per check. Only sessions changed
+    // since the target was created can name it. shortcut: a backward clock step beyond the
+    // slack could hide one; the profile lease check below still applies. A per-target
+    // session index would remove the directory scan.
+    let since = creator
+        .and_then(|creator| creator["createdAt"].as_str())
+        .and_then(|created| chrono::DateTime::parse_from_rfc3339(created).ok())
+        .and_then(|created| std::time::SystemTime::from(created).checked_sub(SESSION_SCAN_SLACK));
+    let sessions = match target["targetId"]
+        .as_str()
+        .filter(|id| crate::browser_target::valid_id(id))
+    {
+        Some(id) => store.list_mentioning(id, since)?,
+        None => store.list(true)?,
+    };
+    for session in sessions {
         remaining(deadline)?;
         if session["id"].as_str() == current_session {
             continue;
@@ -1012,6 +1028,7 @@ pub(crate) fn require_target_controllers(
     remaining(deadline)?;
     Ok(())
 }
+const SESSION_SCAN_SLACK: Duration = Duration::from_secs(10 * 60);
 fn require_session_controller(session: &Value, creator: Option<&Value>) -> Result<()> {
     for (pid, started) in [
         (
@@ -2187,6 +2204,7 @@ mod tests {
         ForeignClaim,
         Unclaimed,
         NotPage,
+        CrowdedStore,
     }
     fn live_foreign() -> (std::process::Child, ProcessIdentity) {
         let child = if cfg!(windows) {
@@ -2412,6 +2430,23 @@ mod tests {
             claim,
             requests.clone(),
         ));
+        if case == Failed::CrowdedStore {
+            // Unrelated sessions large enough that parsing them all on each controller
+            // check outlasts the per-target budget (as 4,096 live sessions did).
+            let filler = (0..10_000)
+                .map(|index| json!({"PUBLIC":index}))
+                .collect::<Vec<_>>();
+            for index in 0..200 {
+                let id = format!("public-unrelated-{index}");
+                let directory = store.root().join(&id);
+                std::fs::create_dir_all(&directory).unwrap();
+                atomic_json(
+                    &directory.join("meta.json"),
+                    &json!({"id":id,"status":"completed","createdAt":"PUBLIC earlier","filler":filler}),
+                )
+                .unwrap();
+            }
+        }
         if case == Failed::CurrentController {
             // The failing worker's own cleanup, scoped to its consultation.
             close_failed_targets(
@@ -2455,6 +2490,7 @@ mod tests {
         for (case, last_page) in [
             (Failed::DeadController, true),
             (Failed::CurrentController, false),
+            (Failed::CrowdedStore, false),
         ] {
             let run = failed_fixture(case, last_page).await;
             let (record, session, requests) = (&run.record, &run.session, &run.requests);
