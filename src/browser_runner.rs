@@ -1629,7 +1629,7 @@ fn attempt_failure(store: &SessionStore, parent: &str, child: &str) -> String {
     });
     if !unsent {
         format!(
-            "Provider attempt {child} failed; its recovery evidence is retained and its tab is closed once the consultation ends"
+            "Provider attempt {child} failed; its recovery evidence is retained and its tab is closed once the consultation ends, or about an hour later if its prompt may have been sent"
         )
     } else {
         format!("Provider attempt {child} failed before sending its prompt; nothing was sent")

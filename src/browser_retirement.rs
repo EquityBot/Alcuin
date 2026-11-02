@@ -136,6 +136,8 @@ async fn reconcile_with_disposal(
 
 /// Recovery reads this when a failed run's original tab was closed.
 pub(crate) const FAILED_RUN_TARGET_CLOSED: &str = "failed-run-target-closed";
+// One sent run took 38 minutes to finish (30 October 2026).
+const UNCERTAIN_TAB_RETENTION: chrono::Duration = chrono::Duration::minutes(60);
 const FAILED_SWEEP_BUDGET: Duration = Duration::from_secs(5);
 const FAILED_TARGET_BUDGET: Duration = Duration::from_secs(2);
 const FAILED_ENDPOINT_BUDGET: Duration = Duration::from_secs(2);
@@ -252,6 +254,7 @@ fn failed_owner(store: &SessionStore, record: &Value, consultation: Option<&str>
     let parent = session["browser"]["attempt"]["parentId"].as_str();
     let child =
         crate::browser_attempt::internal(&session) || !session["browser"]["attempt"].is_null();
+    let mut answered = false;
     if child {
         let Some(parent) = parent else {
             return Ok(false);
@@ -263,8 +266,26 @@ fn failed_owner(store: &SessionStore, record: &Value, consultation: Option<&str>
         ) {
             return Ok(false);
         }
+        answered = parent["status"] == "completed";
+    }
+    if !answered && kept_for_recovery(&session, chrono::Utc::now()) {
+        return Ok(false);
     }
     Ok(consultation.is_none_or(|scope| scope == id || child && parent == Some(scope)))
+}
+
+/// A prompt that may have been sent can only be recovered from its live tab, since a closed
+/// Temporary Chat cannot be reopened. So the tab outlasts the failure for a while, and a later
+/// run's sweep closes it. An unreadable or future date keeps nothing open.
+fn kept_for_recovery(session: &Value, now: chrono::DateTime<chrono::Utc>) -> bool {
+    session["dispatch"]["state"] == "uncertain"
+        && session["completedAt"]
+            .as_str()
+            .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
+            .is_some_and(|failed| {
+                let age = now.signed_duration_since(failed);
+                age >= chrono::Duration::zero() && age < UNCERTAIN_TAB_RETENTION
+            })
 }
 
 /// The consultation's own uncommitted records, found through each session's saved creator
@@ -2401,6 +2422,29 @@ mod tests {
         Settled,
         Restarted,
         RestartedLive,
+        UncertainRecent,
+        UncertainExpired,
+        UncertainAnswered,
+    }
+    #[test]
+    fn only_a_recent_uncertain_send_keeps_its_tab() {
+        let now = chrono::Utc::now();
+        let failed = |state: &str, minutes: i64| {
+            let at = now - chrono::Duration::minutes(minutes);
+            json!({"dispatch":{"state":state},"completedAt":at.to_rfc3339()})
+        };
+        assert!(kept_for_recovery(&failed("uncertain", 59), now));
+        assert!(!kept_for_recovery(&failed("uncertain", 60), now));
+        assert!(!kept_for_recovery(&failed("not-started", 1), now));
+        assert!(!kept_for_recovery(&failed("uncertain", -5), now));
+        assert!(!kept_for_recovery(
+            &json!({"dispatch":{"state":"uncertain"},"completedAt":"PUBLIC unreadable"}),
+            now
+        ));
+        assert!(!kept_for_recovery(
+            &json!({"dispatch":{"state":"uncertain"}}),
+            now
+        ));
     }
     fn live_foreign() -> (std::process::Child, ProcessIdentity) {
         let child = if cfg!(windows) {
@@ -2583,13 +2627,33 @@ mod tests {
         );
         store
             .update(&parent, |_| {
-                Ok(Some(
-                    json!({"status":if case == Failed::ParentRunning {"running"} else {"error"},
+                Ok(Some(json!({"status":match case {
+                        Failed::ParentRunning => "running",
+                        Failed::UncertainAnswered => "completed",
+                        _ => "error",
+                    },
                     "errorMessage":"PUBLIC parent error",
-                    "browser":{"consultation":{"attempts":[{"childId":child}]}}}),
-                ))
+                    "browser":{"consultation":{"attempts":[{"childId":child}]}}})))
             })
             .unwrap();
+        if matches!(
+            case,
+            Failed::UncertainRecent | Failed::UncertainExpired | Failed::UncertainAnswered
+        ) {
+            let minutes = if case == Failed::UncertainExpired {
+                61
+            } else {
+                1
+            };
+            let at = chrono::Utc::now() - chrono::Duration::minutes(minutes);
+            store
+                .update(&child, |_| {
+                    Ok(Some(
+                        json!({"dispatch":{"state":"uncertain"},"completedAt":at.to_rfc3339()}),
+                    ))
+                })
+                .unwrap();
+        }
         let mut record = journal.read(&creator["allocationId"]).unwrap();
         let (mut foreign_process, foreign) = live_foreign();
         match case {
@@ -2729,6 +2793,8 @@ mod tests {
             (Failed::CurrentController, false),
             (Failed::CrowdedStore, false),
             (Failed::Settled, false),
+            (Failed::UncertainExpired, false),
+            (Failed::UncertainAnswered, false),
         ] {
             let run = failed_fixture(case, last_page).await;
             let (record, session, requests) = (&run.record, &run.session, &run.requests);
@@ -2768,6 +2834,7 @@ mod tests {
             Failed::Inspecting,
             Failed::Sending,
             Failed::RestartedLive,
+            Failed::UncertainRecent,
         ] {
             let run = failed_fixture(case, false).await;
             assert_eq!(
