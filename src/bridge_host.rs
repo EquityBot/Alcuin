@@ -864,9 +864,13 @@ pub async fn run(
             actual_driver(context).await
         })
     });
-    // Install the shutdown handlers before the host can answer: a client that finds it healthy
-    // may signal at once, and an uninstalled SIGTERM kills the process before `host.shutdown()`.
-    let shutdown = crate::remote_service::shutdown_signal();
+    // Install the shutdown handlers before clients may stop the host: an uninstalled SIGTERM kills
+    // the process before `host.shutdown()`. A foreground host's clients act once it answers; a
+    // background child's wait for its readiness file, so a signal during its handoff or bootstrap
+    // still ends it at once.
+    let shutdown = startup_gate
+        .is_none()
+        .then(crate::remote_service::shutdown_signal);
     let host = RemoteHost::start(
         store.clone(),
         HostOptions {
@@ -923,6 +927,7 @@ pub async fn run(
             )));
         }
     }
+    let shutdown = shutdown.unwrap_or_else(crate::remote_service::shutdown_signal);
     let published = (|| {
         storage::atomic_json(
             &store.home().join("bridge-host-ready.json"),
