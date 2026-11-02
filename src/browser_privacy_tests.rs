@@ -1371,13 +1371,16 @@ async fn answerless_tracker_cases(page: &Cdp) -> Result<()> {
 
 async fn deferred_editor_render_case(page: &Cdp) -> Result<()> {
     // October 2026: straight after insertText, ChatGPT's editor shows a blank line as a bare <br>
-    // paragraph, which reads as an extra newline until it re-renders with a trailing break.
+    // paragraph, which reads as an extra newline until it re-renders with a trailing break. The
+    // fixture re-renders within the test build's shortened settle, so staging must wait for it.
     let cancel = CancellationToken::new();
     let html = ACTIVE.replace(
         "<form><textarea id='prompt-textarea' name='prompt-textarea'></textarea>",
         "<form data-chatgpt-composer><div contenteditable='true' role='textbox'></div>",
     );
-    mount(page, &html, "/", r#"()=>{sessionStorage.removeItem('oracle:target-claim');const editor=document.querySelector('[role="textbox"]');let timer;editor.addEventListener('input',()=>{if(!editor.textContent.trim())return;const render=br=>'PUBLIC brief.\n\nPUBLIC question.'.split('\n').map(line=>`<p>${line||br}</p>`).join('');editor.innerHTML=render('<br>');clearTimeout(timer);timer=setTimeout(()=>{editor.innerHTML=render('<br class="ProseMirror-trailingBreak">');},100);});}"#).await?;
+    let setup = r#"()=>{sessionStorage.removeItem('oracle:target-claim');const editor=document.querySelector('[role="textbox"]');let timer;editor.addEventListener('input',()=>{if(!editor.textContent.trim())return;const render=br=>'PUBLIC brief.\n\nPUBLIC question.'.split('\n').map(line=>`<p>${line||br}</p>`).join('');editor.innerHTML=render('<br>');clearTimeout(timer);timer=setTimeout(()=>{editor.innerHTML=render('<br class="ProseMirror-trailingBreak">');},RENDER_MS);});}"#
+        .replace("RENDER_MS", &(browser_dom::EDITOR_SETTLE.as_millis() / 2).to_string());
+    mount(page, &html, "/", &setup).await?;
     let mut reservation =
         RendererReservation::acquire(page.clone(), "PUBLIC-deferred".into(), SHORT, &cancel)
             .await?;
