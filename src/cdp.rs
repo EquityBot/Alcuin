@@ -450,20 +450,19 @@ mod tests {
             .await
             .unwrap_err();
         assert!(error.to_string().contains("uncertain"));
+        assert!(error.downcast_ref::<NotSent>().is_none());
         peer.await.unwrap();
-        assert!(
-            client
-                .call(
-                    "Input.dispatchKeyEvent",
-                    json!({}),
-                    Duration::from_secs(1),
-                    &cancel
-                )
-                .await
-                .unwrap_err()
-                .to_string()
-                .contains("not sent")
-        );
+        let closed = client
+            .call(
+                "Input.dispatchKeyEvent",
+                json!({}),
+                Duration::from_secs(1),
+                &cancel,
+            )
+            .await
+            .unwrap_err();
+        assert!(closed.to_string().contains("not sent"));
+        assert!(closed.downcast_ref::<NotSent>().is_some(), "{closed:#}");
         client
             .disconnect_and_wait(Duration::from_secs(1))
             .await
