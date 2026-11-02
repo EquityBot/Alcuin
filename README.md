@@ -86,7 +86,7 @@ Read [SECURITY.md](SECURITY.md) before attaching files: everything you attach go
 
 ## Licence
 
-FSL-1.1-ALv2 (Functional Source License, Version 1.1, ALv2 Future License); see [LICENSE](LICENSE). Each version also becomes available under Apache-2.0 two years after its release. Oracle's MIT notice and third-party notices are in [NOTICE](NOTICE).
+FSL-1.1-ALv2 (Functional Source License, Version 1.1, ALv2 Future License); see [LICENSE](LICENSE). Two years after its release, each version also becomes available under Apache-2.0. Oracle's MIT notice and third-party notices are in [NOTICE](NOTICE).
 
 The banner's lettering and emblem are drawn from Cascadia Mono and Besley glyphs (SIL OFL 1.1).
 
