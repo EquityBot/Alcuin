@@ -1,0 +1,32 @@
+[package]
+name = "alcuin-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+alcuin = { path = ".." }
+libfuzzer-sys = "0.4.12"
+
+# Keep the fuzz crate out of any parent workspace, with the parent's patched hyper.
+[workspace]
+
+[patch.crates-io]
+hyper = { path = "../vendor/hyper" }
+
+[[bin]]
+name = "remote_json"
+path = "fuzz_targets/remote_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "preview"
+path = "fuzz_targets/preview.rs"
+test = false
+doc = false
+bench = false
