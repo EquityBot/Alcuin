@@ -2688,6 +2688,7 @@ async fn witness_route_transition_cases(page: &Cdp) -> Result<()> {
 async fn native_temporary_chat_predicate_and_retained_send_guard() -> Result<()> {
     let temp = tempfile::tempdir()?;
     let environment = [
+        "CHROME_PATH",
         "PATH",
         "ProgramFiles",
         "ProgramFiles(x86)",

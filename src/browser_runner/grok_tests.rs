@@ -52,16 +52,17 @@ query.querySelector('a').onclick=()=>{{query.classList.add('bg-surface-incognito
 trigger.onclick=()=>{{trigger.setAttribute('aria-expanded','true');const menu=document.createElement('div');menu.setAttribute('role','menu');for(const name of ['Auto','Fast']){{const choice=document.createElement('button');choice.setAttribute('role','menuitemradio');choice.textContent=name;if(name==='Auto'&&!cfg.auto)choice.disabled=true;choice.onclick=()=>{{trigger.textContent=name;trigger.setAttribute('aria-expanded','false');menu.remove();}};menu.append(choice);}}document.body.append(menu);}};
 if(cfg.privateLoss==='focus')editor.addEventListener('focus',()=>{{query.classList.remove('bg-surface-incognito');query.querySelector('a').setAttribute('aria-label','Switch to Private Chat');}});
 class PublicSocket extends EventTarget{{constructor(){{super();this.url='wss://grok.com/PUBLIC-owned-runner';}}emit(value){{this.dispatchEvent(new MessageEvent('message',{{data:JSON.stringify(value)}}));}}send(raw){{
-PUBLICGrokRunnerSend('send');const sent=JSON.parse(raw),client=sent.item.x_grok.client_message_id,prompt=sent.item.x_grok.input_chunks[0].text.text,user='00000000-0000-4000-8000-000000000002',response='00000000-0000-4000-8000-000000000003';
+PUBLICGrokRunnerSend('send');const sent=JSON.parse(raw),session=sent.session_id,client=sent.event.item.x_grok.client_message_id,prompt=sent.event.item.x_grok.input_chunks[0].text.text,user='00000000-0000-4000-8000-000000000002',response='00000000-0000-4000-8000-000000000003';
 const frames=[
-{{type:'conversation.item.added',item:{{id:{{uuid:user}},type:'message',role:'user',x_grok:{{client_message_id:client,input_chunks:[{{text:{{text:prompt}}}}]}}}}}},
-{{type:'response.created',response:{{id:{{uuid:response}},status:'in_progress'}}}},
-{{type:'response.output_item.added',response_id:{{uuid:response}},output_index:0,item:{{id:{{uuid:response}},role:'assistant',x_grok:{{parent_response_id:{{uuid:user}}}}}}}},
-{{type:'response.output_item.done',response_id:{{uuid:response}},output_index:0,item:{{id:{{uuid:response}},role:'assistant',status:'completed'}}}},
-{{type:'response.done',response:{{id:{{uuid:response}},status:'completed'}}}}
-];
+{{type:'conversation.item.added',item:{{id:user,type:'message',role:'user',x_grok:{{client_message_id:client,input_chunks:[{{text:{{text:prompt}}}}]}}}}}},
+{{type:'response.created',response:{{id:response,status:'in_progress'}}}},
+{{type:'response.output_item.added',response_id:response,output_index:0,item:{{id:response,role:'assistant',x_grok:{{parent_response_id:user}}}}}},
+{{type:'response.output_item.done',response_id:response,output_index:0,item:{{id:response,role:'assistant',status:'completed'}}}},
+{{type:'response.done',response:{{id:response,status:'completed'}}}},
+{{type:'response.chunk',response_id:response,item_id:response,chunk:{{follow_up_suggestions:{{suggestions:[]}}}}}}
+].map(event=>({{session_id:session,event}}));
 const finish=()=>{{for(const frame of frames.slice(2))this.emit(frame);
-for(const [role,id,text] of [['user',user,prompt],['assistant',response,cfg.answer]]){{const article=document.createElement('article');article.id='response-'+id;article.dataset.role=role;const content=document.createElement('div');content.dataset.testid='message-content';if(role==='user'&&cfg.userHtml)content.innerHTML=cfg.userHtml;else{{content.style.whiteSpace='pre-wrap';content.textContent=text;}}article.append(content);if(role==='assistant')for(const label of ['Copy','Regenerate']){{const button=document.createElement('button');button.setAttribute('aria-label',label);button.textContent=label;article.append(button);}}document.body.append(article);}}
+for(const [role,id,label,text] of [['user',user,'You',prompt],['assistant',response,'Grok',cfg.answer]]){{const root=document.createElement('div');root.id='response-'+id;const unit=document.createElement('div');unit.dataset.testid=role+'-message';unit.className='message-bubble prose';const heading=document.createElement('h2');heading.className='sr-only';heading.textContent=label;const content=document.createElement('div');content.className='response-content-markdown markdown';if(role==='user'&&cfg.userHtml)content.innerHTML=cfg.userHtml;else{{content.style.whiteSpace='pre-wrap';content.textContent=text;}}unit.append(heading,content);root.append(unit);if(role==='assistant'){{const bar=document.createElement('div');bar.className='action-buttons';for(const control of ['Copy response','Regenerate']){{const button=document.createElement('button');button.setAttribute('aria-label',control);bar.append(button);}}root.append(bar);}}document.body.append(root);}}
 if(cfg.privateLoss==='after-send'){{query.classList.remove('bg-surface-incognito');query.querySelector('a').setAttribute('aria-label','Switch to Private Chat');}}
 }};
 this.emit(frames[0]);
@@ -72,7 +73,7 @@ read:()=>{{const value=original.read();if(!staged&&value.state==='committed'){{s
 acknowledge:()=>{{const value=original.acknowledge();if(!acknowledged){{acknowledged=true;PUBLICGrokAck(value.state+':'+Boolean(value.responseId));setTimeout(finish,0);}}return value;}}}}),writable:false,configurable:true}});
 }}}}
 window.WebSocket=PublicSocket;
-query.querySelector('button[aria-label="Send message"]').onclick=()=>new WebSocket().send(JSON.stringify({{type:'response.create',item:{{type:'message',role:'user',x_grok:{{client_message_id:{{uuid:'00000000-0000-4000-8000-000000000001'}},input_chunks:[{{text:{{text:editor.value}}}}]}}}}}}));
+query.querySelector('button[aria-label="Send message"]').onclick=()=>new WebSocket().send(JSON.stringify({{session_id:'00000000-0000-4000-8000-000000000005',event:{{type:'response.create',item:{{type:'message',role:'user',x_grok:{{client_message_id:'00000000-0000-4000-8000-000000000001',input_chunks:[{{text:{{text:editor.value}}}}]}}}}}}}}));
 </script>"#
     )
 }
@@ -322,14 +323,14 @@ const query=document.querySelector('.query-bar'),editor=query.querySelector('tex
 query.querySelector('a').onclick=()=>{query.classList.add('bg-surface-incognito');query.querySelector('a').setAttribute('aria-label','Switch to Default Chat');};
 trigger.onclick=()=>{trigger.setAttribute('aria-expanded','true');const menu=document.createElement('div');menu.setAttribute('role','menu');for(const name of ['Auto','Fast']){const choice=document.createElement('button');choice.setAttribute('role','menuitemradio');choice.textContent=name;choice.onclick=()=>{trigger.textContent=name;trigger.setAttribute('aria-expanded','false');menu.remove();};menu.append(choice);}document.body.append(menu);};
 class PublicSocket extends EventTarget{constructor(){super();this.url='wss://grok.com/PUBLIC-recovery';}emit(value){this.dispatchEvent(new MessageEvent('message',{data:JSON.stringify(value)}));}send(raw){
-PUBLIC_sendCount++;const sent=JSON.parse(raw),client=sent.item.x_grok.client_message_id,prompt=sent.item.x_grok.input_chunks[0].text.text,user='00000000-0000-4000-8000-000000000012',response='00000000-0000-4000-8000-000000000013';
+PUBLIC_sendCount++;const sent=JSON.parse(raw),session=sent.session_id,client=sent.event.item.x_grok.client_message_id,prompt=sent.event.item.x_grok.input_chunks[0].text.text,user='00000000-0000-4000-8000-000000000012',response='00000000-0000-4000-8000-000000000013';
 const frames=[
-{type:'conversation.item.added',item:{id:{uuid:user},type:'message',role:'user',x_grok:{client_message_id:client,input_chunks:[{text:{text:prompt}}]}}},
-{type:'response.created',response:{id:{uuid:response},status:'in_progress'}},
-{type:'response.output_item.added',response_id:{uuid:response},output_index:0,item:{id:{uuid:response},role:'assistant',x_grok:{parent_response_id:{uuid:user}}}},
-{type:'response.output_item.done',response_id:{uuid:response},output_index:0,item:{id:{uuid:response},role:'assistant',status:'completed'}},
-{type:'response.done',response:{id:{uuid:response},status:'completed'}}
-];
+{type:'conversation.item.added',item:{id:user,type:'message',role:'user',x_grok:{client_message_id:client,input_chunks:[{text:{text:prompt}}]}}},
+{type:'response.created',response:{id:response,status:'in_progress'}},
+{type:'response.output_item.added',response_id:response,output_index:0,item:{id:response,role:'assistant',x_grok:{parent_response_id:user}}},
+{type:'response.output_item.done',response_id:response,output_index:0,item:{id:response,role:'assistant',status:'completed'}},
+{type:'response.done',response:{id:response,status:'completed'}}
+].map(event=>({session_id:session,event}));
 const now=cfg.hold==='user'?0:2;
 for(const frame of frames.slice(0,now))this.emit(frame);
 window.PUBLIC_release=()=>{for(const frame of frames.slice(now))this.emit(frame);
@@ -338,7 +339,7 @@ delete window.PUBLIC_release;return true;};
 if(['delivered','captured'].includes(cfg.hold))PUBLIC_release();
 }}
 window.WebSocket=PublicSocket;
-query.querySelector('button[aria-label="Send message"]').onclick=()=>new WebSocket().send(JSON.stringify({type:'response.create',item:{type:'message',role:'user',x_grok:{client_message_id:{uuid:'00000000-0000-4000-8000-000000000011'},input_chunks:[{text:{text:editor.value}}]}}}));
+query.querySelector('button[aria-label="Send message"]').onclick=()=>new WebSocket().send(JSON.stringify({session_id:'00000000-0000-4000-8000-000000000015',event:{type:'response.create',item:{type:'message',role:'user',x_grok:{client_message_id:'00000000-0000-4000-8000-000000000011',input_chunks:[{text:{text:editor.value}}]}}}}));
 </script>"#
         .replace("__CONFIG__", &json!({"hold":hold,"answer":ANSWER}).to_string())
 }

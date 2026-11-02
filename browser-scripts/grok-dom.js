@@ -117,8 +117,10 @@
     throw Error('Grok DOM reply is not the original wire-paired turn');
   const content = entry => {
     const selector = '[data-testid="message-content"], .message-content, .markdown, .prose';
-    const candidates = [...entry.unit.querySelectorAll(selector)];
-    if (entry.unit.matches(selector)) candidates.unshift(entry.unit);
+    // Grok labels each bubble ('You', 'Grok') outside its content container (3 November 2026),
+    // so a container inside the unit wins over the unit itself.
+    const inner = [...entry.unit.querySelectorAll(selector)];
+    const candidates = inner.length || !entry.unit.matches(selector) ? inner : [entry.unit];
     const outer = candidates.filter(el => !candidates.some(other => other !== el && other.contains(el)));
     if (outer.length !== 1 || !visible(outer[0])) throw Error('Grok complete message container is unavailable or ambiguous');
     return outer[0];
@@ -135,8 +137,14 @@
   // browser_grok::turn_lines mirror `marker` and `lines`.
   const marker = /^(?:[-*+]|\d{1,9}[.)])\s+/;
   const lines = value => value.replace(/\r\n/g, '\n').split('\n').map(line => line.trim()).filter(Boolean);
+  // Plain text code bundles can display ASCII spaces as NBSP and lose trailing
+  // spaces per line. Keep line boundaries, indentation, tabs and other text exact;
+  // a prompt containing an intentional NBSP still requires its exact display.
+  const spaces = value => value.replace(/\u00a0/g, ' ').replace(/ +(?=\n|$)/g, '');
+  const spaced = !cfg.prompt.includes('\u00a0') && source.includes('\u00a0') && spaces(source) === spaces(cfg.prompt);
   const sent = lines(cfg.prompt), markers = sent.filter(line => marker.test(line)).length;
   const promptMatch = source === cfg.prompt ? 'exact' :
+    spaced ? 'rendered-space' :
     markers > 0 && markers === userContent.querySelectorAll('li').length &&
       sent.map(line => line.replace(marker, '')).join('\n') === lines(source).join('\n') ? 'rendered-list' : null;
   if (!promptMatch) throw Error('Complete Grok user source differs from the original dispatch');
@@ -149,17 +157,27 @@
   if (stopping || !copy || !regenerate || assistant.root.matches(pending) || assistant.root.querySelector(pending)) return {state:'pending'};
   const answer = text(assistantContent);
   if (!answer.trim()) return {state:'pending'};
+  // grok.com (3 November 2026) names the bubble with a screen-reader heading, puts a
+  // reasoning-time trigger above the content and lists unlabelled follow-up prompts in
+  // their own block after the toolbar. Only those exact shapes are exempt.
+  const heading = el => el?.matches('h2.sr-only') && el.parentElement === assistant.unit && el.textContent.trim() === 'Grok';
+  const thinking = el => el.matches('button[data-testid="canvas-trigger"]') &&
+    el.closest('.thinking-container')?.parentElement === assistant.unit &&
+    /^(?:Worked|Thought) for (?:\d+h )?(?:\d+m )?\d+(?:\.\d+)?[hms]$/.test(text(el).trim());
+  const suggestion = el => el.tagName === 'BUTTON' && !el.hasAttribute('aria-label') && !assistant.unit.contains(el) &&
+    el.parentElement?.parentElement === assistant.root &&
+    [...el.parentElement.children].every(child => child.tagName === 'BUTTON' && !child.hasAttribute('aria-label'));
   const walker = document.createTreeWalker(assistant.root, NodeFilter.SHOW_TEXT);
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    if (node.textContent.trim() && !assistantContent.contains(node) &&
+    if (node.textContent.trim() && !assistantContent.contains(node) && !heading(node.parentElement) &&
         !node.parentElement?.closest('button, [role="button"]'))
       throw Error('Grok response has text outside its complete message container');
   }
   // Refuse hidden, pending and out-of-content assets too. Until the separate
   // asset adapter is qualified, unknown buttons cannot stand in for text.
   const resource = assistant.root.querySelector('img, picture, video, audio, canvas, iframe, object, embed, a[download], [data-testid*="download" i], [data-testid*="attachment" i], [data-testid*="file" i], [data-testid*="image" i]');
-  const unknownControl = [...assistant.root.querySelectorAll('button, [role="button"]')].some(el =>
-    !/^(Copy|Copy text|Copy response|Regenerate|Good response|Bad response|Like|Dislike|Share|Read aloud)$/i.test((el.getAttribute('aria-label') || text(el)).trim()));
+  const unknownControl = [...assistant.root.querySelectorAll('button, [role="button"]')].some(el => !thinking(el) && !suggestion(el) &&
+    !/^(Copy|Copy text|Copy response|Copy table|Save table|Copy(?: [^\n]{1,40})? code|Create share link|More actions|Regenerate|Good response|Bad response|Like|Dislike|Share|Read aloud)$/i.test((el.getAttribute('aria-label') || text(el)).trim()));
   if (resource || unknownControl) throw Error('Grok answer includes an unqualified asset or control');
   current();
   return {state:'completed',provider:'grok',kind:'grok-private-answer',privateChat:true,mode:cfg.mode,

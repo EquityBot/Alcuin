@@ -1,4 +1,7 @@
-// Provider fields qualified with a public Auto Private turn on 21 October 2026.
+// Provider fields qualified with a public Auto Private turn on 21 October 2026 and
+// requalified on 3 November 2026: grok.com now wraps every frame on its /ws/mgw/
+// socket as {session_id, event} with plain string identifiers, and sends
+// notetaker and follow-up chunks after response.done.
 // Only one exact outgoing text request is admitted. No answer chunks accumulate.
 // The retained wrapper drops payload/guard references even if another wrapper
 // still delegates to it after cleanup.
@@ -18,7 +21,7 @@
       !/^[a-f0-9]{64}$/.test(cfg.promptSha256) || !['Auto','Fast'].includes(cfg.mode))
     throw Error('Invalid Grok witness intent');
   let expected = cfg.prompt;
-  let socket = null, clientId = null, userId = null, responseId = null, assistantId = null;
+  let socket = null, sessionId = null, clientId = null, userId = null, responseId = null, assistantId = null;
   let responseCreated = false, itemDone = false, complete = false, failure = null, closed = false, sealed = null;
   let expiryTimer = null;
   let sendArmed = false;
@@ -51,7 +54,11 @@
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw Error('Invalid Grok frame');
     return value;
   };
-  const uuid = value => id(value?.uuid) ? value.uuid : null;
+  const uuid = value => id(value) ? value : null;
+  // The provider event inside {session_id, event}; anything else carries no event.
+  const unwrap = frame => frame.event && typeof frame.event === 'object' && !Array.isArray(frame.event) ? frame.event : null;
+  // Session-level notetaker headers, follow-up suggestions and metadata carry no answer text.
+  const answerText = value => value.chunk?.text?.channel === 'CHANNEL_ASSISTANT_RESPONSE';
   const detach = () => {
     if (expiryTimer !== null) clearTimeout(expiryTimer);
     expiryTimer = null;
@@ -100,7 +107,10 @@
     if (closed || failure) return;
     try {
       current();
-      const value = parse(event.data), type = value.type;
+      const frame = parse(event.data), value = unwrap(frame);
+      // Heartbeats, live-state updates and other sessions' events do not belong to this turn.
+      if (!value || frame.session_id !== sessionId) return;
+      const type = value.type;
       if (type === 'conversation.item.added' && value.item?.role === 'user') {
         const client = uuid(value.item.x_grok?.client_message_id), user = uuid(value.item.id);
         const chunks = value.item.x_grok?.input_chunks;
@@ -123,8 +133,13 @@
             value.item.role !== 'assistant' || value.item.status !== 'completed' || value.output_index !== 0 || itemDone)
           throw Error('Grok output completion differs');
         itemDone = true;
+      } else if (type === 'response.chunk' && value.response_id === '' && value.item_id === '') {
+        // Session-level notetaker chunks name no response and must not carry answer text.
+        if (answerText(value)) throw Error('Grok unattributed chunk carries answer text');
       } else if (['response.chunk','response.content_part.added','response.content_part.done','response.output_text.done'].includes(type)) {
-        if (!assistantId || complete || uuid(value.response_id) !== responseId || uuid(value.item_id) !== assistantId ||
+        // After response.done only chunks without answer text (follow-up suggestions) may follow.
+        if (!assistantId || uuid(value.response_id) !== responseId || uuid(value.item_id) !== assistantId ||
+            complete && (type !== 'response.chunk' || answerText(value)) ||
             (type !== 'response.chunk' && (value.output_index !== 0 || value.content_index !== 0)))
           throw Error('Grok content identity differs');
       } else if (type === 'response.done') {
@@ -137,30 +152,35 @@
     } catch { invalidate('grok-wire-conflict'); }
   };
   function observedSend(raw) {
+    // An unenveloped request is the retired wire format: never let it through unobserved.
+    const creates = frame => unwrap(frame)?.type === 'response.create' || frame.type === 'response.create';
     if (closed) {
-      if (lateSendBlocked && parse(raw).type === 'response.create')
+      if (lateSendBlocked && creates(parse(raw)))
         throw Error('Expired or stopped Grok Send cannot dispatch late; preserve target without replay');
       return original.call(this, raw);
     }
-    let value;
-    try { value = parse(raw); } catch {
+    let frame;
+    try { frame = parse(raw); } catch {
       invalidate('grok-outgoing-frame-unreadable');
       throw Error('Grok outgoing request cannot be verified');
     }
-    if (value.type !== 'response.create') return original.call(this, raw);
+    if (!creates(frame)) return original.call(this, raw);
     try {
       if (failure || !sendArmed) throw Error('Grok witness is invalid or Send was not authorised');
       sendArmed = false;
       current();
+      const value = unwrap(frame);
       const destination = new URL(this.url);
-      const client = uuid(value.item?.x_grok?.client_message_id), chunks = value.item?.x_grok?.input_chunks;
+      const client = uuid(value?.item?.x_grok?.client_message_id), chunks = value?.item?.x_grok?.input_chunks;
       if (!(this instanceof NativeSocket) || destination.protocol !== 'wss:' ||
           destination.hostname !== 'grok.com' || destination.port || destination.username || destination.password ||
-          socket || !client || value.item?.role !== 'user' || !Array.isArray(chunks) || chunks.length !== 1 ||
+          socket || value?.type !== 'response.create' || !id(frame.session_id) ||
+          !client || value.item?.role !== 'user' || !Array.isArray(chunks) || chunks.length !== 1 ||
           Object.keys(chunks[0]).length !== 1 || Object.keys(chunks[0].text ?? {}).length !== 1 ||
           chunks[0]?.text?.text !== expected)
         throw Error('Grok outgoing request differs');
       socket = this;
+      sessionId = frame.session_id;
       clientId = client;
       socket.addEventListener('message', received);
       socket.addEventListener('close', disconnected);
