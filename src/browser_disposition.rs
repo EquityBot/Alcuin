@@ -147,9 +147,17 @@ pub(crate) fn creator_is_current(record: &Value) -> bool {
             })
     })
 }
+/// Browsers whose failed-run sweep progress is kept; each row is under 150 bytes.
+const FAILED_SWEEP_CURSORS: usize = 16;
 /// A saved `{"after":name}` cursor, or empty when it is missing or invalid.
 fn read_cursor(path: &Path) -> String {
-    (|| -> Result<String> {
+    read_bounded_json(path)
+        .and_then(|saved| saved["after"].as_str().map(str::to_owned))
+        .unwrap_or_default()
+}
+/// A cursor file of at most 4 KiB, or `None` when it is missing or invalid.
+fn read_bounded_json(path: &Path) -> Option<Value> {
+    (|| -> Result<Value> {
         let mut entry = NativeEntry::open(path, false)?;
         ensure!(
             entry.handle.metadata()?.len() <= 4096,
@@ -162,10 +170,9 @@ fn read_cursor(path: &Path) -> String {
             "Reconciliation cursor exceeds its bound"
         );
         entry.require_matches(path)?;
-        let saved: Value = serde_json::from_slice(&bytes)?;
-        Ok(saved["after"].as_str().unwrap_or("").to_owned())
+        Ok(serde_json::from_slice(&bytes)?)
     })()
-    .unwrap_or_default()
+    .ok()
 }
 fn record_file(name: &str) -> bool {
     name.len() == 41
@@ -643,18 +650,39 @@ impl TargetJournal {
         }
         Ok(results)
     }
-    /// The allocation the failed-run backstop tried last.
-    pub(crate) fn failed_sweep_cursor(&self) -> String {
-        read_cursor(&self.path.join("failed-sweep-cursor.json"))
+    /// The allocation the failed-run backstop last tried on the browser `key` identifies.
+    pub(crate) fn failed_sweep_cursor(&self, key: &str) -> String {
+        read_bounded_json(&self.path.join("failed-sweep-cursor.json"))
+            .and_then(|saved| {
+                saved["cursors"].as_array().and_then(|rows| {
+                    rows.iter()
+                        .find(|row| row["key"] == key)
+                        .and_then(|row| row["after"].as_str().map(str::to_owned))
+                })
+            })
+            .unwrap_or_default()
     }
-    pub(crate) fn set_failed_sweep_cursor(&self, id: &str, deadline: Instant) -> Result<()> {
-        ensure!(uuid(&json!(id)), "Invalid target allocation identity");
+    /// Keeps one cursor per browser, most recent last, bounded to the newest few browsers.
+    pub(crate) fn set_failed_sweep_cursor(
+        &self,
+        key: &str,
+        id: &str,
+        deadline: Instant,
+    ) -> Result<()> {
+        ensure!(
+            digest(&json!(key)) && uuid(&json!(id)),
+            "Invalid failed-run sweep cursor"
+        );
         self.directory.require_matches(&self.path)?;
-        atomic_json_until(
-            &self.path.join("failed-sweep-cursor.json"),
-            &json!({"after":id}),
-            deadline,
-        )
+        let path = self.path.join("failed-sweep-cursor.json");
+        let mut rows = read_bounded_json(&path)
+            .and_then(|saved| saved["cursors"].as_array().cloned())
+            .unwrap_or_default();
+        rows.retain(|row| row["key"] != key && digest(&row["key"]) && uuid(&row["after"]));
+        rows.push(json!({"key":key,"after":id}));
+        let excess = rows.len().saturating_sub(FAILED_SWEEP_CURSORS);
+        rows.drain(..excess);
+        atomic_json_until(&path, &json!({"version":1,"cursors":rows}), deadline)
     }
     /// Uncommitted, unretired records, read in directory order until the deadline.
     /// Unreadable records are skipped; nothing is locked or written.
