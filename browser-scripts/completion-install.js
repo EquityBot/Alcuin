@@ -48,13 +48,25 @@ return (() => {
       if (role === 'assistant') return true;
       return Boolean(node.querySelector?.('[data-content-search-unit-key$=":assistant"], [data-chatgpt-search-unit-key$=":assistant"], [data-message-author-role="assistant"], [data-turn="assistant"]'));
     };
+    const userSelector = '[data-message-author-role="user"], [data-content-search-unit-key$=":user"], [data-chatgpt-search-unit-key$=":user"]';
+    // The submitted message, mounted after the baseline, with ChatGPT's activity blocks after it.
+    const submittedActivity = () => {
+      const user = turns().slice(baseline)
+        .flatMap((turn) => [...(turn.matches(userSelector) ? [turn] : []), ...turn.querySelectorAll(userSelector)]).at(-1);
+      return Boolean(user) && Array.from(
+        document.querySelectorAll('[data-markdown-text-style="assistant-message"][data-markdown-text-tone="tertiary"]'),
+      ).some((node) => user.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING);
+    };
     const tracker = {
       baseline,
       priorCompleteNode: completeNode(),
       sawIncomplete: false,
       completedTurnIndex: null,
-      // 'Response complete' announced after this submission with no assistant turn after the
-      // baseline; an answer that mounts later clears it.
+      // Set once the submitted message and activity after it show with no 'Response complete', so
+      // neither an earlier turn's announcement nor a re-rendered copy of it can count.
+      answerlessArmed: false,
+      // 'Response complete' announced after arming with no assistant turn after the baseline; an
+      // answer that mounts later clears it.
       completeWithoutAnswer: false,
       observer: null,
     };
@@ -65,6 +77,7 @@ return (() => {
         tracker.sawIncomplete = true;
         tracker.priorCompleteNode = null;
         tracker.completeWithoutAnswer = false;
+        if (!tracker.answerlessArmed && submittedActivity()) tracker.answerlessArmed = true;
         return;
       }
       if (!tracker.sawIncomplete && currentCompleteNode === tracker.priorCompleteNode) return;
@@ -78,7 +91,7 @@ return (() => {
         tracker.observer?.disconnect();
         return;
       }
-      tracker.completeWithoutAnswer = true;
+      tracker.completeWithoutAnswer = tracker.answerlessArmed;
     };
     tracker.observer = new MutationObserver(observe);
     tracker.observer.observe(document.body, { childList: true, subtree: true, characterData: true });
