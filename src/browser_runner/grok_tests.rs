@@ -286,10 +286,13 @@ pub(crate) async fn native_cases(browser: &Cdp, endpoint: &AttachmentEndpoint) -
         let _ = interceptor.await;
         drop(heartbeat);
         // This fixture allocated the target. Its error teardown never runs in production.
-        if !private_loss.is_empty() || refused || checked.is_err() {
-            close_fixture_target(browser, &target_id, limits.command).await;
-        }
-        checked?;
+        let closed = if !private_loss.is_empty() || refused || checked.is_err() {
+            close_fixture_target(browser, &target_id, limits.command).await
+        } else {
+            Ok(())
+        };
+        // The case's own failure explains more than a teardown that followed it.
+        checked.and(closed)?;
     }
     for (hold, damage) in [
         ("user", ""),
@@ -352,23 +355,32 @@ fn target_ids(rows: &Value) -> std::collections::BTreeSet<String> {
 }
 
 /// Closes a fixture-allocated target and waits until Chromium stops listing it, so the next
-/// case's baseline cannot include a target that is still closing.
-async fn close_fixture_target(browser: &Cdp, target_id: &str, command: Duration) {
+/// case's baseline cannot include a target that is still closing. Fails when absence stays
+/// unconfirmed, naming the last close or listing error.
+async fn close_fixture_target(browser: &Cdp, target_id: &str, command: Duration) -> Result<()> {
     let cancel = CancellationToken::new();
-    let _ = browser
+    // A refused close is not final: the case under test may already have closed the target.
+    let mut last = browser
         .close_owned_target(target_id, command, &cancel)
-        .await;
+        .await
+        .err();
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline {
-        if let Ok(rows) = browser
+        match browser
             .call("Target.getTargets", json!({}), command, &cancel)
             .await
-            && !target_ids(&rows).contains(target_id)
         {
-            return;
+            Ok(rows) if !target_ids(&rows).contains(target_id) => return Ok(()),
+            Ok(_) => {}
+            Err(error) => last = Some(error),
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
+    let unconfirmed = "Fixture target absence was not confirmed within 5 s of closing";
+    Err(match last {
+        Some(error) => error.context(unconfirmed),
+        None => anyhow::anyhow!(unconfirmed),
+    })
 }
 
 /// A genuine worker crash after the single Send, then public parent recovery from this
@@ -656,11 +668,13 @@ async fn recovery_case(
         Ok(())
     }
     .await;
-    if checked.is_err() || !damage.is_empty() {
+    let closed = if checked.is_err() || !damage.is_empty() {
         // This fixture allocated the target. Its error teardown never runs in production.
-        close_fixture_target(browser, target_id, limits.command).await;
-    }
-    checked
+        close_fixture_target(browser, target_id, limits.command).await
+    } else {
+        Ok(())
+    };
+    checked.and(closed)
 }
 
 #[tokio::test]
