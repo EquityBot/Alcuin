@@ -857,9 +857,10 @@ impl RendererReservation {
                 };
                 self.unconfirmed_work = true;
                 let _ = self.quarantine(CONTROL_ACK_TIMEOUT).await;
-                bail!(
-                    "Picker cleanup is unconfirmed ({picker} picker, {detail}); refusing target reuse"
+                return Err(crate::cdp::NotSent(
+                    format!("Picker cleanup is unconfirmed ({picker} picker, {detail}); refusing target reuse").into(),
                 )
+                .into());
             }
         };
         if outcome.is_err() || cancel.is_cancelled() {

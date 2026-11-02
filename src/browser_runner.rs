@@ -1623,6 +1623,22 @@ pub(crate) async fn run_native_with_capture(
     ))
     .await
 }
+/// What a failed first attempt leaves behind. Recovery-free attempts (no dispatch record, no tab,
+/// no fresh profile) cannot have sent, so the consult wrapper may send the packet by another route.
+fn attempt_failure(store: &SessionStore, parent: &str, child: &str) -> String {
+    // Only proof about this child counts: needs_recovery is also false with no active attempt.
+    let unsent = store.require(parent).is_ok_and(|parent| {
+        parent["browser"]["consultation"]["active"]["childId"] == child
+            && !crate::browser_attempt::needs_recovery(store, &parent)
+    });
+    if !unsent {
+        format!(
+            "Provider attempt {child} failed; its recovery evidence is retained and its tab is closed once the consultation ends, or about an hour later if its prompt may have been sent"
+        )
+    } else {
+        format!("Provider attempt {child} failed before sending its prompt; nothing was sent")
+    }
+}
 /// Own the public session separately from the provider's dispatch and recovery capability.
 async fn run_native_consultation(
     store: &SessionStore,
@@ -1670,8 +1686,25 @@ async fn run_native_consultation(
         let attempt=match Box::pin(run_native_prepared(store,&first.child_id,environment,identity,cancel,CaptureBoundary::ParentAttempt,bootstrap)).await {
             Ok(_) => first,
             Err(error) => {
-                let retained=format!("Provider attempt {} failed; its recovery evidence is retained and its tab is closed once the consultation ends",first.child_id);
-                // Remote runs never switch: their capture belongs to the remote client.
+                let retained=attempt_failure(store,id,&first.child_id);
+                // Remote runs never retry or switch: their capture belongs to the remote client.
+                let retry=if capture.is_none() {
+                    parent.retry_unsent(&first,&error,cancel)
+                        .with_context(||format!("{retained} ({error:#}); its fresh-tab retry did not start"))?
+                } else {
+                    None
+                };
+                if let Some(retry)=retry {
+                    let notice=format!("[browser] ChatGPT attempt {} stopped before sending anything ({error:#}); retrying once in a fresh tab as attempt {}.",first.child_id,retry.child_id);
+                    eprintln!("{notice}");
+                    store.append_log(id,initial["model"].as_str(),&format!("{notice}\n"))?;
+                    let ran=match start_owner(store,&retry.child_id,identity) {
+                        Ok(_) => Box::pin(run_native_prepared(store,&retry.child_id,environment,identity,cancel,CaptureBoundary::ParentAttempt,bootstrap)).await,
+                        Err(failed) => Err(failed),
+                    };
+                    ran.with_context(||format!("{retained} ({error:#}); its single fresh-tab retry {} also failed",retry.child_id))?;
+                    retry
+                } else {
                 let switched=if capture.is_none() {
                     parent.switch_to_grok(&first,&error,environment,cancel)
                         .with_context(||format!("{retained} ({error:#}); the Grok provider switch did not start"))?
@@ -1694,6 +1727,7 @@ async fn run_native_consultation(
                     });
                 }
                 grok
+                }
             }
         };
         parent.adopt(&attempt.child_id,cancel)?;
@@ -1706,8 +1740,8 @@ async fn run_native_consultation(
             return store.require(id);
         }
         let completed=parent.complete(cancel)?;
-        if attempt.provider==crate::browser_attempt::Provider::Grok {
-            // The consultation completed through Grok; the failed ChatGPT attempt's tab is unused now.
+        if attempt.child_id!=first_child {
+            // The consultation completed through a later attempt; the failed first attempt's tab is unused now.
             crate::browser_retirement::close_failed_consultation(store,id).await;
         }
         let text=String::from_utf8(captured(store,id)?)?;
@@ -1718,7 +1752,7 @@ async fn run_native_consultation(
             store.update(id,|current| {
                 witness.require(current)?;
                 anyhow::ensure!(current["status"]=="completed","Consultation changed before cleanup warning");
-                Ok(Some(json!({"recoveryRequired":true,"cleanupWarning":format!("Selected child {} cleanup remains unconfirmed",attempt.child_id)})))
+                Ok(Some(json!({"recoveryRequired":true,"cleanupWarning":format!("Selected child {} cleanup remains unconfirmed: {}",attempt.child_id,crate::browser_retirement::cleanup_error(&format!("{error:#}")))})))
             })?;
         }
         store.require(id)

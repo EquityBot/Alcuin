@@ -115,22 +115,29 @@ async fn reconcile_with_disposal(
         }
     }
     // Backstop for failed workers that exited before closing their own tabs.
+    let mut errors = vec![];
     if let Err(error) = close_failed_targets(
         store,
         browser,
         endpoint,
         None,
         Instant::now() + FAILED_SWEEP_BUDGET,
+        &mut errors,
     )
     .await
     {
-        eprintln!("Failed runs' tabs remain open: {error:#}");
+        errors.push(format!("Failed runs' tabs remain open: {error:#}"));
+    }
+    for error in errors {
+        eprintln!("{error}");
     }
     Ok(())
 }
 
 /// Recovery reads this when a failed run's original tab was closed.
 pub(crate) const FAILED_RUN_TARGET_CLOSED: &str = "failed-run-target-closed";
+// One sent run took 38 minutes to finish (30 October 2026).
+const SENT_TAB_RETENTION: chrono::Duration = chrono::Duration::minutes(60);
 const FAILED_SWEEP_BUDGET: Duration = Duration::from_secs(5);
 const FAILED_TARGET_BUDGET: Duration = Duration::from_secs(2);
 const FAILED_ENDPOINT_BUDGET: Duration = Duration::from_secs(2);
@@ -149,11 +156,18 @@ pub(crate) fn require_target_open(store: &SessionStore, meta: &Value) -> Result<
         return Err(refusal());
     }
     let creator = &meta["browser"]["runtime"]["ownedRecoveryTarget"]["creator"];
-    if creator.is_object()
-        && creator["sessionId"] == meta["id"]
-        && let Ok(record) = TargetJournal::open(store)?.read(&creator["allocationId"])
-        && record["creator"] == *creator
-        && record["disposition"]["decision"] == "retired"
+    if !creator.is_object() || creator["sessionId"] != meta["id"] {
+        return Ok(());
+    }
+    // A record that cannot be read or no longer names this creator does not show the tab open.
+    let record = TargetJournal::open(store)?
+        .read(&creator["allocationId"])
+        .ok()
+        .filter(|record| record["creator"] == *creator)
+        .with_context(|| {
+            format!("Session {id}'s original tab record cannot be verified, so its tab is not read again; run the consultation again")
+        })?;
+    if record["disposition"]["decision"] == "retired"
         && record["disposition"]["reason"]
             .as_str()
             .is_some_and(|reason| reason.starts_with("failed-run-"))
@@ -161,6 +175,62 @@ pub(crate) fn require_target_open(store: &SessionStore, meta: &Value) -> Result<
         return Err(refusal());
     }
     Ok(())
+}
+
+/// Cleanup error text for session metadata, bounded. Cleanup errors name targets,
+/// endpoints, sessions and states, never prompt or answer content.
+pub(crate) fn cleanup_error(text: &str) -> String {
+    const LIMIT: usize = 600;
+    match text.char_indices().nth(LIMIT) {
+        Some(_) => {
+            let end = text.char_indices().nth(LIMIT - 3).map_or(0, |(end, _)| end);
+            format!("{}...", &text[..end])
+        }
+        None => text.to_owned(),
+    }
+}
+
+/// Whether two browser WebSocket endpoints name different browser instances. Only the
+/// browser id counts: one browser can be reached under several host spellings.
+fn other_browser(saved: &str, current: &str) -> bool {
+    let id = |ws: &str| {
+        ws.rsplit_once("/devtools/browser/")
+            .map(|(_, id)| id.to_owned())
+    };
+    id(saved).is_some_and(|saved| id(current).is_some_and(|current| saved != current))
+}
+
+/// The record's browser restarted on the endpoint this connection still holds: the same
+/// host and port answer with another browser id, so the old instance has exited.
+fn restarted(target: &Value, endpoint: &AttachmentEndpoint, browser: &Cdp) -> bool {
+    browser.is_open()
+        && target["browserWSEndpoint"]
+            .as_str()
+            .is_some_and(|ws| other_browser(ws, &endpoint.browser_ws_endpoint))
+        && target["host"].as_str().is_some_and(|host| {
+            browser::normalise_host(host) == browser::normalise_host(&endpoint.host)
+        })
+        && target["port"] == endpoint.port
+}
+
+/// Serialises one browser's surviving-page check and close across processes: two closes
+/// that each counted the other's tab as the survivor would leave the browser no page.
+/// A port serves one browser at a time, so the host and port name the browser.
+fn last_page_lock(
+    store: &SessionStore,
+    host: &str,
+    port: u16,
+    deadline: Instant,
+) -> Result<DirectoryLock> {
+    let key = sha256(format!("{}\n{port}", browser::normalise_host(host)).as_bytes());
+    DirectoryLock::acquire_until(
+        &store
+            .home()
+            .join("target-dispositions")
+            .join(format!("last-page-{key}.lock")),
+        deadline,
+    )
+    .context("Another tab close on this browser is still checking its last page")
 }
 
 fn on_endpoint(target: &Value, endpoint: &AttachmentEndpoint) -> bool {
@@ -184,6 +254,7 @@ fn failed_owner(store: &SessionStore, record: &Value, consultation: Option<&str>
     let parent = session["browser"]["attempt"]["parentId"].as_str();
     let child =
         crate::browser_attempt::internal(&session) || !session["browser"]["attempt"].is_null();
+    let mut answered = false;
     if child {
         let Some(parent) = parent else {
             return Ok(false);
@@ -195,8 +266,28 @@ fn failed_owner(store: &SessionStore, record: &Value, consultation: Option<&str>
         ) {
             return Ok(false);
         }
+        answered = parent["status"] == "completed";
+    }
+    if !answered && kept_for_recovery(&session, chrono::Utc::now()) {
+        return Ok(false);
     }
     Ok(consultation.is_none_or(|scope| scope == id || child && parent == Some(scope)))
+}
+
+/// A prompt that may have been sent can only be recovered from its live tab, since a closed
+/// Temporary Chat cannot be reopened. So the tab outlasts the failure for a while, and a later
+/// run's sweep closes it. An unreadable or future date keeps nothing open.
+fn kept_for_recovery(session: &Value, now: chrono::DateTime<chrono::Utc>) -> bool {
+    matches!(
+        session["dispatch"]["state"].as_str(),
+        Some("uncertain" | "acknowledged")
+    ) && session["completedAt"]
+        .as_str()
+        .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
+        .is_some_and(|failed| {
+            let age = now.signed_duration_since(failed);
+            age >= chrono::Duration::zero() && age < SENT_TAB_RETENTION
+        })
 }
 
 /// The consultation's own uncommitted records, found through each session's saved creator
@@ -237,19 +328,27 @@ fn consultation_records(
     Ok(records)
 }
 
-fn failed_candidates(
+fn failed_records(
     store: &SessionStore,
     journal: &TargetJournal,
-    endpoint: Option<&AttachmentEndpoint>,
     consultation: Option<&str>,
     deadline: Instant,
 ) -> Result<Vec<Value>> {
-    let records = match consultation {
-        Some(id) => consultation_records(store, journal, id)?,
-        None => journal.uncommitted_records(deadline)?,
-    };
+    match consultation {
+        Some(id) => consultation_records(store, journal, id),
+        None => journal.uncommitted_records(deadline),
+    }
+}
+
+fn failed_candidates(
+    store: &SessionStore,
+    records: &[Value],
+    endpoint: Option<&AttachmentEndpoint>,
+    consultation: Option<&str>,
+    deadline: Instant,
+) -> Vec<Value> {
     let mut candidates = records
-        .into_iter()
+        .iter()
         .filter(|record| {
             let target = &record["creator"]["target"];
             Instant::now() < deadline
@@ -259,29 +358,77 @@ fn failed_candidates(
                     || crate::browser_disposition::creator_is_current(record))
                 && failed_owner(store, record, consultation).is_ok_and(|failed| failed)
         })
+        .cloned()
         .collect::<Vec<_>>();
     candidates.sort_by(|a, b| {
         a["creator"]["allocationId"]
             .as_str()
             .cmp(&b["creator"]["allocationId"].as_str())
     });
-    Ok(candidates)
+    candidates
+}
+
+/// Marks a dead creator's uncommitted record absent once its browser has restarted on this
+/// endpoint, so later sweeps stop rechecking it. A record whose own browser socket still
+/// connects is left for a sweep of that browser.
+async fn retire_restarted(
+    journal: &TargetJournal,
+    browser: &Cdp,
+    endpoint: &AttachmentEndpoint,
+    records: &[Value],
+    deadline: Instant,
+) {
+    for record in records {
+        if deadline.saturating_duration_since(Instant::now()) < FAILED_TARGET_MINIMUM {
+            break;
+        }
+        if !restarted(&record["creator"]["target"], endpoint, browser)
+            || !crate::browser_disposition::creator_dead(record)
+        {
+            continue;
+        }
+        let budget = deadline.min(Instant::now() + FAILED_TARGET_BUDGET);
+        let retired = journal
+            .retire_uncommitted(&record["creator"], budget, |record| async move {
+                let original = record_endpoint(&record)?;
+                // Half the budget: an earlier socket that never answers must still leave
+                // time to save the retirement before the operation deadline.
+                let connected = original
+                    .connect(remaining(budget)? / 2, &CancellationToken::new())
+                    .await;
+                if let Ok(original) = connected {
+                    original.disconnect();
+                    anyhow::bail!("Its original browser socket still connects; retaining it");
+                }
+                Ok("browser-restarted".to_owned())
+            })
+            .await;
+        if let Err(error) = retired {
+            eprintln!(
+                "Restarted browser's target record {} remains retained: {error:#}",
+                record["creator"]["allocationId"]
+            );
+        }
+    }
 }
 
 /// Closes tabs that failed runs created on this exact browser, within `deadline`. Only a
 /// target named by an uncommitted journal record is closed, and only when its run and any
 /// parent consultation are terminal and its controller is dead or this process. The
-/// backstop resumes after the record it tried last, so a slow record cannot starve others.
+/// backstop resumes after the record it tried last, so a slow record cannot starve others,
+/// and then retires records of this endpoint's earlier browser. Each tab left open adds its
+/// error to `errors`.
 pub(crate) async fn close_failed_targets(
     store: &SessionStore,
     browser: &Cdp,
     endpoint: &AttachmentEndpoint,
     consultation: Option<&str>,
     deadline: Instant,
+    errors: &mut Vec<String>,
 ) -> Result<Vec<Value>> {
     let journal = TargetJournal::open(store)?;
-    let mut candidates =
-        failed_candidates(store, &journal, Some(endpoint), consultation, deadline)?;
+    let records = failed_records(store, &journal, consultation, deadline)?;
+    let mut candidates = failed_candidates(store, &records, Some(endpoint), consultation, deadline);
     // The backstop sweeps one browser at a time, so each browser keeps its own progress.
     let cursor_key = sha256(
         format!(
@@ -322,11 +469,14 @@ pub(crate) async fn close_failed_targets(
         match close_failed(store, &journal, browser, &record, budget).await {
             Ok(Some(disposed)) => closed.push(disposed),
             Ok(None) => {}
-            Err(error) => eprintln!(
+            Err(error) => errors.push(format!(
                 "Failed run's tab {} remains open: {error:#}",
                 record["creator"]["target"]["targetId"]
-            ),
+            )),
         }
+    }
+    if consultation.is_none() {
+        retire_restarted(&journal, browser, endpoint, &records, deadline).await;
     }
     Ok(closed)
 }
@@ -350,15 +500,38 @@ fn record_endpoint(record: &Value) -> Result<AttachmentEndpoint> {
 
 /// Called once a failed consultation has recorded its terminal status in this process.
 /// Each browser is handled on its own: one unreachable browser does not keep another's
-/// tabs open. Logs and never changes the run's own result.
+/// tabs open. Never changes the run's own result; a tab left open is logged and its error
+/// recorded as the consultation's `failedTabCleanupWarning`.
 pub(crate) async fn close_failed_consultation(store: &SessionStore, id: &str) {
+    let mut errors = vec![];
+    close_failed_consultation_tabs(store, id, &mut errors).await;
+    if errors.is_empty() {
+        return;
+    }
+    for error in &errors {
+        eprintln!("{error}");
+    }
+    let warning =
+        json!({"checkedAt":crate::sessions::timestamp(),"error":cleanup_error(&errors.join("; "))});
+    if let Err(error) = store.update_until(id, Instant::now() + Duration::from_secs(1), |current| {
+        ensure!(
+            crate::sessions::terminal(current["status"].as_str().unwrap_or("")),
+            "Consultation changed before its tab cleanup warning"
+        );
+        Ok(Some(json!({"failedTabCleanupWarning":warning})))
+    }) {
+        eprintln!("Failed run's tab cleanup warning was not recorded: {error:#}");
+    }
+}
+async fn close_failed_consultation_tabs(store: &SessionStore, id: &str, errors: &mut Vec<String>) {
     let deadline = Instant::now() + FAILED_SWEEP_BUDGET;
     let candidates = TargetJournal::open(store)
-        .and_then(|journal| failed_candidates(store, &journal, None, Some(id), deadline));
+        .and_then(|journal| failed_records(store, &journal, Some(id), deadline))
+        .map(|records| failed_candidates(store, &records, None, Some(id), deadline));
     let candidates = match candidates {
         Ok(candidates) => candidates,
         Err(error) => {
-            eprintln!("Failed run's tabs remain open: {error:#}");
+            errors.push(format!("Failed run's tabs remain open: {error:#}"));
             return;
         }
     };
@@ -367,10 +540,10 @@ pub(crate) async fn close_failed_consultation(store: &SessionStore, id: &str) {
         match record_endpoint(record) {
             Ok(endpoint) if !endpoints.contains(&endpoint) => endpoints.push(endpoint),
             Ok(_) => {}
-            Err(error) => eprintln!(
+            Err(error) => errors.push(format!(
                 "Failed run's tab {} remains open: {error:#}",
                 record["creator"]["target"]["targetId"]
-            ),
+            )),
         }
     }
     for endpoint in endpoints {
@@ -381,7 +554,10 @@ pub(crate) async fn close_failed_consultation(store: &SessionStore, id: &str) {
             let browser = endpoint
                 .connect(remaining(slice)?, &CancellationToken::new())
                 .await?;
-            let closed = close_failed_targets(store, &browser, &endpoint, Some(id), slice).await;
+            let mut failures = vec![];
+            let closed =
+                close_failed_targets(store, &browser, &endpoint, Some(id), slice, &mut failures)
+                    .await;
             // The close wait stays inside this browser's slice; a spent slice only disconnects.
             match remaining(slice) {
                 Ok(wait) => {
@@ -394,14 +570,15 @@ pub(crate) async fn close_failed_consultation(store: &SessionStore, id: &str) {
                 }
                 Err(_) => browser.disconnect(),
             }
-            closed
+            closed.map(|_| failures)
         }
         .await;
-        if let Err(error) = result {
-            eprintln!(
+        match result {
+            Ok(failures) => errors.extend(failures),
+            Err(error) => errors.push(format!(
                 "Failed run's tabs on {} remain open: {error:#}",
                 endpoint.browser_ws_endpoint
-            );
+            )),
         }
     }
 }
@@ -487,11 +664,32 @@ async fn close_failed(
     closed
 }
 
+/// The tab's claim facts, never page content; `null` in a frame or on any error.
 fn failed_claim_expression() -> String {
     format!(
-        "(cfg)=>{{ /* alcuin-dom:failed-run-claim */ {} try {{if(window!==window.top)return 'foreign';const claim=readOracleTargetClaim();if(!claim)return 'unclaimed';return claim.id===cfg.claimId?'owned':'foreign';}}catch{{return 'foreign';}}}}",
+        "(cfg)=>{{ /* alcuin-dom:failed-run-claim */ {} try {{if(window!==window.top)return null;const claim=readOracleTargetClaim();if(!claim)return {{claimed:false}};const s=claim.submission,i=claim.inspection;return {{claimed:true,own:claim.id===cfg.claimId,submission:s?{{state:s.state??null,dispatch:s.dispatch??null}}:null,inspection:i?{{state:i.state??null}}:null}};}}catch{{return null;}}}}",
         include_str!("../browser-scripts/ownership-prelude.js")
     )
+}
+/// "owned" only when the tab carries the run's exact claim and nothing may still be using
+/// it: no inspection that has not settled and no Send in flight.
+fn failed_claim(observed: &Value) -> &'static str {
+    let inspecting = !observed["inspection"].is_null()
+        && !matches!(
+            observed["inspection"]["state"].as_str(),
+            Some("quarantined" | "clean")
+        );
+    let sending = observed["submission"]["state"] == "active"
+        && observed["submission"]["dispatch"] == "started";
+    if observed["claimed"] == false {
+        "unclaimed"
+    } else if observed["own"] != true {
+        "foreign"
+    } else if inspecting || sending {
+        "in use"
+    } else {
+        "owned"
+    }
 }
 /// Closes exactly the record's target, preserving the browser's final page.
 async fn close_exact(
@@ -527,18 +725,36 @@ async fn close_exact(
             &CancellationToken::new(),
         )
         .await?;
-    let claim = page
-        .evaluate_with_arguments(
-            &failed_claim_expression(),
-            &json!([{"claimId":creator["target"]["claimId"]}]),
-            remaining(operation_deadline)?,
-            &CancellationToken::new(),
-        )
-        .await?;
+    let claim = failed_claim(
+        &page
+            .evaluate_with_arguments(
+                &failed_claim_expression(),
+                &json!([{"claimId":creator["target"]["claimId"]}]),
+                remaining(operation_deadline)?,
+                &CancellationToken::new(),
+            )
+            .await?,
+    );
     ensure!(
         claim == "owned",
-        "Failed run's tab does not carry its original claim ({claim}); retaining it"
+        "Failed run's tab does not carry its original idle claim ({claim}); retaining it"
     );
+    let _last_page = last_page_lock(
+        store,
+        creator["target"]["host"]
+            .as_str()
+            .context("Creator endpoint is missing")?,
+        u16::try_from(
+            creator["target"]["port"]
+                .as_u64()
+                .context("Creator port is missing")?,
+        )?,
+        operation_deadline,
+    )?;
+    let rows = targets(browser, operation_deadline).await?;
+    if rows.iter().all(|row| row["targetId"] != id) {
+        return Ok("failed-run-already-absent".into());
+    }
     if !rows
         .iter()
         .any(|row| row["type"] == "page" && row["targetId"] != id)
@@ -819,6 +1035,7 @@ pub(crate) async fn retire_claimed_completed(
             &json!({"creatorlessRetirement":{"version":1,"id":Uuid::new_v4().to_string(),"binding":binding}}))}))})))
     })?;
     let saved = &saved;
+    let _last_page = last_page_lock(store, &capture.host, capture.port, operation_deadline)?;
     let rows = targets(browser, operation_deadline).await?;
     if rows.iter().all(|row| row["targetId"] != capture.target_id) {
         authorise_claimed(store, id, saved, capture, operation_deadline)?;
@@ -961,15 +1178,11 @@ pub(crate) fn require_target_controllers(
             }
         }
     }
-    // Retirement repeats this check up to 3 times within a 2 to 5 s deadline, and parsing
-    // all 4,096 sessions of a live store took about 1 s per check, so read only sessions
-    // whose metadata names the target. shortcut: still reads every metadata file; a
-    // per-target session index would remove the scan.
-    let sessions = match target["targetId"]
-        .as_str()
-        .filter(|id| crate::browser_target::valid_id(id))
-    {
-        Some(id) => store.list_mentioning(id)?,
+    // Retirement repeats this check up to 3 times within a 2 to 5 s deadline, and reading
+    // all 4,100 sessions of a live store took about 320 ms per check, so read only the
+    // sessions the target index cannot rule out.
+    let sessions = match target["targetId"].as_str() {
+        Some(id) => store.list_naming_target(id)?,
         None => store.list(true)?,
     };
     for session in sessions {
@@ -1458,9 +1671,17 @@ async fn retire(
                 .await?
             }
         };
-        saved
+        match saved
             .connect(remaining(operation_deadline)?, &CancellationToken::new())
-            .await?
+            .await
+        {
+            Ok(browser) => browser,
+            // The old browser instance, and with it every target it created, has exited.
+            Err(_) if restarted(target, endpoint, existing) => {
+                return Ok(("confirmed-absent".into(), "browser-restarted".into()));
+            }
+            Err(error) => return Err(error),
+        }
     };
     let rows = targets(&browser, operation_deadline).await?;
     require_controllers(store, creator, operation_deadline, allow_current_owner)?;
@@ -1531,6 +1752,7 @@ async fn retire(
         allow_current_owner,
     )
     .await?;
+    let _last_page = last_page_lock(store, host, port, operation_deadline)?;
     let rows = targets(&browser, operation_deadline).await?;
     if !rows
         .iter()
@@ -2199,6 +2421,38 @@ mod tests {
         Unclaimed,
         NotPage,
         CrowdedStore,
+        Inspecting,
+        Sending,
+        Settled,
+        Restarted,
+        RestartedLive,
+        RestartedHung,
+        UncertainRecent,
+        UncertainExpired,
+        UncertainAnswered,
+    }
+    #[test]
+    fn only_a_recent_sent_prompt_keeps_its_tab() {
+        let now = chrono::Utc::now();
+        let failed = |state: &str, minutes: i64| {
+            let at = now - chrono::Duration::minutes(minutes);
+            json!({"dispatch":{"state":state},"completedAt":at.to_rfc3339()})
+        };
+        assert!(kept_for_recovery(&failed("uncertain", 59), now));
+        assert!(!kept_for_recovery(&failed("uncertain", 60), now));
+        // An answer that would not load: its error says to reattach and read it again.
+        assert!(kept_for_recovery(&failed("acknowledged", 59), now));
+        assert!(!kept_for_recovery(&failed("acknowledged", 60), now));
+        assert!(!kept_for_recovery(&failed("not-started", 1), now));
+        assert!(!kept_for_recovery(&failed("uncertain", -5), now));
+        assert!(!kept_for_recovery(
+            &json!({"dispatch":{"state":"uncertain"},"completedAt":"PUBLIC unreadable"}),
+            now
+        ));
+        assert!(!kept_for_recovery(
+            &json!({"dispatch":{"state":"uncertain"}}),
+            now
+        ));
     }
     fn live_foreign() -> (std::process::Child, ProcessIdentity) {
         let child = if cfg!(windows) {
@@ -2219,7 +2473,7 @@ mod tests {
         mut peer: WebSocketStream<S>,
         last_page: bool,
         target_type: &'static str,
-        claim: &'static str,
+        claim: Value,
         seen: Arc<Mutex<Vec<Value>>>,
     ) where
         S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
@@ -2340,33 +2594,83 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let store = SessionStore::new(home.path().join(".oracle"));
         let journal = TargetJournal::open(&store).unwrap();
+        // A restarted browser's endpoint is a real local port: its earlier socket is refused
+        // there, for RestartedLive still accepted, and for RestartedHung never answered.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = match case {
+            Failed::Restarted | Failed::RestartedLive | Failed::RestartedHung => {
+                listener.local_addr().unwrap().port()
+            }
+            _ => 9222,
+        };
+        let earlier = match case {
+            Failed::RestartedLive => tokio::spawn(async move {
+                while let Ok((socket, _)) = listener.accept().await {
+                    let _socket = tokio_tungstenite::accept_async(socket).await;
+                }
+            }),
+            Failed::RestartedHung => tokio::spawn(async move {
+                let mut held = vec![];
+                while let Ok((socket, _)) = listener.accept().await {
+                    held.push(socket);
+                }
+            }),
+            _ => {
+                drop(listener);
+                tokio::spawn(async {})
+            }
+        };
         let endpoint = AttachmentEndpoint {
             host: "127.0.0.1".into(),
-            port: 9222,
-            browser_ws_endpoint: "ws://127.0.0.1:9222/devtools/browser/PUBLIC-browser".into(),
+            port,
+            browser_ws_endpoint: format!("ws://127.0.0.1:{port}/devtools/browser/PUBLIC-browser"),
         };
         let parent = session(&store, home.path(), "PUBLIC failed consultation");
-        let ws = if case == Failed::OtherBrowser {
-            "ws://127.0.0.1:9222/devtools/browser/PUBLIC-earlier-browser"
-        } else {
-            endpoint.browser_ws_endpoint.as_str()
+        let ws = match case {
+            Failed::OtherBrowser => {
+                "ws://127.0.0.1:9223/devtools/browser/PUBLIC-other-browser".into()
+            }
+            Failed::Restarted | Failed::RestartedLive | Failed::RestartedHung => {
+                format!("ws://127.0.0.1:{port}/devtools/browser/PUBLIC-earlier-browser")
+            }
+            _ => endpoint.browser_ws_endpoint.clone(),
         };
         let (child, creator) = failed_attempt(
             &store,
             home.path(),
             &parent,
-            ws,
+            &ws,
             &Uuid::new_v4().to_string(),
         );
         store
             .update(&parent, |_| {
-                Ok(Some(
-                    json!({"status":if case == Failed::ParentRunning {"running"} else {"error"},
+                Ok(Some(json!({"status":match case {
+                        Failed::ParentRunning => "running",
+                        Failed::UncertainAnswered => "completed",
+                        _ => "error",
+                    },
                     "errorMessage":"PUBLIC parent error",
-                    "browser":{"consultation":{"attempts":[{"childId":child}]}}}),
-                ))
+                    "browser":{"consultation":{"attempts":[{"childId":child}]}}})))
             })
             .unwrap();
+        if matches!(
+            case,
+            Failed::UncertainRecent | Failed::UncertainExpired | Failed::UncertainAnswered
+        ) {
+            let minutes = if case == Failed::UncertainExpired {
+                61
+            } else {
+                1
+            };
+            let at = chrono::Utc::now() - chrono::Duration::minutes(minutes);
+            store
+                .update(&child, |_| {
+                    Ok(Some(
+                        json!({"dispatch":{"state":"uncertain"},"completedAt":at.to_rfc3339()}),
+                    ))
+                })
+                .unwrap();
+        }
         let mut record = journal.read(&creator["allocationId"]).unwrap();
         let (mut foreign_process, foreign) = live_foreign();
         match case {
@@ -2384,6 +2688,13 @@ mod tests {
         if case == Failed::Committed {
             record["commit"] = json!({"version":1,"kind":"native","PUBLIC":"committed"});
         }
+        let record_port = if case == Failed::OtherBrowser {
+            9223
+        } else {
+            port
+        };
+        record["creator"]["target"]["port"] = json!(record_port);
+        record["disposition"]["target"]["port"] = json!(record_port);
         atomic_json(
             &store.home().join("target-dispositions").join(format!(
                 "{}.json",
@@ -2408,9 +2719,20 @@ mod tests {
         let peer = WebSocketStream::from_raw_socket(server, Role::Server, None).await;
         let requests = Arc::new(Mutex::new(vec![]));
         let claim = match case {
-            Failed::ForeignClaim => "foreign",
-            Failed::Unclaimed => "unclaimed",
-            _ => "owned",
+            Failed::ForeignClaim => {
+                json!({"claimed":true,"own":false,"submission":null,"inspection":null})
+            }
+            Failed::Unclaimed => json!({"claimed":false}),
+            Failed::Inspecting => {
+                json!({"claimed":true,"own":true,"submission":{"state":"active","dispatch":"not-started"},"inspection":{"state":"active"}})
+            }
+            Failed::Sending => {
+                json!({"claimed":true,"own":true,"submission":{"state":"active","dispatch":"started"},"inspection":null})
+            }
+            Failed::Settled => {
+                json!({"claimed":true,"own":true,"submission":{"state":"quarantined","dispatch":"ambiguous"},"inspection":{"state":"quarantined"}})
+            }
+            _ => json!({"claimed":true,"own":true,"submission":null,"inspection":null}),
         };
         let target_type = if case == Failed::NotPage {
             "service_worker"
@@ -2449,6 +2771,7 @@ mod tests {
                 &endpoint,
                 Some(&parent),
                 Instant::now() + Duration::from_secs(5),
+                &mut vec![],
             )
             .await
             .unwrap();
@@ -2461,6 +2784,7 @@ mod tests {
             .await
             .unwrap();
         worker.await.unwrap();
+        earlier.abort();
         let _ = foreign_process.kill();
         let _ = foreign_process.wait();
         let requests = requests.lock().unwrap().clone();
@@ -2485,6 +2809,9 @@ mod tests {
             (Failed::DeadController, true),
             (Failed::CurrentController, false),
             (Failed::CrowdedStore, false),
+            (Failed::Settled, false),
+            (Failed::UncertainExpired, false),
+            (Failed::UncertainAnswered, false),
         ] {
             let run = failed_fixture(case, last_page).await;
             let (record, session, requests) = (&run.record, &run.session, &run.requests);
@@ -2521,6 +2848,10 @@ mod tests {
             Failed::ForeignClaim,
             Failed::Unclaimed,
             Failed::NotPage,
+            Failed::Inspecting,
+            Failed::Sending,
+            Failed::RestartedLive,
+            Failed::UncertainRecent,
         ] {
             let run = failed_fixture(case, false).await;
             assert_eq!(
@@ -2541,6 +2872,102 @@ mod tests {
             assert!(run.session["browser"]["runtime"]["recoveryUnavailable"].is_null());
             require_target_open(&run.store, &run.session).unwrap();
         }
+    }
+    #[tokio::test]
+    async fn a_restarted_browsers_uncommitted_record_is_marked_absent_without_a_close() {
+        // A refused or unanswered earlier socket both leave time to save the retirement.
+        for case in [Failed::Restarted, Failed::RestartedHung] {
+            let run = failed_fixture(case, false).await;
+            assert_eq!(run.record["disposition"]["decision"], "retired", "{case:?}");
+            assert_eq!(run.record["disposition"]["absence"], "confirmed-absent");
+            assert_eq!(run.record["disposition"]["reason"], "browser-restarted");
+            assert!(closes(&run.requests).is_empty());
+            assert!(
+                run.requests
+                    .iter()
+                    .all(|request| request["method"] != "Target.attachToTarget")
+            );
+        }
+    }
+    #[test]
+    fn only_another_browser_id_counts_as_a_restart_and_cleanup_errors_stay_bounded() {
+        let ws = |host: &str, id: &str| format!("ws://{host}:9333/devtools/browser/{id}");
+        assert!(!other_browser(
+            &ws("localhost", "PUBLIC-same"),
+            &ws("127.0.0.1", "PUBLIC-same")
+        ));
+        assert!(other_browser(
+            &ws("127.0.0.1", "PUBLIC-earlier"),
+            &ws("127.0.0.1", "PUBLIC-current")
+        ));
+        assert!(!other_browser(
+            "PUBLIC-not-an-endpoint",
+            &ws("127.0.0.1", "PUBLIC-current")
+        ));
+        assert_eq!(cleanup_error(&"é".repeat(600)), "é".repeat(600));
+        let long = cleanup_error(&"é".repeat(601));
+        assert_eq!(long.chars().count(), 600);
+        assert!(long.ends_with("é..."));
+    }
+    #[test]
+    fn failed_tab_claim_is_owned_only_when_exact_and_idle() {
+        for (observed, expected) in [
+            (json!({"claimed":true,"own":true}), "owned"),
+            (
+                json!({"claimed":true,"own":true,"submission":{"state":"active","dispatch":"not-started"},"inspection":{"state":"clean"}}),
+                "owned",
+            ),
+            (
+                json!({"claimed":true,"own":true,"submission":{"state":"quarantined","dispatch":"ambiguous"}}),
+                "owned",
+            ),
+            (json!({"claimed":false}), "unclaimed"),
+            (json!(null), "foreign"),
+            (json!({"claimed":true,"own":false}), "foreign"),
+            (
+                json!({"claimed":true,"own":true,"inspection":{"state":"active"}}),
+                "in use",
+            ),
+            (
+                json!({"claimed":true,"own":true,"inspection":{"state":null}}),
+                "in use",
+            ),
+            (
+                json!({"claimed":true,"own":true,"submission":{"state":"active","dispatch":"started"}}),
+                "in use",
+            ),
+        ] {
+            assert_eq!(failed_claim(&observed), expected, "{observed}");
+        }
+    }
+    #[test]
+    fn recovery_refuses_a_tab_whose_journal_record_cannot_be_verified() {
+        let home = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(home.path().join(".oracle"));
+        let parent = session(&store, home.path(), "PUBLIC failed consultation");
+        let (child, creator) = failed_attempt(
+            &store,
+            home.path(),
+            &parent,
+            "ws://127.0.0.1:9222/devtools/browser/PUBLIC-browser",
+            &Uuid::new_v4().to_string(),
+        );
+        let meta = store.stored_for_update(&child).unwrap();
+        require_target_open(&store, &meta).unwrap();
+        let path = store.home().join("target-dispositions").join(format!(
+            "{}.json",
+            creator["allocationId"].as_str().unwrap()
+        ));
+        std::fs::write(&path, b"PUBLIC unreadable record").unwrap();
+        let refused = require_target_open(&store, &meta).unwrap_err().to_string();
+        assert!(refused.contains("cannot be verified"), "{refused}");
+        // A record that names another creator does not show this tab open either.
+        let mut record = json!({"version":1});
+        record["creator"] = creator.clone();
+        record["creator"]["controllerPid"] = json!(1);
+        record["disposition"] = json!({"version":1,"allocationId":creator["allocationId"]});
+        atomic_json(&path, &record).unwrap();
+        assert!(require_target_open(&store, &meta).is_err());
     }
     #[tokio::test]
     async fn recovery_refuses_a_closed_failed_tab_without_its_session_receipt() {
@@ -2627,7 +3054,14 @@ mod tests {
         let mut server = tokio::spawn(async move {
             let (socket, _) = listener.accept().await.unwrap();
             let peer = tokio_tungstenite::accept_async(socket).await.unwrap();
-            serve_failed(peer, false, "page", "owned", seen).await;
+            serve_failed(
+                peer,
+                false,
+                "page",
+                json!({"claimed":true,"own":true,"submission":null,"inspection":null}),
+                seen,
+            )
+            .await;
         });
         close_failed_consultation(&store, &parent).await;
         // Without per-browser handling nothing connects; fail instead of waiting forever.
@@ -2647,10 +3081,93 @@ mod tests {
             .read(&json!("00000000-0000-4000-8000-000000000001"))
             .unwrap();
         assert_eq!(unreachable["disposition"]["reason"], "commit-missing");
-        assert_eq!(
-            store.stored_for_update(&parent).unwrap()["errorMessage"],
-            "PUBLIC parent error"
+        let parent = store.stored_for_update(&parent).unwrap();
+        assert_eq!(parent["errorMessage"], "PUBLIC parent error");
+        // The open tab's real error is kept with the consultation.
+        let warning = parent["failedTabCleanupWarning"]["error"].as_str().unwrap();
+        // The transport error itself varies: a refusal, or a timeout where the OS retries.
+        assert!(
+            warning.contains(&format!(
+                "127.0.0.1:{gone_port}/devtools/browser/PUBLIC-gone"
+            )),
+            "{warning}"
         );
+        assert!(parent["failedTabCleanupWarning"]["checkedAt"].is_string());
+    }
+    #[tokio::test]
+    async fn a_grok_completion_closes_the_failed_chatgpt_attempts_tab() {
+        let home = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(home.path().join(".oracle"));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let parent = session(&store, home.path(), "PUBLIC Grok consultation");
+        let (chatgpt, creator) = failed_attempt(
+            &store,
+            home.path(),
+            &parent,
+            &format!("ws://127.0.0.1:{port}/devtools/browser/PUBLIC-live"),
+            "ffffffff-ffff-4fff-8fff-ffffffffffff",
+        );
+        let journal = TargetJournal::open(&store).unwrap();
+        let mut record = journal.read(&creator["allocationId"]).unwrap();
+        record["creator"]["target"]["port"] = json!(port);
+        record["disposition"]["target"]["port"] = json!(port);
+        atomic_json(
+            &store
+                .home()
+                .join("target-dispositions")
+                .join("ffffffff-ffff-4fff-8fff-ffffffffffff.json"),
+            &record,
+        )
+        .unwrap();
+        let saved = record["creator"].clone();
+        store
+            .update(&chatgpt, |current| {
+                Ok(Some(
+                    json!({"browser":crate::sessions::merge_object(&current["browser"],&json!({"runtime":crate::sessions::merge_object(&current["browser"]["runtime"],&json!({"ownedRecoveryTarget":{"creator":saved}}))}))}),
+                ))
+            })
+            .unwrap();
+        let grok = session(&store, home.path(), "PUBLIC Grok attempt");
+        store
+            .update(&grok, |_| Ok(Some(json!({"status":"completed"}))))
+            .unwrap();
+        store
+            .update(&parent, |_| {
+                Ok(Some(json!({"status":"completed",
+                    "browser":{"consultation":{"attempts":[{"childId":chatgpt},{"childId":grok}]}}})))
+            })
+            .unwrap();
+        let requests = Arc::new(Mutex::new(vec![]));
+        let seen = requests.clone();
+        let mut server = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            let peer = tokio_tungstenite::accept_async(socket).await.unwrap();
+            serve_failed(
+                peer,
+                false,
+                "page",
+                json!({"claimed":true,"own":true,"submission":null,"inspection":null}),
+                seen,
+            )
+            .await;
+        });
+        close_failed_consultation(&store, &parent).await;
+        if tokio::time::timeout(Duration::from_secs(2), &mut server)
+            .await
+            .is_err()
+        {
+            server.abort();
+        }
+        let record = journal.read(&creator["allocationId"]).unwrap();
+        assert_eq!(record["disposition"]["reason"], "failed-run-closed");
+        assert_eq!(
+            closes(&requests.lock().unwrap()),
+            [&json!("PUBLIC-failed-target")]
+        );
+        let parent = store.stored_for_update(&parent).unwrap();
+        assert_eq!(parent["status"], "completed");
+        assert!(parent["failedTabCleanupWarning"].is_null());
     }
     /// S6 measurement: `cargo test --lib failed_sweep_large_journal_timing -- --ignored --nocapture`.
     #[tokio::test]
@@ -2723,14 +3240,16 @@ mod tests {
             .unwrap();
         let far = Instant::now() + Duration::from_secs(60);
         let scan = Instant::now();
-        let backstop = failed_candidates(&store, &journal, Some(&endpoint), None, far).unwrap();
+        let records = failed_records(&store, &journal, None, far).unwrap();
+        let backstop = failed_candidates(&store, &records, Some(&endpoint), None, far);
         eprintln!(
             "backstop candidate scan: {:?} for {} candidates",
             scan.elapsed(),
             backstop.len()
         );
         let scan = Instant::now();
-        let scoped = failed_candidates(&store, &journal, None, Some(&parent), far).unwrap();
+        let records = failed_records(&store, &journal, Some(&parent), far).unwrap();
+        let scoped = failed_candidates(&store, &records, None, Some(&parent), far);
         eprintln!(
             "consultation lookup: {:?} for {} candidates",
             scan.elapsed(),
@@ -2755,7 +3274,9 @@ mod tests {
                         json!({"targetInfos":pages.iter().map(|id| json!({"targetId":id,"type":"page"})).collect::<Vec<_>>()})
                     }
                     "Target.attachToTarget" => json!({"sessionId":"PUBLIC-attachment"}),
-                    "Runtime.evaluate" => json!({"result":{"value":"owned"}}),
+                    "Runtime.evaluate" => {
+                        json!({"result":{"value":json!({"claimed":true,"own":true,"submission":null,"inspection":null})}})
+                    }
                     "Target.closeTarget" => {
                         pages.retain(|id| *id != request["params"]["targetId"]);
                         json!({"success":true})
@@ -2778,6 +3299,7 @@ mod tests {
             &endpoint,
             None,
             Instant::now() + FAILED_SWEEP_BUDGET,
+            &mut vec![],
         )
         .await
         .unwrap();
@@ -2793,6 +3315,7 @@ mod tests {
             &endpoint,
             Some(&parent),
             Instant::now() + FAILED_SWEEP_BUDGET,
+            &mut vec![],
         )
         .await
         .unwrap();
@@ -2833,7 +3356,9 @@ mod tests {
                     }
                     json!({"sessionId":"PUBLIC-attachment"})
                 }
-                "Runtime.evaluate" => json!({"result":{"value":"owned"}}),
+                "Runtime.evaluate" => {
+                    json!({"result":{"value":json!({"claimed":true,"own":true,"submission":null,"inspection":null})}})
+                }
                 "Target.closeTarget" => {
                     pages.retain(|id| *id != request["params"]["targetId"]);
                     json!({"success":true})
@@ -3017,6 +3542,7 @@ mod tests {
                 &a,
                 None,
                 Instant::now() + Duration::from_millis(600),
+                &mut vec![],
             )
             .await
             .unwrap();
@@ -3029,6 +3555,7 @@ mod tests {
                 &b,
                 None,
                 Instant::now() + Duration::from_millis(600),
+                &mut vec![],
             )
             .await
             .unwrap();
