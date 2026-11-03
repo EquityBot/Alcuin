@@ -1,6 +1,6 @@
 //! Plain CLI text that mirrors the reference Commander and display helpers.
 use serde_json::Value;
-use std::ffi::OsString;
+use std::{borrow::Cow, ffi::OsString};
 
 const SUBCOMMANDS: &[&str] = &[
     "perf-summary",
@@ -580,6 +580,26 @@ pub(crate) fn locale_number(value: f64) -> String {
         fraction
     )
 }
+/// Answer, log or prompt text bound for a terminal: control characters other than newline, tab
+/// and a carriage return before a newline become visible `\u{1b}` escapes, so saved or streamed
+/// text cannot move the cursor, retitle the window or set the clipboard. Text for a pipe or a
+/// file stays exact.
+pub(crate) fn terminal_text(text: &str, terminal: bool) -> Cow<'_, str> {
+    let hidden = |c: char| c.is_control() && c != '\n' && c != '\t';
+    if !terminal || !text.contains(hidden) {
+        return Cow::Borrowed(text);
+    }
+    let mut out = String::with_capacity(text.len() + 16);
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if hidden(c) && !(c == '\r' && chars.peek() == Some(&'\n')) {
+            out.extend(c.escape_unicode());
+        } else {
+            out.push(c);
+        }
+    }
+    Cow::Owned(out)
+}
 fn nonempty(value: Option<&str>) -> Option<&str> {
     value
         .map(crate::policy::trim)
@@ -787,6 +807,19 @@ pub(crate) fn project_sources(result: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn terminal_text_shows_control_characters_and_keeps_pipes_exact() {
+        // OSC 52 (set the clipboard), CSI cursor movement, a bare carriage return, a C1 CSI
+        // and DEL become visible; newline, tab and CRLF stay.
+        let text = "a\u{1b}]52;c;ZXZpbA==\u{7}b\u{1b}[2Ax\ry\r\n\tz\u{9b}31m\u{7f}\n";
+        assert_eq!(
+            terminal_text(text, true),
+            "a\\u{1b}]52;c;ZXZpbA==\\u{7}b\\u{1b}[2Ax\\u{d}y\r\n\tz\\u{9b}31m\\u{7f}\n"
+        );
+        assert!(matches!(terminal_text(text, false), Cow::Borrowed(t) if t == text));
+        let plain = "line one\n\tline two\n";
+        assert!(matches!(terminal_text(plain, true), Cow::Borrowed(t) if t == plain));
+    }
     #[test]
     fn compact_numbers_follow_the_reference_format() {
         for (value, expected) in [

@@ -4,6 +4,7 @@ use crate::{
     browser_historical, browser_inspection,
     browser_profile::ProfileRegistry,
     browser_runner::{self, RunnerLimits},
+    cli_format,
     config::Environment,
     policy,
     process::{Liveness, ProcessIdentity},
@@ -47,6 +48,7 @@ impl LogCursor {
                 writeln!(output, "=== {model} ===")?;
             }
         }
+        let chunk = cli_format::terminal_text(chunk, std::io::stdout().is_terminal());
         output.write_all(chunk.as_bytes())?;
         output.flush()?;
         self.saved.insert(model.into(), text);
@@ -382,6 +384,7 @@ async fn attach_inner(
         && !view.hide_prompt
         && let Some(prompt) = session_display::stored_prompt(store, id, &initial)
     {
+        let prompt = cli_format::terminal_text(&prompt, std::io::stdout().is_terminal());
         writeln!(output, "Prompt:\n{prompt}\n---")?;
     }
     let recoverable = (initial["mode"] == "browser"
@@ -408,6 +411,7 @@ async fn attach_inner(
                 "Render requested but stdout is not a TTY; showing raw text."
             )?;
         }
+        let shown = cli_format::terminal_text(shown, std::io::stdout().is_terminal());
         output.write_all(shown.as_bytes())?;
         if let Some(summary) = session_display::completion_summary(&store.require(id)?) {
             writeln!(output, "\n{summary}")?;

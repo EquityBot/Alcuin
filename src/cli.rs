@@ -338,6 +338,7 @@ impl providers::ResponseObserver for CliStream {
         if !self.printed.load(Ordering::Relaxed) {
             stdout.write_all(b"\nAnswer:\n")?;
         }
+        let text = crate::cli_format::terminal_text(text, stdout.is_terminal());
         stdout.write_all(text.as_bytes())?;
         stdout.flush()?;
         self.printed.store(true, Ordering::Relaxed);
@@ -2379,7 +2380,10 @@ async fn session_command(
         if cancel.is_cancelled() {
             return Ok(130);
         }
-        print!("{}", result?);
+        print!(
+            "{}",
+            crate::cli_format::terminal_text(&result?, std::io::stdout().is_terminal())
+        );
         return Ok(0);
     }
     if matches!(id, Some("clear" | "clean")) {
@@ -2464,6 +2468,7 @@ fn print_inspected_answer(
     cancel: &CancellationToken,
 ) -> Result<()> {
     anyhow::ensure!(!cancel.is_cancelled(), "Browser inspection cancelled");
+    let shown = crate::cli_format::terminal_text(answer, std::io::stdout().is_terminal());
     if let Some(destination) = text(view_scope(root, m, "write-output"), "write-output") {
         let meta = store.require(id)?;
         let cwd = Path::new(
@@ -2474,14 +2479,14 @@ fn print_inspected_answer(
         match crate::browser_sessions::write_output(store, cwd, destination, answer, cancel)? {
             Some(path) => println!("Wrote harvested assistant output to {}", path.display()),
             None => {
-                print!("{answer}{}", if answer.ends_with('\n') { "" } else { "\n" });
+                print!("{shown}{}", if answer.ends_with('\n') { "" } else { "\n" });
                 return Ok(());
             }
         }
     }
     if !answer.is_empty() {
         anyhow::ensure!(!cancel.is_cancelled(), "Browser inspection cancelled");
-        print!("{answer}{}", if answer.ends_with('\n') { "" } else { "\n" });
+        print!("{shown}{}", if answer.ends_with('\n') { "" } else { "\n" });
     }
     Ok(())
 }
