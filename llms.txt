@@ -20,4 +20,4 @@ Version 0.1.0 (unreleased). Needs Rust 1.99 or later; install from a checkout wi
 ## Related
 
 - [EquityBot](https://github.com/EquityBot): other EquityBot tools.
-- [Oracle](https://github.com/steipete/oracle): the upstream project Alcuin, and through it Alcuin, derives from.
+- [Oracle](https://github.com/steipete/oracle): the upstream project; Alcuin is a Rust port of a maintained fork of it.
