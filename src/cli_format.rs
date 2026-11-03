@@ -600,6 +600,21 @@ pub(crate) fn terminal_text(text: &str, terminal: bool) -> Cow<'_, str> {
     }
     Cow::Owned(out)
 }
+/// `terminal_text` for one chunk of a stream printed to a terminal. A carriage return ending the
+/// chunk waits in `held_cr` until the next chunk shows whether a newline follows it, so a CRLF
+/// split across 2 chunks prints as it would in one.
+pub(crate) fn terminal_chunk(text: &str, held_cr: &mut bool) -> String {
+    let mut chunk = String::with_capacity(text.len() + 1);
+    if std::mem::take(held_cr) {
+        chunk.push('\r');
+    }
+    chunk.push_str(text);
+    if chunk.ends_with('\r') {
+        chunk.pop();
+        *held_cr = true;
+    }
+    terminal_text(&chunk, true).into_owned()
+}
 fn nonempty(value: Option<&str>) -> Option<&str> {
     value
         .map(crate::policy::trim)
@@ -819,6 +834,25 @@ mod tests {
         assert!(matches!(terminal_text(text, false), Cow::Borrowed(t) if t == text));
         let plain = "line one\n\tline two\n";
         assert!(matches!(terminal_text(plain, true), Cow::Borrowed(t) if t == plain));
+    }
+    #[test]
+    fn terminal_chunks_print_as_the_whole_text_wherever_the_stream_splits() {
+        let text = "x\r\ny\rz\u{1b}[2A\r";
+        let whole = terminal_text(text, true);
+        for i in (0..=text.len()).filter(|&i| text.is_char_boundary(i)) {
+            for j in (i..=text.len()).filter(|&j| text.is_char_boundary(j)) {
+                let mut held = false;
+                let mut shown = String::new();
+                for part in [&text[..i], &text[i..j], &text[j..]] {
+                    shown += &terminal_chunk(part, &mut held);
+                }
+                // At the end of the stream a held carriage return prints escaped.
+                if held {
+                    shown.extend('\r'.escape_unicode());
+                }
+                assert_eq!(shown, whole, "split at {i} and {j}");
+            }
+        }
     }
     #[test]
     fn compact_numbers_follow_the_reference_format() {

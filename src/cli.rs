@@ -304,6 +304,8 @@ fn output_path(raw: &str, cwd: &Path, env: &Environment, store: &SessionStore) -
 #[derive(Default)]
 pub(crate) struct CliStream {
     printed: AtomicBool,
+    /// A carriage return that ended the last chunk streamed to a terminal.
+    held_cr: AtomicBool,
 }
 impl CliStream {
     /// Reference runOracle answer tail: separates streamed text, or prints the "Answer:" header
@@ -314,6 +316,9 @@ impl CliStream {
         let status =
             (verbose && answer.is_some()).then_some("[verbose] Response status: completed");
         if self.printed.load(Ordering::Relaxed) {
+            if self.held_cr.swap(false, Ordering::Relaxed) {
+                write!(stdout, "{}", '\r'.escape_unicode())?;
+            }
             writeln!(stdout)?;
             if let Some(status) = status {
                 writeln!(stdout, "{status}")?;
@@ -322,6 +327,7 @@ impl CliStream {
             if let Some(status) = status {
                 writeln!(stdout, "{status}")?;
             }
+            let answer = crate::cli_format::terminal_text(answer, stdout.is_terminal());
             let newline = if answer.ends_with('\n') { "" } else { "\n" };
             write!(stdout, "\nAnswer:\n{answer}{newline}\n")?;
         }
@@ -338,8 +344,14 @@ impl providers::ResponseObserver for CliStream {
         if !self.printed.load(Ordering::Relaxed) {
             stdout.write_all(b"\nAnswer:\n")?;
         }
-        let text = crate::cli_format::terminal_text(text, stdout.is_terminal());
-        stdout.write_all(text.as_bytes())?;
+        if stdout.is_terminal() {
+            let mut held = self.held_cr.load(Ordering::Relaxed);
+            let text = crate::cli_format::terminal_chunk(text, &mut held);
+            self.held_cr.store(held, Ordering::Relaxed);
+            stdout.write_all(text.as_bytes())?;
+        } else {
+            stdout.write_all(text.as_bytes())?;
+        }
         stdout.flush()?;
         self.printed.store(true, Ordering::Relaxed);
         Ok(())
