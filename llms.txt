@@ -21,3 +21,7 @@ Version 0.1.0 (unreleased). Needs Rust 1.99 or later; install from a checkout wi
 
 - [EquityBot](https://github.com/EquityBot): other EquityBot tools.
 - [Oracle](https://github.com/steipete/oracle): the upstream project; Alcuin is a Rust port of a maintained fork of it.
+
+## Reuse
+
+- [Reusing this code](https://github.com/EquityBot/Alcuin/blob/main/AGENTS.md#reusing-this-code): Ryan Duguid's changes to Oracle, under FSL-1.1-ALv2; keep the notices and licences; public credit is requested.
