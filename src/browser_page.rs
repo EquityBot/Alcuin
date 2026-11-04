@@ -309,6 +309,8 @@ static UNAVAILABLE: LazyLock<regex::Regex> = LazyLock::new(|| {
 static CHALLENGE: LazyLock<regex::Regex> = LazyLock::new(|| {
     regex::Regex::new(r"(?-u:\b)(?:verify you are human|unusual activity|cloudflare|challenge|login required|sign in)(?-u:\b)").expect("challenge pattern")
 });
+static SEPARATORS: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"[_-]+").expect("separator pattern"));
 static EMAIL: LazyLock<regex::Regex> = LazyLock::new(|| {
     regex::Regex::new(r"(?i)(?-u:\b)[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}(?-u:\b)")
         .expect("email pattern")
@@ -323,9 +325,11 @@ static KEY: LazyLock<regex::Regex> = LazyLock::new(|| {
     regex::Regex::new(r"(?-u:\b)(?:sk-(?:ant-|or-)?|xai-)[A-Za-z0-9_-]{8,}(?-u:\b)")
         .expect("key pattern")
 });
-/// Reference classifyChatGptUiWarningText.
+/// Reference classifyChatGptUiWarningText. Codes such as `cloudflare_challenge` compare as
+/// separate words: `_` is a word character, so the patterns' boundaries would miss them.
 pub(crate) fn classify_ui_warning(text: &str) -> Option<&'static str> {
     let normalized = text.to_lowercase();
+    let normalized = SEPARATORS.replace_all(&normalized, " ");
     [
         (&*RATE_LIMIT, "rate_limit"),
         (&*UNAVAILABLE, "temporary_unavailable"),

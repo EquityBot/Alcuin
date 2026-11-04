@@ -42,7 +42,7 @@ async fn page_case(case: &'static str) -> Value {
                     let cfg = &args[0];
                     let value = if expression.contains("alcuin-dom:health-login") {
                         assert_eq!(cfg["timeoutMs"], 2000);
-                        json!({"pageUrl":if case=="foreign-origin"{"https://example.invalid/"}else{"https://chatgpt.com/"},"domLoginCta":case=="login","cfBlocked":case=="challenge","sessionResolved":case!="unresolved","sessionAuthenticated":case!="login"})
+                        json!({"ok":case=="stray-login","pageUrl":if case=="foreign-origin"{"https://example.invalid/"}else{"https://chatgpt.com/"},"domLoginCta":case=="login"||case=="stray-login","cfBlocked":case=="challenge","sessionResolved":case!="unresolved","sessionAuthenticated":case!="login"})
                     } else if expression.contains("alcuin-dom:navigation") {
                         json!({"currentUrl":"https://chatgpt.com/?temporary-chat=true","workSelected":false,"modeUnverified":false})
                     } else if expression.contains("alcuin-dom:health-guard") {
@@ -110,7 +110,8 @@ async fn page_case(case: &'static str) -> Value {
 #[tokio::test]
 async fn health_observes_without_selection_and_rechecks_both_controls_and_access() {
     // GPT-6's top Power step checks the Pro radio; that is ready only for level pro.
-    for case in ["ready", "pro-model"] {
+    // A login probe that accepted the session outranks a stray login control.
+    for case in ["ready", "pro-model", "stray-login"] {
         let result = page_case(case).await;
         assert_eq!(result["status"], "ready", "{case}");
         assert_eq!(

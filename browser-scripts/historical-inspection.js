@@ -345,9 +345,13 @@ return (() => {
     return true;
   }
     const readRetryThinkingActivity=readThinkingActivity;
-    const isRetryAssistantUiError = function isRetryAssistantUiErrorText(value, retryVisible) {
-  if (!retryVisible || typeof value !== "string") return false;
+    const isAssistantTurnUiError = function isAssistantTurnUiErrorText(value, retryVisible) {
+  if (typeof value !== "string") return false;
   const text = value.toLowerCase().replace(/\s+/g, " ").trim();
+  // This terminal state can render without Retry. Only known UI chrome may follow it, so an
+  // answer that quotes the phrase stays an answer.
+  if (/^thinking failed[.!]?(?:\s+retry)?(?:\s+is this conversation helpful so far\??(?:\s+yes\s+no)?)?$/.test(text)) return true;
+  if (!retryVisible) return false;
   return (
     text.includes("something went wrong") ||
     text.includes("failed to generate") ||
@@ -438,7 +442,7 @@ return (() => {
         return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' &&
           !(style.opacity !== '' && Number(style.opacity) === 0);
       });
-      if (isRetryAssistantUiError(text, retryVisible) && !readRetryThinkingActivity().strong) {
+      if (isAssistantTurnUiError(text, retryVisible) && !readRetryThinkingActivity().strong) {
         return { text, html, messageId, turnId, turnIndex: index, uiError: 'temporary_unavailable' };
       }
       const imageOnlyChrome =

@@ -207,7 +207,7 @@ async fn access(
             capture(result, "controls_broken", Some("challenge_detected"));
             return Ok(false);
         }
-        if value["domLoginCta"] == true
+        if value["domLoginCta"] == true && value["ok"] != true
             || value["onAuthPage"] == true
             || value["sessionResolved"] == true && value["sessionAuthenticated"] == false
         {

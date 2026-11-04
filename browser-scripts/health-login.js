@@ -240,7 +240,10 @@ return (async () => {
       classification = classifyAuth(auth, appAuthenticated);
     }
 
-    const loginSignals = domLoginCta || onAuthPage;
+    // A stray login link must not veto both cookie-session and authenticated-app proof.
+    // Keep login controls authoritative when either signal is missing, or on auth routes.
+    const authenticatedApp = auth.session.authenticated && appAuthenticated;
+    const loginSignals = onAuthPage || (domLoginCta && !authenticatedApp);
     const backendStatus = auth.backend ? auth.backend.status : null;
     const cfBlocked = auth.session.cfBlocked || Boolean(auth.backend?.cfBlocked);
     const error = auth.session.error || auth.backend?.error || null;

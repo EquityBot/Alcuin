@@ -40,6 +40,33 @@ fn snapshots_must_match_the_inspected_turn_before_ids_or_completion_are_used() {
     assert!(summary(&endpoint(), &target(), &raw).is_err());
 }
 #[test]
+fn a_failed_turn_is_no_answer_for_any_consumer() {
+    let mut raw = info();
+    raw["assistantSnapshot"]["text"] = json!("Thinking failed");
+    raw["assistantSnapshot"]["uiError"] = json!("temporary_unavailable");
+    raw["lastAssistantText"] = json!("Thinking failed");
+    let mut tab = summary(&endpoint(), &target(), &raw).unwrap();
+    assert_eq!(tab["lastAssistantText"], "");
+    assert!(tab.get("lastAssistantMessageId").is_none());
+    let mut gate = HarvestCompletionGate::default();
+    for second in 0..6 {
+        gate.observe(&mut tab, second * 1_000, 3, 1_000);
+    }
+    assert_eq!(tab["completionConfirmed"], false);
+    assert_ne!(tab["state"], "completed");
+    // `inspect` falls back to the text when no Markdown was copied.
+    tab["lastAssistantMarkdown"] = tab["lastAssistantText"].clone();
+    assert!(!ready_for_session(&json!({}), &tab, true).unwrap());
+    assert!(!ready_for_session(&json!({}), &tab, false).unwrap());
+    // An earlier turn's failure says nothing about the latest assistant turn.
+    raw["assistantSnapshot"]["turnIndex"] = json!(0);
+    raw["lastAssistantText"] = json!("PUBLIC rendered answer");
+    assert_eq!(
+        summary(&endpoint(), &target(), &raw).unwrap()["lastAssistantText"],
+        "PUBLIC rendered answer"
+    );
+}
+#[test]
 fn legacy_missing_hash_null_hash_and_exact_original_source_have_distinct_rules() {
     let mut tab = summary(&endpoint(), &target(), &info()).unwrap();
     tab["completionConfirmed"] = json!(true);

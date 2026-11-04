@@ -92,9 +92,12 @@ const tracker = window.__oracleCurrentTurnCompletionV1;
 const completionVisible = hasTurnCompletion({ messageId, turnId }, assistantIndex, false) ||
   tracker?.completedTurnIndex === assistantIndex && assistantIndex >= tracker.baseline;
 const retryVisible = Array.from(assistantTurn.querySelectorAll('button, [role="button"]')).some(node => visible(node) && (node.innerText || node.textContent || node.getAttribute('aria-label') || '').trim().toLowerCase() === 'retry');
-if (retryVisible && !strongThinkingActive) {
+// Reference isAssistantTurnUiErrorText: this terminal state can render without Retry. Only known
+// UI chrome may follow it, so an answer that quotes the phrase stays an answer.
+const thinkingFailed = /^thinking failed[.!]?(?:\s+retry)?(?:\s+is this conversation helpful so far\??(?:\s+yes\s+no)?)?$/.test(text.toLowerCase().replace(/\s+/g, ' ').trim());
+if ((retryVisible || thinkingFailed) && !strongThinkingActive) {
   if (cfg.uiErrors === true) return { ...source, uiError:'temporary_unavailable' };
-  throw Error('Assistant displays a retry error; result refused');
+  throw Error('Assistant displays a generation failure; result refused');
 }
 const images = serializeImages(assistant);
 const files = serializeFiles(assistant, assistantIndex);

@@ -77,7 +77,10 @@ fn summary(endpoint: &AttachmentEndpoint, target: &Value, info: &Value) -> Resul
         None
     }
     .unwrap_or_else(|| info["lastAssistantText"].as_str().unwrap_or(""));
-    let answer = policy::trim(answer);
+    // A failed turn is not an answer: with no text and no message identity, nothing can pair,
+    // confirm, copy or save it.
+    let failed = matches && snapshot["uiError"].is_string();
+    let answer = if failed { "" } else { policy::trim(answer) };
     let user = policy::trim(info["lastUserText"].as_str().unwrap_or(""));
     let url = policy::trim(
         info["url"]
@@ -127,7 +130,7 @@ fn summary(endpoint: &AttachmentEndpoint, target: &Value, info: &Value) -> Resul
             output[key] = json!(index);
         }
     }
-    if matches {
+    if matches && !failed {
         for (from, to) in [
             ("messageId", "lastAssistantMessageId"),
             ("turnId", "lastAssistantTurnId"),
