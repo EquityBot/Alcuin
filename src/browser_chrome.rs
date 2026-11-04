@@ -4383,7 +4383,7 @@ mod tests {
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while identity.liveness() != Liveness::Dead {
             assert!(std::time::Instant::now() < deadline);
-            std::thread::sleep(Duration::from_millis(10));
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
         assert!(grok.join("oracle-chrome-native.json").exists());
         // Another launcher then opens the profile, as the shared Grok browser was.
