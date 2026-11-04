@@ -1415,7 +1415,7 @@ return (async () => {
       const until = performance.now() + 2000;
       const allowed = () => (!token || (finalising ? record?.finalising === true : active())) && performance.now() < until;
       const waitClosed = async test => {
-        while (allowed() && !ambiguous && !test()) await sleep(25, finalising);
+        while (allowed() && !ambiguous && !test()) await sleep(25, finalising); // NOSONAR: bounded; allowed() checks the deadline and each pass awaits sleep()
         return allowed() && !ambiguous && test();
       };
       for (const entry of opened.slice().reverse()) {
@@ -1439,7 +1439,7 @@ return (async () => {
         }
         let original = entry.closingSurface || entry.getSurface();
         let current = entry.closingSurface || entry.resolveSurface();
-        while (finalising && !original && allowed() && !ambiguous) {
+        while (finalising && !original && allowed() && !ambiguous) { // NOSONAR: bounded; allowed() checks the deadline and each pass awaits sleep()
           await sleep(25, true);
           current = entry.resolveSurface();
           original = entry.getSurface();
@@ -1472,7 +1472,7 @@ return (async () => {
         else complete = false;
       }
       let picker = rootGone() ? null : root();
-      while (finalising && rootClicked && !rootClosed && !rootNode && !picker && allowed() && !rootAmbiguous) {
+      while (finalising && rootClicked && !rootClosed && !rootNode && !picker && allowed() && !rootAmbiguous) { // NOSONAR: bounded; allowed() checks the deadline and each pass awaits sleep()
         await sleep(25, true);
         picker = root();
       }
