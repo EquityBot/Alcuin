@@ -85,6 +85,15 @@ async fn cases(page: &Cdp, file: &std::path::Path) -> Result<()> {
     answerless_tracker_cases(page)
         .await
         .context("Answerless completion tracker regression")?;
+    failed_turn_cases(page)
+        .await
+        .context("Failed assistant turn regression")?;
+    login_probe_cases(page)
+        .await
+        .context("Login probe regression")?;
+    ui_warning_code_case(page)
+        .await
+        .context("UI warning code regression")?;
     deferred_editor_render_case(page)
         .await
         .context("Deferred composer render regression")?;
@@ -1366,6 +1375,245 @@ async fn answerless_tracker_cases(page: &Cdp) -> Result<()> {
         );
     }
     step("window.__oracleCurrentTurnCompletionV1.observer.disconnect(); delete window.__oracleCurrentTurnCompletionV1; return true;").await?;
+    Ok(())
+}
+
+/// A terminal failed turn is refused with or without Retry, by the live read and by historical
+/// inspection, as in the reference's failure proof. Prose that quotes it, active generation and
+/// earlier turns are not failures of the submitted turn.
+async fn failed_turn_cases(page: &Cdp) -> Result<()> {
+    let cancel = CancellationToken::new();
+    let view = "()=>{const root={return:null,stateNode:{}};root.stateNode.current=root;document.querySelector('#view').__reactFiber$PUBLIC={return:root,memoizedProps:{scrollStateConversationId:'PUBLIC-id',isChatConversation:true,isTemporaryChat:true,isWorkConversation:false,isSharedConversation:false}};}";
+    let user = "<article data-turn-key='PUBLIC-user-turn'><div data-message-author-role='user' data-message-id='PUBLIC-user'>PUBLIC prompt</div></article>";
+    let assistant = |text: &str, controls: &str| {
+        format!(
+            "<article data-turn-key='PUBLIC-assistant-turn'><div data-message-author-role='assistant' data-message-id='PUBLIC-assistant'><div class='markdown'>{text}</div></div>{controls}</article>"
+        )
+    };
+    let refusing = json!({"owner":{"claimId":"PUBLIC-claim","reservationId":"PUBLIC-reservation"},
+        "receipt":{"messageId":"PUBLIC-user","conversation":{"origin":"https://chatgpt.com","conversationId":"PUBLIC-id"}},
+        "cleanup":true,"native":true});
+    let mut reporting = refusing.clone();
+    reporting["uiErrors"] = json!(true);
+    let open = async |turns: &str| -> Result<()> {
+        mount(
+            page,
+            &ACTIVE.replace("</main>", &format!("{turns}</main>")),
+            "/c/PUBLIC-id",
+            view,
+        )
+        .await?;
+        page.evaluate_with_arguments(
+            "(cfg)=>{sessionStorage.setItem('oracle:target-claim',JSON.stringify(cfg.claim));return true;}",
+            &json!([{"claim":{"id":"PUBLIC-claim","retiring":false}}]),
+            SHORT,
+            &cancel,
+        )
+        .await?;
+        Ok(())
+    };
+    let live = async |cfg: &Value| {
+        page.evaluate_with_arguments(
+            &crate::browser_runner::result_expression(),
+            &json!([cfg]),
+            SHORT,
+            &cancel,
+        )
+        .await
+    };
+    let historical = async || {
+        page.evaluate_with_arguments(
+            include_str!("../browser-scripts/historical-inspection.js"),
+            &json!([{"expectedConversationId":"PUBLIC-id","expectedOrigin":"https://chatgpt.com"}]),
+            SHORT,
+            &cancel,
+        )
+        .await
+    };
+    for (case, text, controls, refused) in [
+        ("without Retry", "Thinking failed", "", true),
+        (
+            "with Retry",
+            "Thinking failed",
+            "<button>Retry</button>",
+            true,
+        ),
+        ("Retry in the text", "Thinking failed<br>Retry", "", true),
+        (
+            "feedback chrome",
+            "Thinking failed.<br>Is this conversation helpful so far?",
+            "",
+            true,
+        ),
+        (
+            "quoted in prose",
+            "The UI says \"Thinking failed\" when a request fails.",
+            "",
+            false,
+        ),
+        (
+            "opening a sentence",
+            "Thinking failed to account for this case.",
+            "",
+            false,
+        ),
+        (
+            "active generation",
+            "Thinking failed",
+            "<button data-testid='stop-button'>Stop</button>",
+            false,
+        ),
+        (
+            "busy turn",
+            "Thinking failed",
+            "<span class='loading-shimmer'>PUBLIC</span>",
+            false,
+        ),
+    ] {
+        open(&format!("{user}{}", assistant(text, controls))).await?;
+        let reported = live(&reporting).await?;
+        anyhow::ensure!(
+            (reported["uiError"] == "temporary_unavailable") == refused,
+            "Live read, {case}: {reported}"
+        );
+        let thrown = live(&refusing).await;
+        anyhow::ensure!(
+            thrown.is_err() == refused,
+            "Live read without uiErrors, {case}: {thrown:?}"
+        );
+        let inspected = historical().await?;
+        anyhow::ensure!(
+            (inspected["assistantSnapshot"]["uiError"] == "temporary_unavailable") == refused,
+            "Historical inspection, {case}: {inspected}"
+        );
+    }
+    // The earlier failure is the newest assistant turn, but the submitted turn has no reply yet.
+    let earlier = "<article data-turn-key='PUBLIC-earlier-turn'><div data-message-author-role='user' data-message-id='PUBLIC-earlier'>PUBLIC earlier</div></article>";
+    open(&format!(
+        "{earlier}{}{user}",
+        assistant("Thinking failed", "")
+    ))
+    .await?;
+    let reported = live(&reporting).await?;
+    anyhow::ensure!(
+        reported["pending"] == true && reported.get("uiError").is_none(),
+        "Live read, earlier turn: {reported}"
+    );
+    let inspected = historical().await?;
+    anyhow::ensure!(
+        inspected["assistantFollowsLatestUser"] == false,
+        "Historical inspection, earlier turn: {inspected}"
+    );
+    page.evaluate_with_arguments(
+        "()=>{sessionStorage.removeItem('oracle:target-claim');return true;}",
+        &json!([]),
+        SHORT,
+        &cancel,
+    )
+    .await?;
+    Ok(())
+}
+
+/// A stray login control vetoes nothing once the session and the app both prove sign-in, and
+/// stays authoritative without either proof or on an auth route.
+async fn login_probe_cases(page: &Cdp) -> Result<()> {
+    let cancel = CancellationToken::new();
+    let signed_in = r#"{"user":{}}"#;
+    let profile = "<button data-testid='accounts-profile-button'>PUBLIC</button>";
+    let history = "<a data-testid='history-item-0'>PUBLIC</a>";
+    for (case, path, session, body, backend, app, ok) in [
+        ("profile", "/", 200, signed_in, 200, profile, true),
+        ("history", "/", 200, signed_in, 200, history, true),
+        (
+            "auth route",
+            "/auth/login",
+            200,
+            signed_in,
+            200,
+            history,
+            false,
+        ),
+        ("no session user", "/", 200, "{}", 200, history, false),
+        (
+            "session down, backend up",
+            "/",
+            503,
+            "{}",
+            200,
+            history,
+            false,
+        ),
+        (
+            "session down, backend denied",
+            "/",
+            503,
+            "{}",
+            401,
+            history,
+            false,
+        ),
+        ("composer only", "/", 200, signed_in, 200, "", false),
+    ] {
+        mount(
+            page,
+            &ACTIVE.replace(
+                "</main>",
+                &format!("<a href='/auth/login'>Log in</a>{app}</main>"),
+            ),
+            path,
+            &format!(
+                "()=>{{window.__fixtureFetch??=window.fetch;window.fetch=async url=>url==='/api/auth/session'?new Response({body:?},{{status:{session}}}):new Response('{{}}',{{status:{backend}}});}}"
+            ),
+        )
+        .await?;
+        let probe = page
+            .evaluate_with_arguments(
+                include_str!("../browser-scripts/health-login.js"),
+                &json!([{"timeoutMs":1000}]),
+                SHORT,
+                &cancel,
+            )
+            .await?;
+        anyhow::ensure!(
+            probe["ok"] == ok && probe["domLoginCta"] == true,
+            "Login probe, {case}: {probe}"
+        );
+    }
+    page.evaluate_with_arguments(
+        "()=>{window.fetch=window.__fixtureFetch;delete window.__fixtureFetch;return true;}",
+        &json!([]),
+        SHORT,
+        &cancel,
+    )
+    .await?;
+    Ok(())
+}
+
+/// An alert showing only an error code reaches the classifier.
+async fn ui_warning_code_case(page: &Cdp) -> Result<()> {
+    mount(
+        page,
+        &ACTIVE.replace(
+            "</main>",
+            "<aside role='alert'>rate_limit_exceeded <button>Retry</button></aside></main>",
+        ),
+        "/",
+        "",
+    )
+    .await?;
+    let raw = page
+        .evaluate_with_arguments(
+            include_str!("../browser-scripts/ui-warnings.js"),
+            &json!([{}]),
+            SHORT,
+            &CancellationToken::new(),
+        )
+        .await?;
+    anyhow::ensure!(
+        crate::browser_page::first_ui_warning(&raw)
+            == Some(("rate_limit", "rate_limit_exceeded Retry".to_owned())),
+        "Warning code was not collected: {raw}"
+    );
     Ok(())
 }
 

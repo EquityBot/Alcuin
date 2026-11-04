@@ -48,7 +48,7 @@ return (() => {
           container !== element && (container.contains(element) || element.contains(container))
         ));
         const add = (element, entry) => {
-          if (!entry.text || !warningPattern.test(entry.text)) return;
+          if (!entry.text || !warningPattern.test(entry.text.replace(/[_-]+/g, ' '))) return;
           const key = entry.text + '|' + (entry.role || '') + '|' + (entry.ariaLive || '');
           if (seen.has(key)) return;
           seen.add(key);

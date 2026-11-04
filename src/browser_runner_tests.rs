@@ -35,6 +35,8 @@ enum Fault {
     ResponseLoadFailedBesideImage,
     ContentWithheld,
     RetryOffered,
+    NavigationFailsOnce,
+    NavigationFails,
     AnswerlessComplete,
     AnswerlessBriefly,
     AnswerNeverCompletes,
@@ -1388,8 +1390,21 @@ impl Exchange {
                     json!({"targetInfo":{"targetId":if matches!(self.fault,Fault::InitialTargetInspection){"PUBLIC foreign target"}else{"TARGET-PUBLIC"},"type":"page","url":self.url}})
                 }
                 "Page.navigate" => {
-                    self.url = request["params"]["url"].as_str().unwrap().into();
-                    json!({"frameId":"FRAME-PUBLIC"})
+                    let loads = self
+                        .trace
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .filter(|r| r["method"] == "Page.navigate")
+                        .count();
+                    if matches!(self.fault, Fault::NavigationFails)
+                        || matches!(self.fault, Fault::NavigationFailsOnce) && loads == 1
+                    {
+                        json!({"frameId":"FRAME-PUBLIC","errorText":"net::ERR_CONNECTION_RESET"})
+                    } else {
+                        self.url = request["params"]["url"].as_str().unwrap().into();
+                        json!({"frameId":"FRAME-PUBLIC"})
+                    }
                 }
                 "Page.enable" | "Input.dispatchMouseEvent" => json!({}),
                 "Emulation.setFocusEmulationEnabled" => {
@@ -4208,6 +4223,30 @@ async fn response_load_error_is_not_captured_and_retains_the_committed_target() 
     stop(f).await;
 }
 #[tokio::test]
+async fn a_failed_page_load_is_retried_once_before_anything_is_sent() {
+    for (fault, sends) in [(Fault::NavigationFailsOnce, 1), (Fault::NavigationFails, 0)] {
+        let f = fixture(fault, false).await;
+        let result = run(&f).await;
+        assert_eq!(result.is_ok(), sends == 1, "{fault:?}: {result:?}");
+        if let Err(error) = result {
+            assert!(
+                format!("{error:#}").contains("ChatGPT target navigation failed"),
+                "{error:#}"
+            );
+        }
+        assert_eq!(f.sends.load(Ordering::SeqCst), sends, "{fault:?}");
+        let loads = f
+            .trace
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|request| request["method"] == "Page.navigate")
+            .count();
+        assert_eq!(loads, 2, "{fault:?}");
+        stop(f).await;
+    }
+}
+#[tokio::test]
 async fn answerless_turns_are_refused_with_the_reference_failures() {
     for fault in [
         Fault::ResponseLoadFailedBesideImage,
@@ -4231,7 +4270,7 @@ async fn answerless_turns_are_refused_with_the_reference_failures() {
             ),
             _ => assert_eq!(
                 result.to_string(),
-                "ChatGPT could not generate the submitted assistant turn and offered Retry."
+                "ChatGPT could not generate the submitted assistant turn."
             ),
         }
         let meta = f.store.require(&f.id).unwrap();

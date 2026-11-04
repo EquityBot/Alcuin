@@ -25,4 +25,8 @@ First public release. Alcuin is a Rust port of a maintained fork of [Oracle](htt
 - An answer wait reached just after the bounded original-target observation ended reports the answer deadline, as it does just before: a stall there no longer replaces that failure with an untyped error that withholds the Grok fallback.
 - A browser slot held by an exited controller whose tab allocation failed before it recorded a target is freed. Nothing can have been sent through such a lease, yet it kept its slot for good, so later runs timed out waiting for a free slot.
 - `bridge host` installs its SIGTERM and Ctrl+C handlers before the host can answer in the foreground, or before it reports ready in the background, so a stop signal sent at that point shuts it down cleanly. Such a signal previously could kill the process before shutdown.
+- A turn holding only ChatGPT's terminal 'Thinking failed' state ends the run as a generation failure, with or without a Retry control, instead of being saved as the answer. An answer that quotes the phrase is still an answer. Reattach and harvest now treat any failed turn as no answer; they previously saved its text.
+- A stray login link no longer fails a signed-in page in the login check or `browser-health` once the session and the app both prove sign-in. An auth page, a signed-out session or a login link with weaker evidence still fails.
+- Warning codes joined by separators, such as `rate_limit_exceeded` and `cloudflare_challenge`, are collected and classified like their spaced wording.
+- A failed ChatGPT page load is retried once in the same tab before the run reports it; nothing has been sent at that point.
 - Licensed under FSL-1.1-ALv2; each version also becomes available under Apache-2.0 two years after its release.

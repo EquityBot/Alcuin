@@ -7,6 +7,29 @@ use tokio_tungstenite::{
 };
 
 #[test]
+fn ui_warning_codes_classify_like_their_spaced_wording() {
+    for (text, kind) in [
+        ("cloudflare_challenge", Some("auth_or_challenge")),
+        ("cloudflare_challenge Retry", Some("auth_or_challenge")),
+        ("rate_limit_exceeded", Some("rate_limit")),
+        ("too-many-requests", Some("rate_limit")),
+        ("Sign-in required", Some("auth_or_challenge")),
+        (
+            "Rename user_id to account_id and keep request_body unchanged.",
+            None,
+        ),
+        (
+            "The assign_in helper and design-input notes are ready.",
+            None,
+        ),
+        ("Signing_in happens after the page loads.", None),
+        ("Retry", None),
+    ] {
+        assert_eq!(classify_ui_warning(text), kind, "{text}");
+    }
+}
+
+#[test]
 fn ui_warning_text_classifies_and_sanitises_like_the_reference() {
     for (text, kind) in [
         ("You are sending too many requests", Some("rate_limit")),

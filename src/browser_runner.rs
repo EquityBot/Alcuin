@@ -3707,9 +3707,13 @@ async fn navigate_exact(
     limits: &RunnerLimits,
     cancel: &CancellationToken,
 ) -> Result<()> {
-    let navigation = page
-        .call("Page.navigate", json!({"url":url}), limits.command, cancel)
-        .await?;
+    let navigate = || page.call("Page.navigate", json!({"url":url}), limits.command, cancel);
+    let mut navigation = navigate().await?;
+    // Reference navigateToChatGPT: a second load usually succeeds. Every caller is still before
+    // the send, and a load failure is not `NotSent`, so the fresh-tab retry does not cover it.
+    if navigation.get("errorText").is_some() {
+        navigation = navigate().await?;
+    }
     anyhow::ensure!(
         navigation.get("errorText").is_none(),
         "ChatGPT target navigation failed"
@@ -4988,7 +4992,7 @@ async fn wait_answer(
         };
         stalls.since = None;
         if observed["uiError"] == "temporary_unavailable" {
-            return Err(crate::browser_provider::Failure::RetryOffered.into());
+            return Err(crate::browser_provider::Failure::GenerationFailed.into());
         }
         if let Some(line) = monitor.line(started.elapsed().as_millis() as u64, &observed) {
             let log = store.require(&progress)?;

@@ -891,7 +891,9 @@ fn switch_failure(error: &anyhow::Error) -> Option<&'static str> {
         Failure::AnswerDeadline => Some("answer-deadline"),
         Failure::ResponseLoadFailed => Some("response-load-failed"),
         Failure::AnswerMissing => Some("answer-missing"),
-        Failure::CommitAmbiguous(_) | Failure::ContentWithheld(_) | Failure::RetryOffered => None,
+        Failure::CommitAmbiguous(_) | Failure::ContentWithheld(_) | Failure::GenerationFailed => {
+            None
+        }
     }
 }
 
