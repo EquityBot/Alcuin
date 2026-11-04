@@ -1,5 +1,5 @@
 // Initial entry only. Recovery never toggles privacy or reopens a saved chat.
-(cfg, privateChat) => {
+(cfg, privateChat) => { // NOSONAR: the file is one function expression, which Rust calls through CDP
   if (window !== window.top || location.origin !== 'https://grok.com') throw Error('Initial Grok origin changed');
   if (!['inspect','activate'].includes(cfg.action)) throw Error('Unsupported Grok entry action');
   if (sessionStorage.getItem('oracle:target-claim') !== null || window.__oracleGrokWitness)

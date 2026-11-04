@@ -1,6 +1,6 @@
 // Only the verified native journal calls this on its exact original target.
 // A stopped completion survives here; reload/history cannot recreate it.
-(cfg, privateChat) => {
+(cfg, privateChat) => { // NOSONAR: the file is one function expression, which Rust calls through CDP
   if (window !== window.top || !privateChat()) return false;
   const uuid = value => typeof value === 'string' && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(value);
   if (!uuid(cfg.retirementId) || !uuid(cfg.owner?.claimId) || !uuid(cfg.owner?.reservationId)) return false;

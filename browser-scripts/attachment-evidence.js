@@ -1,5 +1,5 @@
 // Ported from the reference implementation's DOM expressions.
-(cfg) => {
+(cfg) => { // NOSONAR: the file is one function expression, which Rust calls through CDP
 /* alcuin-dom:attachment-evidence */
 const assertOracleSubmission = () => { if (window !== window.top) throw Error('Top renderer required');
     const oracleOwnershipId = value => typeof value === 'string' && value.length > 0 && value.length <= 256;

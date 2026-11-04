@@ -178,7 +178,8 @@ async fn discover(
         };
         #[cfg(not(target_os = "linux"))]
         let listing = path.clone();
-        let Ok(entries) = fs::read_dir(listing) else {
+        let entries = fs::read_dir(listing); // NOSONAR: brief local file access
+        let Ok(entries) = entries else {
             continue;
         };
         for entry in entries.flatten() {
@@ -191,7 +192,8 @@ async fn discover(
                 tokio::task::yield_now().await;
             }
             check(deadline, cancel)?;
-            let Ok(kind) = entry.file_type() else {
+            let kind = entry.file_type(); // NOSONAR: brief local file access
+            let Ok(kind) = kind else {
                 continue;
             };
             let name = entry.file_name();

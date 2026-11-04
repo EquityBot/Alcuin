@@ -1,7 +1,7 @@
 // Native adaptation. Qualified with public synthetic requests on 21 October 2026.
 // This observes only the admitted composer's outbound message identity. Request bodies
 // and headers are never retained. DOM timing and navigation are not creation evidence.
-(cfg, dispatch, assertCurrent, temporary) => {
+(cfg, dispatch, assertCurrent, temporary) => { // NOSONAR: the file is one function expression, which Rust calls through CDP
   const previous = window.__oracleSubmissionWitness;
   if (previous) throw Error('An earlier submission witness requires exact cleanup');
   if (typeof window.fetch !== 'function') throw Error('Submission transport is unavailable');

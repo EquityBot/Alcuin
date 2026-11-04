@@ -565,7 +565,7 @@ async fn background(
         use std::os::unix::fs::OpenOptionsExt;
         log.mode(0o600);
     }
-    let log = log.open(&log_path)?;
+    let log = log.open(&log_path)?; // NOSONAR: brief local file access
     let mut command = std::process::Command::new(std::env::current_exe()?);
     command
         .args([
@@ -642,7 +642,7 @@ async fn background(
         loop {
             ensure!(!cancel.is_cancelled(),"Background bridge startup cancelled");
             ensure!(identity.liveness()==crate::process::Liveness::Alive,"Background bridge host exited before readiness");
-            let started=std::fs::read(store.home().join("bridge-host-owner.json")).ok().and_then(|bytes|serde_json::from_slice::<Value>(&bytes).ok()).is_some_and(|value|serde_json::from_value::<crate::process::ProcessIdentity>(value["processIdentity"].clone()).ok().as_ref()==Some(&identity));
+            let started=std::fs::read(store.home().join("bridge-host-owner.json")).ok().and_then(|bytes|serde_json::from_slice::<Value>(&bytes).ok()).is_some_and(|value|serde_json::from_value::<crate::process::ProcessIdentity>(value["processIdentity"].clone()).ok().as_ref()==Some(&identity)); // NOSONAR: brief local file access
             if started {
                 let health=tokio::time::timeout(Duration::from_millis(500),client.health(cancel)).await;
                 if health.is_ok_and(|health|health.is_ok_and(|health|health["ok"]==true)){break;}
@@ -699,7 +699,7 @@ async fn background(
             "Background bridge host exited during browser bootstrap; inspect {}",
             log_path.display()
         );
-        let ready = std::fs::read(store.home().join("bridge-host-ready.json"))
+        let ready = std::fs::read(store.home().join("bridge-host-ready.json")) // NOSONAR: brief local file access
             .ok()
             .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
             .is_some_and(|value| {

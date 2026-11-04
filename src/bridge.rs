@@ -473,7 +473,8 @@ pub async fn configure_client(
         let failed = |cause: &dyn std::fmt::Display| {
             anyhow::anyhow!("Failed to read {}: {cause}", displayed.display())
         };
-        let mut config = match std::fs::read_to_string(&path) {
+        let read = std::fs::read_to_string(&path); // NOSONAR: brief local file access
+        let mut config = match read {
             Ok(raw) => json5::from_str::<Value>(&raw).map_err(|error| failed(&error))?,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => json!({}),
             Err(error) => return Err(failed(&error)),

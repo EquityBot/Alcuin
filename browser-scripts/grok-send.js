@@ -1,6 +1,6 @@
 // Called once, after the native worker durably reserves dispatch. Revalidate
 // synchronously at the physical click, including an unexpired live observer.
-(cfg, privateChat) => {
+(cfg, privateChat) => { // NOSONAR: the file is one function expression, which Rust calls through CDP
   const visible = el => el instanceof HTMLElement && el.isConnected && el.getClientRects().length > 0 &&
     el.getAttribute('aria-hidden') !== 'true' && getComputedStyle(el).visibility !== 'hidden';
   const editors = Array.from(document.querySelectorAll('textarea, [contenteditable="true"][role="textbox"], [contenteditable="true"][role="combobox"]')).filter(visible);

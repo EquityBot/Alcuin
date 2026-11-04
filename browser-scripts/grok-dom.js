@@ -1,6 +1,6 @@
 // Synchronous Private composer and exact completed-turn observations. No timers,
 // page-global payload cache or provider history lookup are used here.
-(cfg, privateChat) => {
+(cfg, privateChat) => { // NOSONAR: the file is one function expression, which Rust calls through CDP
   const retirement = cfg.action === 'observe-retirement';
   const visible = el => el instanceof HTMLElement && el.isConnected && el.getClientRects().length > 0 &&
     el.getAttribute('aria-hidden') !== 'true' && getComputedStyle(el).visibility !== 'hidden';

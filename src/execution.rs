@@ -1791,7 +1791,7 @@ pub(crate) async fn launch_detached_with_bootstrap(
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         let path = store.directory(id)?.join("worker-started.json");
-        if let Ok(bytes) = fs::read(path)
+        if let Ok(bytes) = fs::read(path) // NOSONAR: brief local file access
             && let Ok(ack) = serde_json::from_slice::<Value>(&bytes)
             && ack["pid"] == pid
             && ack["sessionId"] == id
