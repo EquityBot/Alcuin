@@ -276,6 +276,7 @@ pub(crate) async fn bootstrap(
             headless: false,
             hide_window: false,
             keep_window_behind: false,
+            borrow_profile_owner: false,
         },
         cancel,
     )

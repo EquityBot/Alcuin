@@ -2714,6 +2714,7 @@ async fn native_temporary_chat_predicate_and_retained_send_guard() -> Result<()>
             headless: true,
             hide_window: true,
             keep_window_behind: false,
+            borrow_profile_owner: false,
         },
         &cancel,
     )

@@ -163,6 +163,7 @@ async fn reopen_inner(
             headless: config["headless"] == true,
             hide_window: config["hideWindow"] == true,
             keep_window_behind: config["keepWindowBehind"] == true,
+            borrow_profile_owner: false,
         },
         cancel,
     )
