@@ -304,6 +304,8 @@ fn output_path(raw: &str, cwd: &Path, env: &Environment, store: &SessionStore) -
 #[derive(Default)]
 pub(crate) struct CliStream {
     printed: AtomicBool,
+    /// A carriage return that ended the last chunk streamed to a terminal.
+    held_cr: AtomicBool,
 }
 impl CliStream {
     /// Reference runOracle answer tail: separates streamed text, or prints the "Answer:" header
@@ -314,6 +316,9 @@ impl CliStream {
         let status =
             (verbose && answer.is_some()).then_some("[verbose] Response status: completed");
         if self.printed.load(Ordering::Relaxed) {
+            if self.held_cr.swap(false, Ordering::Relaxed) {
+                write!(stdout, "{}", '\r'.escape_unicode())?;
+            }
             writeln!(stdout)?;
             if let Some(status) = status {
                 writeln!(stdout, "{status}")?;
@@ -322,6 +327,7 @@ impl CliStream {
             if let Some(status) = status {
                 writeln!(stdout, "{status}")?;
             }
+            let answer = crate::cli_format::terminal_text(answer, stdout.is_terminal());
             let newline = if answer.ends_with('\n') { "" } else { "\n" };
             write!(stdout, "\nAnswer:\n{answer}{newline}\n")?;
         }
@@ -338,7 +344,14 @@ impl providers::ResponseObserver for CliStream {
         if !self.printed.load(Ordering::Relaxed) {
             stdout.write_all(b"\nAnswer:\n")?;
         }
-        stdout.write_all(text.as_bytes())?;
+        if stdout.is_terminal() {
+            let mut held = self.held_cr.load(Ordering::Relaxed);
+            let text = crate::cli_format::terminal_chunk(text, &mut held);
+            self.held_cr.store(held, Ordering::Relaxed);
+            stdout.write_all(text.as_bytes())?;
+        } else {
+            stdout.write_all(text.as_bytes())?;
+        }
         stdout.flush()?;
         self.printed.store(true, Ordering::Relaxed);
         Ok(())
@@ -2379,7 +2392,10 @@ async fn session_command(
         if cancel.is_cancelled() {
             return Ok(130);
         }
-        print!("{}", result?);
+        print!(
+            "{}",
+            crate::cli_format::terminal_text(&result?, std::io::stdout().is_terminal())
+        );
         return Ok(0);
     }
     if matches!(id, Some("clear" | "clean")) {
@@ -2464,6 +2480,7 @@ fn print_inspected_answer(
     cancel: &CancellationToken,
 ) -> Result<()> {
     anyhow::ensure!(!cancel.is_cancelled(), "Browser inspection cancelled");
+    let shown = crate::cli_format::terminal_text(answer, std::io::stdout().is_terminal());
     if let Some(destination) = text(view_scope(root, m, "write-output"), "write-output") {
         let meta = store.require(id)?;
         let cwd = Path::new(
@@ -2474,14 +2491,14 @@ fn print_inspected_answer(
         match crate::browser_sessions::write_output(store, cwd, destination, answer, cancel)? {
             Some(path) => println!("Wrote harvested assistant output to {}", path.display()),
             None => {
-                print!("{answer}{}", if answer.ends_with('\n') { "" } else { "\n" });
+                print!("{shown}{}", if answer.ends_with('\n') { "" } else { "\n" });
                 return Ok(());
             }
         }
     }
     if !answer.is_empty() {
         anyhow::ensure!(!cancel.is_cancelled(), "Browser inspection cancelled");
-        print!("{answer}{}", if answer.ends_with('\n') { "" } else { "\n" });
+        print!("{shown}{}", if answer.ends_with('\n') { "" } else { "\n" });
     }
     Ok(())
 }

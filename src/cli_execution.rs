@@ -9,7 +9,7 @@ use crate::{
 };
 use anyhow::{Result, bail};
 use serde_json::Value;
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use tokio_util::sync::CancellationToken;
 pub(crate) fn wait_preference(explicit: Option<bool>, metadata: &Value) -> bool {
     explicit
@@ -571,7 +571,9 @@ pub(crate) async fn run(
         }
     } else {
         let mut stdout = std::io::stdout().lock();
-        stdout.write_all(store.log(id)?.as_bytes())?;
+        let log = store.log(id)?;
+        let log = crate::cli_format::terminal_text(&log, stdout.is_terminal());
+        stdout.write_all(log.as_bytes())?;
         stdout.flush()?;
         let current = store.require(id)?;
         if current["status"] == "completed"

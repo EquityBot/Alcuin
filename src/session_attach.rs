@@ -4,6 +4,7 @@ use crate::{
     browser_historical, browser_inspection,
     browser_profile::ProfileRegistry,
     browser_runner::{self, RunnerLimits},
+    cli_format,
     config::Environment,
     policy,
     process::{Liveness, ProcessIdentity},
@@ -27,9 +28,10 @@ use tokio_util::sync::CancellationToken;
 struct LogCursor {
     saved: BTreeMap<String, String>,
     last_model: Option<String>,
+    terminal: bool,
 }
 impl LogCursor {
-    fn emit(&mut self, model: &str, text: String, output: &mut impl Write) -> Result<()> {
+    fn emit(&mut self, model: &str, mut text: String, output: &mut impl Write) -> Result<()> {
         let previous = self.saved.get(model).map(String::as_str).unwrap_or("");
         if text.is_empty() || text == previous || text.trim_end() == previous.trim_end() {
             return Ok(());
@@ -47,8 +49,21 @@ impl LogCursor {
                 writeln!(output, "=== {model} ===")?;
             }
         }
-        output.write_all(chunk.as_bytes())?;
+        // On a terminal a carriage return ending the chunk waits for the next poll, so a CRLF
+        // split across 2 polls prints as one; like other trailing whitespace, it shows once more
+        // text follows.
+        let held = self.terminal && chunk.ends_with('\r');
+        let shown = if held {
+            &chunk[..chunk.len() - 1]
+        } else {
+            chunk
+        };
+        let shown = cli_format::terminal_text(shown, self.terminal);
+        output.write_all(shown.as_bytes())?;
         output.flush()?;
+        if held {
+            text.pop();
+        }
         self.saved.insert(model.into(), text);
         self.last_model = Some(model.into());
         Ok(())
@@ -382,6 +397,7 @@ async fn attach_inner(
         && !view.hide_prompt
         && let Some(prompt) = session_display::stored_prompt(store, id, &initial)
     {
+        let prompt = cli_format::terminal_text(&prompt, std::io::stdout().is_terminal());
         writeln!(output, "Prompt:\n{prompt}\n---")?;
     }
     let recoverable = (initial["mode"] == "browser"
@@ -408,6 +424,7 @@ async fn attach_inner(
                 "Render requested but stdout is not a TTY; showing raw text."
             )?;
         }
+        let shown = cli_format::terminal_text(shown, std::io::stdout().is_terminal());
         output.write_all(shown.as_bytes())?;
         if let Some(summary) = session_display::completion_summary(&store.require(id)?) {
             writeln!(output, "\n{summary}")?;
@@ -421,7 +438,10 @@ async fn attach_inner(
             "Render will apply after completion; streaming raw text meanwhile..."
         )?;
     }
-    let mut cursor = LogCursor::default();
+    let mut cursor = LogCursor {
+        terminal: std::io::stdout().is_terminal(),
+        ..LogCursor::default()
+    };
     let mut attempted = None;
     let mut attempted_legacy = None;
     let mut cancellation_requested = false;
@@ -638,6 +658,28 @@ mod tests {
         let output = String::from_utf8(output).unwrap();
         for text in ["PUBLIC A1", "PUBLIC B1", "PUBLIC A2 café 🦀"] {
             assert_eq!(output.matches(text).count(), 1, "{output}");
+        }
+    }
+    #[test]
+    fn terminal_log_prints_the_same_wherever_polls_split_it() {
+        let text = "a\r\nb\rc\u{1b}[2A\r\nd";
+        let emitted = |polls: &[usize]| {
+            let mut cursor = LogCursor {
+                terminal: true,
+                ..LogCursor::default()
+            };
+            let mut output = vec![];
+            for &end in polls {
+                cursor
+                    .emit("PUBLIC-a", text[..end].to_owned(), &mut output)
+                    .unwrap();
+            }
+            String::from_utf8(output).unwrap()
+        };
+        let whole = emitted(&[text.len()]);
+        assert_eq!(whole, "a\r\nb\\u{d}c\\u{1b}[2A\r\nd");
+        for end in 1..text.len() {
+            assert_eq!(emitted(&[end, text.len()]), whole, "split at {end}");
         }
     }
     #[test]
