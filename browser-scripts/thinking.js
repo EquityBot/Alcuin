@@ -1618,8 +1618,7 @@ return (async () => {
           tooltipOwner = { row: option, priorIds };
           const unavailable = (notice, rawText = null) => failure('option-disabled', {
             label: redactDiagnosticText(optionLabel, 80) || null, notice,
-            ...(TARGET_LEVEL === 'pro' && quotaModel === 'GPT-6' &&
-                'GPT-6' === 'GPT-6'
+            ...(TARGET_LEVEL === 'pro' && quotaModel === 'GPT-6'
               ? { unavailableModel: 'GPT-6' } : {}),
             ...(TARGET_LEVEL === 'pro' && quotaModel === 'GPT-6' &&
                 quotaModel && typeof rawText === 'string' && rawText.length > 0 && rawText.length <= 2048
