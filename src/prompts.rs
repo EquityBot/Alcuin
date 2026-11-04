@@ -613,7 +613,7 @@ fn resolve_files_with(
     }
     if !undecodable.is_empty() {
         bail!(
-            "The following files are not UTF-8 text:\n- {}",
+            "The following files are not UTF-8 text or hold NUL bytes:\n- {}",
             undecodable.join("\n- ")
         );
     }
@@ -622,9 +622,12 @@ fn resolve_files_with(
     }
     Ok(output)
 }
-/// Reads a file as text; `None` when it is not valid UTF-8, so binary bytes are never garbled into a prompt.
+/// Reads a file as text; `None` when it is not valid UTF-8 or holds a NUL byte, so binary bytes are
+/// never garbled into a prompt and no NUL can cut it short further on.
 pub fn read_text(path: &Path) -> Result<Option<String>> {
-    Ok(String::from_utf8(fs::read(path)?).ok())
+    Ok(String::from_utf8(fs::read(path)?)
+        .ok()
+        .filter(|text| !text.contains('\0')))
 }
 fn language(path: &str) -> &'static str {
     match Path::new(path)
@@ -761,6 +764,29 @@ fn scaled(value: f64) -> String {
 #[cfg(test)]
 mod traversal_tests {
     use super::*;
+    #[test]
+    fn a_text_file_holding_a_nul_byte_is_refused_like_binary() {
+        let home = tempfile::tempdir().unwrap();
+        let root = home.path();
+        fs::write(root.join("clean.txt"), "PUBLIC text").unwrap();
+        fs::write(root.join("nul.txt"), "PUBLIC shown\0PUBLIC hidden").unwrap();
+        assert_eq!(
+            read_text(&root.join("clean.txt")).unwrap().as_deref(),
+            Some("PUBLIC text")
+        );
+        assert_eq!(read_text(&root.join("nul.txt")).unwrap(), None);
+        let error = resolve_files_with(&["*.txt".into()], root, 1024, true, &mut |_| {})
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("not UTF-8 text or hold NUL bytes"),
+            "{error}"
+        );
+        assert!(
+            error.contains("nul.txt") && !error.contains("clean.txt"),
+            "{error}"
+        );
+    }
     #[test]
     fn requested_glob_prunes_unrelated_and_excluded_caches_before_loading_rules() {
         let home = tempfile::tempdir().unwrap();
