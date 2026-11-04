@@ -9,19 +9,19 @@ Version 0.1.0 (unreleased). Needs Rust 1.99 or later; install from a checkout wi
 
 ## Start
 
-- [README](https://github.com/EquityBot/Alcuin#readme): install, use, settings and known limitations.
-- [SECURITY.md](https://github.com/EquityBot/Alcuin/blob/main/SECURITY.md): what Alcuin can reach and how to report a vulnerability.
+- [README](https://github.com/yungSNAT/Alcuin#readme): install, use, settings and known limitations.
+- [SECURITY.md](https://github.com/yungSNAT/Alcuin/blob/main/SECURITY.md): what Alcuin can reach and how to report a vulnerability.
 
 ## Docs
 
-- [CHANGELOG.md](https://github.com/EquityBot/Alcuin/blob/main/CHANGELOG.md): changes in each release.
-- [NOTICE](https://github.com/EquityBot/Alcuin/blob/main/NOTICE): licence terms and Oracle's retained MIT notice.
+- [CHANGELOG.md](https://github.com/yungSNAT/Alcuin/blob/main/CHANGELOG.md): changes in each release.
+- [NOTICE](https://github.com/yungSNAT/Alcuin/blob/main/NOTICE): licence terms and Oracle's retained MIT notice.
 
 ## Related
 
-- [EquityBot](https://github.com/EquityBot): other EquityBot tools.
+- [yungSNAT](https://github.com/yungSNAT): other yungSNAT tools.
 - [Oracle](https://github.com/steipete/oracle): the upstream project; Alcuin is a Rust port of a maintained fork of it.
 
 ## Reuse
 
-- [Reusing this code](https://github.com/EquityBot/Alcuin/blob/main/AGENTS.md#reusing-this-code): Ryan Duguid's changes to Oracle, under FSL-1.1-ALv2; keep the notices and licences; public credit is requested.
+- [Reusing this code](https://github.com/yungSNAT/Alcuin/blob/main/AGENTS.md#reusing-this-code): Ryan Duguid's changes to Oracle, under FSL-1.1-ALv2; keep the notices and licences; public credit is requested.
