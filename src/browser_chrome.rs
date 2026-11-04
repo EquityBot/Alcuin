@@ -2157,6 +2157,14 @@ fn profile_processes_at(profile: &Path, proc_root: &Path) -> Result<Vec<u32>> {
             Err(error) => return Err(error.into()),
         };
         let args: Vec<_> = raw.split(|b| *b == 0).filter(|a| !a.is_empty()).collect();
+        if let &[title] = args.as_slice()
+            && title.contains(&b' ')
+        {
+            if title_names_profile(&entry.path(), title, profile)? {
+                owners.push(pid);
+            }
+            continue;
+        }
         if args.iter().any(|a| a.starts_with(b"--type=")) {
             continue;
         }
@@ -2176,6 +2184,89 @@ fn profile_processes_at(profile: &Path, proc_root: &Path) -> Result<Vec<u32>> {
         }
     }
     Ok(owners)
+}
+/// Chromium on Linux replaces its argv with one space-joined process title, so a
+/// `--user-data-dir=` value containing spaces spans several words and the title alone
+/// cannot say where it ends. The files the browser holds open settle which reading it uses:
+/// the kernel reports their canonical paths, and in testing Chromium 156 opened its first profile
+/// file 45 to 111 ms after starting, before it wrote `DevToolsActivePort`. Absence needs that
+/// positive evidence; without it the browser counts as an owner or occupancy is unknown.
+#[cfg(target_os = "linux")]
+fn title_names_profile(process: &Path, title: &[u8], profile: &Path) -> Result<bool> {
+    use std::os::unix::ffi::OsStrExt;
+    let words: Vec<_> = title.split(|b| *b == b' ').collect();
+    // shortcut: a profile path containing " --type=" hides its browser; such paths are unsupported.
+    if words.iter().any(|word| word.starts_with(b"--type=")) {
+        return Ok(false);
+    }
+    let mut readings = vec![];
+    let starts: Vec<_> = (0..words.len())
+        .filter(|&start| words[start].starts_with(b"--user-data-dir="))
+        .collect();
+    if starts.is_empty() {
+        return Ok(false);
+    }
+    for start in starts {
+        for end in start..words.len() {
+            let value = words[start..=end].join(&b' ');
+            let path = std::ffi::OsStr::from_bytes(&value[b"--user-data-dir=".len()..]);
+            // A profile is a directory; a file named by a shorter reading is no evidence.
+            if let Ok(reading) = fs::canonicalize(path)
+                && reading.is_dir()
+                && !readings.contains(&reading)
+            {
+                readings.push(reading);
+            }
+        }
+    }
+    let open = match open_paths(process) {
+        Ok(open) => open,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && !process.try_exists()? => {
+            return Ok(false);
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let holds = |directory: &Path, from: u32| {
+        open.iter()
+            .any(|(descriptor, path)| *descriptor >= from && path.starts_with(directory))
+    };
+    if holds(profile, 0) {
+        return Ok(true);
+    }
+    // Files the browser opened under another reading show that it uses that profile. Descriptors
+    // 0 to 2 can be the launcher's redirected standard streams, so they show nothing.
+    // shortcut: other descriptors a launcher leaks without close-on-exec are trusted the same way.
+    if readings
+        .iter()
+        .any(|reading| reading != profile && holds(reading, 3))
+    {
+        return Ok(false);
+    }
+    // A browser that has not yet opened profile files counts for every reading.
+    // shortcut: a profile renamed whilst open also counts for an existing reading of its old path.
+    anyhow::ensure!(
+        readings.iter().any(|reading| reading == profile),
+        "A Chromium browser's profile cannot be established; profile occupancy is unknown"
+    );
+    Ok(true)
+}
+/// The descriptors a Linux process holds open, with their paths; descriptors closed during the
+/// scan are skipped.
+#[cfg(target_os = "linux")]
+fn open_paths(process: &Path) -> std::io::Result<Vec<(u32, PathBuf)>> {
+    let mut paths = vec![];
+    for entry in fs::read_dir(process.join("fd"))? {
+        let entry = entry?;
+        let Ok(descriptor) = entry.file_name().to_string_lossy().parse() else {
+            continue;
+        };
+        match fs::read_link(entry.path()) {
+            Ok(path) => paths.push((descriptor, path)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(paths)
 }
 #[cfg(windows)]
 fn profile_processes(profile: &Path) -> Result<Vec<u32>> {
@@ -3901,6 +3992,116 @@ mod tests {
             profile_processes_at(&profile, &proc_root).is_err(),
             "Missing command metadata on a present candidate cannot establish absence"
         );
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn rewritten_chromium_titles_name_their_profile() {
+        use std::os::unix::fs::symlink;
+        let home = tempfile::tempdir().unwrap();
+        let directory = |name: &str| {
+            let path = home.path().join(name);
+            fs::create_dir(&path).unwrap();
+            fs::canonicalize(path).unwrap()
+        };
+        // PUBLIC is a space-separated prefix of PUBLIC profile, so a title naming the longer one has 2 readings.
+        let short = directory("PUBLIC");
+        let profile = directory("PUBLIC profile");
+        let moved = directory("PUBLIC-moved");
+        let removed = home.path().join("PUBLIC-removed");
+        // Writes a rewritten title, as Chromium 156 leaves it, and optionally one open profile file.
+        let browser = |root: &str, pid: u32, flags: &str, value: &Path, open: Option<&Path>| {
+            let process = home.path().join(root).join(pid.to_string());
+            fs::create_dir_all(process.join("fd")).unwrap();
+            symlink(home.path().join("chromium"), process.join("exe")).unwrap();
+            let title = format!(
+                "/usr/lib/chromium/chromium{flags} --user-data-dir={} about:blank\0",
+                value.display()
+            );
+            fs::write(process.join("cmdline"), title).unwrap();
+            if let Some(open) = open {
+                symlink(open.join("Default/History"), process.join("fd/3")).unwrap();
+            }
+            home.path().join(root)
+        };
+        let running = browser(
+            "PUBLIC-proc",
+            20,
+            " --headless=new",
+            &profile,
+            Some(profile.as_path()),
+        );
+        browser(
+            "PUBLIC-proc",
+            21,
+            " --type=renderer",
+            &profile,
+            Some(profile.as_path()),
+        );
+        browser("PUBLIC-proc", 22, "", &short, Some(short.as_path()));
+        assert_eq!(profile_processes_at(&profile, &running).unwrap(), vec![20]);
+        assert_eq!(profile_processes_at(&short, &running).unwrap(), vec![22]);
+        let starting = browser("PUBLIC-starting", 30, "", &profile, None);
+        assert_eq!(
+            profile_processes_at(&short, &starting).unwrap(),
+            vec![30],
+            "Before it opens profile files, a browser counts for every reading"
+        );
+        assert_eq!(profile_processes_at(&profile, &starting).unwrap(), vec![30]);
+        let unresolved = browser("PUBLIC-unresolved", 40, "", &removed, None);
+        assert!(
+            profile_processes_at(&profile, &unresolved).is_err(),
+            "An unresolvable profile path cannot establish absence"
+        );
+        let renamed = browser("PUBLIC-renamed", 50, "", &removed, Some(moved.as_path()));
+        assert_eq!(profile_processes_at(&moved, &renamed).unwrap(), vec![50]);
+        assert!(profile_processes_at(&profile, &renamed).is_err());
+        // Renamed away from a path whose space-separated prefix exists, with no files seen open.
+        let away = home.path().join("PUBLIC renamed-away");
+        let unseen = browser("PUBLIC-unseen", 60, "", &away, None);
+        assert!(
+            profile_processes_at(&moved, &unseen).is_err(),
+            "Without open-file evidence, another reading cannot establish absence"
+        );
+        assert_eq!(profile_processes_at(&short, &unseen).unwrap(), vec![60]);
+        // Whilst starting, a file named by a shorter reading shows nothing, even when held open.
+        let log = home.path().join("PUBLIC-log");
+        fs::write(&log, "").unwrap();
+        let logged = directory("PUBLIC-log profile");
+        let leaked = browser("PUBLIC-leaked", 70, "", &logged, None);
+        symlink(&log, leaked.join("70/fd/4")).unwrap();
+        assert_eq!(profile_processes_at(&logged, &leaked).unwrap(), vec![70]);
+        // Nor does a launcher's redirected stdout under a shorter directory reading.
+        let redirected = browser("PUBLIC-redirected", 71, "", &profile, None);
+        symlink(short.join("launcher.log"), redirected.join("71/fd/1")).unwrap();
+        assert_eq!(
+            profile_processes_at(&profile, &redirected).unwrap(),
+            vec![71]
+        );
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "Uses only disposable synthetic profiles and installed Linux Chromium"]
+    fn real_chromium_on_prefixed_profiles_owns_only_its_own() {
+        let home = tempfile::Builder::new()
+            .prefix("PUBLIC-prefixed-")
+            .tempdir()
+            .unwrap();
+        let short = home.path().join("PUBLIC");
+        let long = home.path().join("PUBLIC profile");
+        fs::create_dir(&short).unwrap();
+        fs::create_dir(&long).unwrap();
+        let (short, long) = (
+            fs::canonicalize(short).unwrap(),
+            fs::canonicalize(long).unwrap(),
+        );
+        let mut browsers = [foreign_chromium(&short), foreign_chromium(&long)];
+        let owners = [profile_processes(&short), profile_processes(&long)];
+        for browser in &mut browsers {
+            browser.kill().unwrap();
+            browser.wait().unwrap();
+        }
+        assert_eq!(owners[0].as_ref().unwrap(), &[browsers[0].id()]);
+        assert_eq!(owners[1].as_ref().unwrap(), &[browsers[1].id()]);
     }
     #[test]
     fn endpoint_identity_and_native_devtools_record_refuse_foreign_sockets() {
