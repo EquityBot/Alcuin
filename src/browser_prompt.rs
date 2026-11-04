@@ -511,7 +511,8 @@ impl BrowserPrompt {
             suffix += 1;
         }
         if format == BundleFormat::Text {
-            // A text bundle carries decoded text, so bytes that are not UTF-8 would be garbled.
+            // A text bundle carries decoded text, so bytes that are not UTF-8 would be garbled
+            // and a NUL could cut it short.
             let mut undecodable = vec![];
             for file in &self.text_files {
                 if prompts::read_text(&file.path)?.is_none() {
@@ -520,7 +521,7 @@ impl BrowserPrompt {
             }
             ensure!(
                 undecodable.is_empty(),
-                "A text bundle cannot carry files that are not UTF-8 text:\n- {}\nUse --browser-bundle-format zip to send their original bytes.",
+                "A text bundle cannot carry files that are not UTF-8 text or hold NUL bytes:\n- {}\nUse --browser-bundle-format zip to send their original bytes.",
                 undecodable.join("\n- ")
             );
         }
