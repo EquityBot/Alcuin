@@ -1,5 +1,5 @@
 // Native receipt inventory. Names describe uploads; only original objects authorise Send.
-(cfg) => {
+(cfg) => { // NOSONAR: the file is one function expression, which Rust calls through CDP
   const uploading = typeof cfg.uploadReceiptId === 'string';
   const pending = uploading ? window.__oracleFileInputGuards?.[cfg.uploadReceiptId] : null;
   const context = uploading ? null : window.__oracleAttachmentPromptGuards?.[cfg.guardId]?.context?.();

@@ -1,5 +1,5 @@
 // Ported from the reference implementation's DOM expressions.
-(cfg) => {
+(cfg) => { // NOSONAR: the file is one function expression, which Rust calls through CDP
 /* alcuin-dom:blocked */
 
 return (() => {

@@ -581,9 +581,10 @@ impl ChromeConnection {
                 .map(PathBuf::from)
                 .unwrap_or_else(std::env::temp_dir);
             let base = cwd.join(base);
-            let base = if prefer_system_tmp(cfg!(target_os = "linux"), &base, Path::new(user_home))
-                && fs::create_dir_all("/tmp").is_ok()
-            {
+            let system_tmp =
+                prefer_system_tmp(cfg!(target_os = "linux"), &base, Path::new(user_home))
+                    && fs::create_dir_all("/tmp").is_ok(); // NOSONAR: brief local file access
+            let base = if system_tmp {
                 PathBuf::from("/tmp")
             } else {
                 base
@@ -840,7 +841,7 @@ impl ChromeConnection {
         #[cfg(target_os = "linux")]
         refuse_wsl(
             std::env::var_os("WSL_DISTRO_NAME").as_deref(),
-            &fs::read_to_string("/proc/sys/kernel/osrelease").unwrap_or_default(),
+            &fs::read_to_string("/proc/sys/kernel/osrelease").unwrap_or_default(), // NOSONAR: brief local file access
         )?;
         let directory = copied.as_ref().map(|copy| copy.directory.clone());
         let mut disposable = DisposableLaunch::new(copied.map(|copy| copy.profile));
@@ -862,7 +863,7 @@ impl ChromeConnection {
             !cancel.is_cancelled(),
             "Chrome launch cancelled after bring-up lock"
         );
-        let executable = fs::canonicalize(&options.executable)?;
+        let executable = fs::canonicalize(&options.executable)?; // NOSONAR: brief local file access
         let profile_entry = NativeEntry::open(profile.path(), true)?;
         let record_path = profile.path().join("oracle-chrome-native.json");
         let raw = read_record(&record_path)?;
@@ -1259,9 +1260,9 @@ impl ChromeConnection {
         }
         if let Some(executable) = executable {
             let actual = native_executable(identity.pid)?;
-            if NativeEntry::open(&actual, false)?.identity
-                != NativeEntry::open(&fs::canonicalize(executable)?, false)?.identity
-            {
+            let running = NativeEntry::open(&actual, false)?.identity;
+            let expected = fs::canonicalize(executable)?; // NOSONAR: brief local file access
+            if running != NativeEntry::open(&expected, false)?.identity {
                 return Ok(false);
             }
         }

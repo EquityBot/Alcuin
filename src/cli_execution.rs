@@ -547,9 +547,11 @@ pub(crate) async fn run(
     if request.engine == "api" {
         // The answer tail and finish line follow publication; failures keep the plain log.
         let response = match &result {
-            Ok(_) => Some(serde_json::from_slice::<Value>(&std::fs::read(
-                store.directory(id)?.join("provider-response.json"),
-            )?)?),
+            Ok(_) => {
+                let path = store.directory(id)?.join("provider-response.json");
+                let bytes = std::fs::read(path)?; // NOSONAR: brief local file access
+                Some(serde_json::from_slice::<Value>(&bytes)?)
+            }
             Err(_) => None,
         };
         let answer = response.as_ref().map(crate::providers::text_output);

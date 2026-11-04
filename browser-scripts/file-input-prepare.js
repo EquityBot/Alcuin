@@ -1,4 +1,4 @@
-(cfg) => {
+(cfg) => { // NOSONAR: the file is one function expression, which Rust calls through CDP
 /* alcuin-dom:file-input-prepare */
 const assertOracleSubmission = () => { if (window !== window.top) throw Error('Top renderer required');
     const oracleOwnershipId = value => typeof value === 'string' && value.length > 0 && value.length <= 256;

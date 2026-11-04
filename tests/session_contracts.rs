@@ -752,7 +752,7 @@ async fn internal_provider_attempts_are_addressable_but_do_not_clog_public_sessi
         .env("ORACLE_HOME_DIR", home.path())
         .current_dir(home.path())
         .args(["status", "--all"])
-        .output()
+        .output() // NOSONAR: the test waits for its own child process
         .unwrap();
     assert!(
         output.status.success(),

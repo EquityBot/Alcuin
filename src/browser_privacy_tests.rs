@@ -793,7 +793,7 @@ async fn data_transfer_upload_case(page: &Cdp, dir: &std::path::Path) -> Result<
     let cancel = CancellationToken::new();
     let path = dir.join("PUBLIC-transfer.txt");
     let content = "PUBLIC transfer bytes ".repeat(40_000);
-    std::fs::write(&path, &content)?;
+    std::fs::write(&path, &content)?; // NOSONAR: test setup on a local temporary file
     let setup = "(cfg)=>{sessionStorage.removeItem('oracle:target-claim');window.PUBLIC_setterCalls=0;window.PUBLIC_received=null;const descriptor=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'files');window.PUBLIC_filesDescriptor=descriptor;Object.defineProperty(HTMLInputElement.prototype,'files',{configurable:true,get(){return descriptor.get.call(this);},set(value){window.PUBLIC_setterCalls++;descriptor.set.call(this,value);}});const form=document.querySelector('form');form.addEventListener('change',event=>{if(event.target.type!=='file')return;const file=event.target.files[0];file.text().then(text=>{window.PUBLIC_received={name:file.name,type:file.type,size:file.size,text};});const chip=document.createElement('div');chip.dataset.testid='attachment-chip';chip.textContent=file.name;const remove=document.createElement('button');remove.type='button';remove.setAttribute('aria-label','Remove file '+file.name);remove.textContent='Remove';chip.append(remove);form.append(chip);});}";
     let restore = "Object.defineProperty(HTMLInputElement.prototype,'files',window.PUBLIC_filesDescriptor);sessionStorage.removeItem('oracle:target-claim');true";
     let result = async {
@@ -835,7 +835,7 @@ async fn data_transfer_upload_case(page: &Cdp, dir: &std::path::Path) -> Result<
             .await?;
         // The reference cap is refused before any page work.
         let large = dir.join("PUBLIC-large.bin");
-        std::fs::File::create(&large)?.set_len(20 * 1024 * 1024 + 1)?;
+        std::fs::File::create(&large)?.set_len(20 * 1024 * 1024 + 1)?; // NOSONAR: test setup on a local temporary file
         let mut reservation = RendererReservation::acquire(
             page.clone(),
             uuid::Uuid::new_v4().to_string(),
@@ -1412,7 +1412,7 @@ async fn upload_reset_privacy_cases(page: &Cdp, file: &std::path::Path) -> Resul
     let cancel = CancellationToken::new();
     let other = tempfile::tempdir()?;
     let second = other.path().join("PUBLIC-second.txt");
-    std::fs::write(&second, "PUBLIC second upload")?;
+    std::fs::write(&second, "PUBLIC second upload")?; // NOSONAR: test setup on a local temporary file
     for case in ["inactive", "unknown", "navigation"] {
         mount(page, ACTIVE, "/", "()=>{sessionStorage.removeItem('oracle:target-claim');window.PUBLIC_removeClicks=0;document.querySelector('form').addEventListener('change',event=>{if(event.target.type!=='file')return;for(const file of event.target.files){const chip=document.createElement('div');chip.dataset.testid='attachment-chip';chip.textContent=file.name;const remove=document.createElement('button');remove.type='button';remove.setAttribute('aria-label','Remove file '+file.name);remove.textContent='Remove';remove.onclick=()=>{window.PUBLIC_removeClicks++;chip.remove();if(window.PUBLIC_removeClicks===1){if(window.PUBLIC_resetCase==='inactive')document.querySelector('header button').setAttribute('aria-label','Turn on temporary chat');if(window.PUBLIC_resetCase==='unknown')document.querySelector('header').remove();if(window.PUBLIC_resetCase==='navigation')history.replaceState(null,'','/?PUBLIC-changed=1');}};chip.append(remove);document.querySelector('form').append(chip);}});}").await?;
         let mut reservation = RendererReservation::acquire(

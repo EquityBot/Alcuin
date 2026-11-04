@@ -3641,7 +3641,8 @@ async fn profile_lock(
     cancel: &CancellationToken,
 ) -> Result<DirectoryLock> {
     let started = Instant::now();
-    if fs::symlink_metadata(path).is_ok() {
+    let present = fs::symlink_metadata(path).is_ok(); // NOSONAR: brief local file access
+    if present {
         let purpose = if path.ends_with("oracle-browser-bringup.lock") {
             "browser setup"
         } else {

@@ -1,5 +1,5 @@
 // Derived from maintained buildCopyExpression; Rust acknowledges exact-token cancellation.
-(cfg) => { /* alcuin-dom:historical-copy-markdown */
+(cfg) => { /* alcuin-dom:historical-copy-markdown */ // NOSONAR: the file is one function expression, which Rust calls through CDP
 if (window !== window.top || typeof cfg.captureToken !== 'string' || cfg.captureToken.length < 16) throw Error('Invalid historical copy token');
 const key='__alcuinHistoricalCopiesV1';
 if (window[key] === undefined) Object.defineProperty(window,key,{value:new Map(),configurable:false,writable:false});

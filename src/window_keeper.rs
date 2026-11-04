@@ -395,7 +395,7 @@ mod native {
                             record == json!({"keeper":identity,"chrome":chrome}),
                             "Keeper readiness identity mismatch"
                         );
-                        std::fs::remove_file(&ready)?;
+                        std::fs::remove_file(&ready)?; // NOSONAR: brief local file access
                         break;
                     }
                     Err(error)

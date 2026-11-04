@@ -1,5 +1,5 @@
 // Ported from the reference implementation's DOM expressions.
-(cfg) => {
+(cfg) => { // NOSONAR: the file is one function expression, which Rust calls through CDP
 /* alcuin-dom:send-prepare */
 const assertOracleSubmission = () => { if (window !== window.top) throw Error('Top renderer required');
     const oracleOwnershipId = value => typeof value === 'string' && value.length > 0 && value.length <= 256;
@@ -456,7 +456,6 @@ return (() => {
           guard.sawKeyDown = true;
           const state = safeCheck();
           if (guard.admitted || point || !state.preparationReady || !state.contextMatches || !state.focused || !state.attachmentsReady || !state.promptReady) cancel(event, state);
-          else if (false && !admit()) cancel(event, { ...state, preparationReady: false });
         };
         const onKeyUp = event => {
           if (event.key !== 'Enter' || !event.isTrusted) return;

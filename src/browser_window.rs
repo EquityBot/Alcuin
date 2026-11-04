@@ -214,7 +214,7 @@ pub(crate) async fn configure(
             .await?;
             if !hidden {
                 profile.check()?;
-                std::fs::remove_file(profile.path().join(SAVED_STATE))?;
+                std::fs::remove_file(profile.path().join(SAVED_STATE))?; // NOSONAR: brief local file access
             }
         }
     } else if config["hideWindow"] == true {

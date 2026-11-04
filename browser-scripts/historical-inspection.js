@@ -1,5 +1,5 @@
 // Ported from the reference implementation's DOM expressions.
-(cfg) => {
+(cfg) => { // NOSONAR: the file is one function expression, which Rust calls through CDP
 /* alcuin-dom:historical-inspection */
 const userMessageIds = node => [node?.getAttribute('data-message-id'), node?.getAttribute('data-chatgpt-selection-message-id'),
     ...(node?.getAttribute('data-chatgpt-search-message-ids')?.trim().split(/\s+/) || [])].filter(Boolean);

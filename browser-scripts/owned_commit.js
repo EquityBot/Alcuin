@@ -1,4 +1,4 @@
-(owner, ids, expectedPrompt, webSearch = false) => {
+(owner, ids, expectedPrompt, webSearch = false) => { // NOSONAR: the file is one function expression, which Rust calls through CDP
   const previousIds = ids === null ? undefined : ids;
   return (() => {
     {

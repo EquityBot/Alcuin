@@ -1,4 +1,4 @@
-(cfg) => (() => {
+(cfg) => (() => { // NOSONAR: the file is one function expression, which Rust calls through CDP
     const root = cfg.composer;
     if (!root || root === document || root === document.body) return false;
     // Text can name a file or describe a completed operation; only explicit state blocks sending.

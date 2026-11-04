@@ -5,7 +5,7 @@
 // Only one exact outgoing text request is admitted. No answer chunks accumulate.
 // The retained wrapper drops payload/guard references even if another wrapper
 // still delegates to it after cleanup.
-(cfg, privateChat) => {
+(cfg, privateChat) => { // NOSONAR: the file is one function expression, which Rust calls through CDP
   if (Object.hasOwn(window, '__oracleGrokWitness')) throw Error('Earlier Grok witness needs exact cleanup');
   if (!privateChat()) throw Error('Grok Private Chat is required before witness installation');
   let originalDocument = document;

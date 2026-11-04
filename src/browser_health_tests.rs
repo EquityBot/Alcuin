@@ -214,7 +214,7 @@ async fn health_waiter_registered(path: std::path::PathBuf, stop: CancellationTo
     let deadline = std::time::Instant::now() + Duration::from_secs(30);
     while !stop.is_cancelled() && std::time::Instant::now() < deadline {
         // A read can race an atomic replacement; the next poll sees the published file.
-        if let Ok(bytes) = std::fs::read(&path)
+        if let Ok(bytes) = std::fs::read(&path) // NOSONAR: test setup on a local temporary file
             && let Ok(waiters) = serde_json::from_slice::<Value>(&bytes)
             && waiters["waiters"].as_array().is_some_and(|rows| {
                 rows.iter().any(|row| {

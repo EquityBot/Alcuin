@@ -8494,7 +8494,7 @@ async fn post_send_terminal_error_returns_and_its_slot_is_reclaimed_after_worker
         .spawn()
         .unwrap();
     let pid = child.id();
-    child.wait().unwrap();
+    child.wait().unwrap(); // NOSONAR: the test waits for its own child process
     let exited = ProcessIdentity {
         pid,
         started_at_ms: 1_000_000_000_000.0,

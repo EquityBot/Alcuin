@@ -1,5 +1,5 @@
 // Native upload receipt checks adapt attachment-evidence.js and the maintained clear flow.
-(cfg) => {
+(cfg) => { // NOSONAR: the file is one function expression, which Rust calls through CDP
   /* alcuin-dom:upload-reset */
   const assertOwner = () => {
     const claim = JSON.parse(sessionStorage.getItem('oracle:target-claim'));

@@ -1,5 +1,5 @@
 // Ported from the reference implementation's DOM expressions.
-(cfg) => {
+(cfg) => { // NOSONAR: the file is one function expression, which Rust calls through CDP
 /* alcuin-dom:model */
 const assertOracleSubmission = () => { if (!oracleTemporaryChat()) throw Error('Verified Temporary Chat required'); if (window !== window.top) throw Error('Top renderer required');
     const oracleOwnershipId = value => typeof value === 'string' && value.length > 0 && value.length <= 256;
@@ -1560,7 +1560,7 @@ return (() => {
             }
             void inspection.sleep(75).then(poll);
           };
-          poll();
+          void poll();
         });
       }
       return {
@@ -2303,14 +2303,14 @@ return (() => {
           clickedTargetOption = true;
           dispatchClickSequence(match.node);
           // Wait for the selected model signal to settle before reopening the picker.
-          waitForTargetSelection(previousButtonLabel, previousComposerSignal).then((selectionSettled) => {
+          void waitForTargetSelection(previousButtonLabel, previousComposerSignal).then((selectionSettled) => {
             if (selectionSettled === 'target') {
               const resolvedLabel = getResolvedLabel(match.label);
               closeMenu();
               resolve({ status: 'switched', label: resolvedLabel });
               return;
             }
-            attempt();
+            void attempt();
           });
           return;
         }
@@ -2334,7 +2334,7 @@ return (() => {
         }
         setTimeout(attempt, REOPEN_INTERVAL_MS / 2);
       };
-      attempt();
+      void attempt();
     });
   })();
 }

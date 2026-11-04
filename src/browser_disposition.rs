@@ -590,7 +590,8 @@ impl TargetJournal {
         let mut last = String::new();
         let mut checked = 0;
         let mut results = vec![];
-        for entry in fs::read_dir(&self.path)? {
+        let entries = fs::read_dir(&self.path)?; // NOSONAR: brief local file access
+        for entry in entries {
             if checked >= 4 || Instant::now() >= deadline {
                 break;
             }
