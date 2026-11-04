@@ -18,6 +18,7 @@ pub(crate) struct Intent {
     pub(crate) dispatch_id: String,
     prompt_sha256: String,
     listed_sha256: Option<String>,
+    spaced_sha256: Option<String>,
     mode: String,
 }
 impl Intent {
@@ -35,6 +36,8 @@ impl Intent {
             prompt_sha256: crate::artifacts::sha256(prompt.as_bytes()),
             listed_sha256: listed_prompt(prompt)
                 .map(|listed| crate::artifacts::sha256(listed.as_bytes())),
+            spaced_sha256: (!prompt.contains('\u{a0}'))
+                .then(|| crate::artifacts::sha256(display_spaces(prompt).as_bytes())),
             mode: mode.into(),
         })
     }
@@ -78,14 +81,20 @@ impl Intent {
                 && observed["stopExists"] == false
                 && observed["strongThinkingActive"] == false
                 && observed["userText"].as_str().is_some_and(|source| {
-                    // grok-dom.js names the match only for a tolerated rendered list, so
-                    // exact observations are unchanged.
+                    // grok-dom.js names only qualified rendered forms; exact observations
+                    // still require the original prompt hash.
                     match observed.get("promptMatch") {
                         None => crate::artifacts::sha256(source.as_bytes()) == self.prompt_sha256,
                         // grok-dom.js has also matched the turn's list items to the markers.
                         Some(kind) if kind == "rendered-list" => {
                             self.listed_sha256.as_ref().is_some_and(|listed| {
                                 *listed == crate::artifacts::sha256(turn_lines(source).as_bytes())
+                            })
+                        }
+                        Some(kind) if kind == "rendered-space" && source.contains('\u{a0}') => {
+                            self.spaced_sha256.as_ref().is_some_and(|spaced| {
+                                *spaced
+                                    == crate::artifacts::sha256(display_spaces(source).as_bytes())
                             })
                         }
                         Some(_) => false,
@@ -154,6 +163,17 @@ fn listed_prompt(prompt: &str) -> Option<String> {
 
 fn turn_lines(source: &str) -> String {
     lines(source).join("\n")
+}
+
+/// Grok renders ASCII spaces as NBSP and can omit trailing ASCII spaces per line.
+/// Indentation, tabs, line boundaries and all non-space characters stay significant.
+fn display_spaces(source: &str) -> String {
+    source
+        .replace('\u{a0}', " ")
+        .split('\n')
+        .map(|line| line.trim_end_matches(' '))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 pub(crate) fn guard(function: &str) -> String {

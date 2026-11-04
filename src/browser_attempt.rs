@@ -434,14 +434,30 @@ impl Parent {
         self.reserve(Provider::Chatgpt, None, cancel)
     }
 
-    /// Component fixtures exercise Grok without inventing a production fallback
-    /// permit or sending a preliminary request to ChatGPT.
-    #[cfg(test)]
-    pub(crate) fn reserve_grok_fixture(
+    /// Grok-direct (`--browser-provider grok`): the first and only attempt is Grok, so no
+    /// prompt reaches ChatGPT. It has no retry or provider switch: both require a ChatGPT
+    /// first attempt. Only a new text conversation qualifies, as for the fallback switch.
+    pub(crate) fn reserve_first_grok(
         &mut self,
         environment: &crate::config::Environment,
         cancel: &CancellationToken,
     ) -> Result<Link> {
+        ensure!(
+            self.state["attempts"].as_array().is_some_and(Vec::is_empty)
+                && self.state["active"].is_null(),
+            "The first provider attempt was already reserved"
+        );
+        let parent = self.store.require(&self.id)?;
+        let config = &parent["browser"]["config"];
+        ensure!(
+            parent["options"]["browserProvider"] == "grok"
+                && config["resumeConversationUrl"].is_null()
+                && config["browserTabRef"].is_null()
+                && config["researchMode"] != "deep"
+                && config["captureProviderNative"] != true
+                && parent["options"]["writeArtifacts"] != true,
+            "Grok-direct consults support only a new text conversation"
+        );
         self.reserve(Provider::Grok, Some(environment), cancel)
     }
 
@@ -1056,6 +1072,75 @@ mod tests {
             assert_eq!(
                 std::fs::read(store.directory(&id).unwrap().join("browser-request.json")).unwrap(),
                 original_request
+            );
+        }
+    }
+    #[test]
+    fn grok_direct_reserves_one_first_grok_attempt_only_for_a_new_grok_text_request() {
+        for case in ["chatgpt", "direct", "resumed", "borrowed", "deep"] {
+            let root = tempfile::tempdir().unwrap();
+            let store = SessionStore::new(root.path().join(".oracle"));
+            let mut input = json!({"prompt":"PUBLIC immutable consultation source","engine":"browser","model":"gpt-6-pro"});
+            if case != "chatgpt" {
+                input["browserProvider"] = json!("grok");
+            }
+            let resolved = crate::execution::resolve(
+                &input,
+                &json!({"browser":{"cookieSync":false,"manualLogin":true}}),
+                &crate::config::Environment::new(),
+                root.path(),
+            )
+            .unwrap();
+            let meta = browser_runner::prepare(&store, &resolved, root.path()).unwrap();
+            let id = meta["id"].as_str().unwrap().to_owned();
+            let identity = ProcessIdentity::current().unwrap();
+            browser_runner::start_owner(&store, &id, &identity).unwrap();
+            let refused = match case {
+                "resumed" => Some((
+                    "resumeConversationUrl",
+                    json!("https://chatgpt.com/c/PUBLIC"),
+                )),
+                "borrowed" => Some(("browserTabRef", json!("PUBLIC-tab"))),
+                "deep" => Some(("researchMode", json!("deep"))),
+                _ => None,
+            };
+            if let Some((key, value)) = &refused {
+                patch_meta(&store, &id, |meta| {
+                    meta["browser"]["config"][*key] = value.clone()
+                });
+            }
+            let environment = crate::config::Environment::from([
+                (
+                    "ORACLE_HOME_DIR".into(),
+                    store.home().to_string_lossy().into(),
+                ),
+                (
+                    (if cfg!(windows) { "USERPROFILE" } else { "HOME" }).into(),
+                    root.path().to_string_lossy().into(),
+                ),
+            ]);
+            let cancel = CancellationToken::new();
+            let mut coordinator = Parent::begin(&store, &id, &identity, &cancel).unwrap();
+            let reserved = coordinator.reserve_first_grok(&environment, &cancel);
+            if case != "direct" {
+                assert!(reserved.is_err(), "{case}");
+                assert_eq!(store.list(false).unwrap().len(), 1, "{case}");
+                continue;
+            }
+            let link = reserved.unwrap();
+            assert_eq!((link.provider, link.ordinal), (Provider::Grok, 1));
+            let child = store.require(&link.child_id).unwrap();
+            assert!(
+                child["browser"]["config"]["manualLoginProfileDir"]
+                    .as_str()
+                    .unwrap()
+                    .ends_with("grok-browser-profile")
+            );
+            assert!(coordinator.reserve_first(&cancel).is_err());
+            assert!(
+                coordinator
+                    .reserve_first_grok(&environment, &cancel)
+                    .is_err()
             );
         }
     }

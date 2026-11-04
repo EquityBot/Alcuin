@@ -1661,11 +1661,16 @@ async fn run_native_consultation(
     {
         store.append_log(id, initial["model"].as_str(), &header)?;
     }
+    let grok_direct = initial["options"]["browserProvider"] == "grok";
     // A user-selected existing target keeps its existing borrowed-target contract.
     if initial["browser"]["config"]["browserTabRef"]
         .as_str()
         .is_some_and(|reference| !policy::trim(reference).is_empty())
     {
+        anyhow::ensure!(
+            !grok_direct,
+            "--browser-provider grok cannot use a borrowed ChatGPT tab"
+        );
         return Box::pin(run_native_prepared(
             store,
             id,
@@ -1680,7 +1685,12 @@ async fn run_native_consultation(
     let witness = ExecutionWitness::capture(store, id, identity)?;
     let result=async {
         let mut parent=crate::browser_attempt::Parent::begin(store,id,identity,cancel)?;
-        let first=parent.reserve_first(cancel)?;
+        let first=if grok_direct {
+            anyhow::ensure!(capture.is_none() && bootstrap.is_none(),"--browser-provider grok runs locally and cannot use ChatGPT cookie bootstrap or a remote capture");
+            parent.reserve_first_grok(environment,cancel)?
+        } else {
+            parent.reserve_first(cancel)?
+        };
         let first_child=first.child_id.clone();
         start_owner(store,&first.child_id,identity)?;
         let attempt=match Box::pin(run_native_prepared(store,&first.child_id,environment,identity,cancel,CaptureBoundary::ParentAttempt,bootstrap)).await {
@@ -1733,7 +1743,11 @@ async fn run_native_consultation(
         parent.adopt(&attempt.child_id,cancel)?;
         if attempt.provider==crate::browser_attempt::Provider::Grok {
             let mode=store.require(&attempt.child_id)?["browser"]["runtime"]["modelSelection"]["selectedMode"].as_str().unwrap_or("unknown").to_owned();
-            eprintln!("[browser] Answer adopted from Grok {mode} (verified Private Chat) after the provider switch; ChatGPT attempt {} keeps its records; a later cleanup closes its tab.",first_child);
+            if grok_direct {
+                eprintln!("[browser] Answer adopted from Grok {mode} (verified Private Chat), consulted directly; ChatGPT was not opened.");
+            } else {
+                eprintln!("[browser] Answer adopted from Grok {mode} (verified Private Chat) after the provider switch; ChatGPT attempt {} keeps its records; a later cleanup closes its tab.",first_child);
+            }
         }
         if let Some(hook)=capture {
             parent.issue_capture(&hook,cancel)?;

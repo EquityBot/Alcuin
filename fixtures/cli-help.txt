@@ -179,7 +179,14 @@ Options:
                                         grok.com once in a separate manual-login
                                         profile (explicit alternate-provider
                                         consent). (choices: "none", "grok")
-  --browser-follow-up <prompt>          Submit an additional prompt in the same
+  --browser-provider <provider>         Provider for the first browser attempt:
+                                        chatgpt, or grok to consult grok.com
+                                        directly in its separate manual-login
+                                        profile without opening ChatGPT
+                                        (explicit alternate-provider consent;
+                                        text prompts only). (choices:
+                                        "chatgpt", "grok", default: "chatgpt")
+  --browser-follow-up <prompt>         Submit an additional prompt in the same
                                         ChatGPT browser conversation after the
                                         initial answer; repeat for multi-turn
                                         consults. (default: [])

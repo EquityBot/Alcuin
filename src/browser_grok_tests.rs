@@ -7,6 +7,62 @@ const CLIENT: &str = "00000000-0000-4000-8000-000000000001";
 const USER: &str = "00000000-0000-4000-8000-000000000002";
 const RESPONSE: &str = "00000000-0000-4000-8000-000000000003";
 const DISPATCH: &str = "00000000-0000-4000-8000-000000000004";
+const SESSION: &str = "00000000-0000-4000-8000-000000000005";
+
+#[test]
+fn rendered_space_source_preserves_the_exact_wire_prompt_and_other_characters() {
+    let owner = SubmissionOwner {
+        claim_id: CLIENT.into(),
+        reservation_id: USER.into(),
+    };
+    let prompt = "PUBLIC code  \n  let x = 1; \nEND";
+    let intent = Intent::new(prompt, "Auto", DISPATCH).unwrap();
+    let receipt = json!({"version":1,"provider":"grok","kind":"grok-websocket-v1","state":"completed",
+        "claimId":CLIENT,"reservationId":USER,"dispatchId":DISPATCH,"clientMessageId":CLIENT,
+        "userMessageId":format!("response-{USER}"),"responseId":RESPONSE,
+        "assistantMessageId":format!("response-{RESPONSE}"),"promptSha256":sha256(prompt.as_bytes()),
+        "mode":"Auto","privateChat":true});
+    let observed = json!({"state":"completed","provider":"grok","kind":"grok-private-answer",
+        "privateChat":true,"mode":"Auto","wireReceipt":receipt,"userMessageId":receipt["userMessageId"],
+        "assistantMessageId":receipt["assistantMessageId"],"completionConfirmed":true,"stopExists":false,
+        "strongThinkingActive":false,"promptMatch":"rendered-space","text":"PUBLIC answer",
+        "providerText":"PUBLIC answer","images":[],"files":[]});
+    for (source, accepted) in [
+        ("PUBLIC\u{a0}code\n\u{a0} let x = 1;\nEND", true),
+        ("PUBLIC\u{a0}code  \n  let x = 1; \nEND", true),
+        ("PUBLIC\u{a0}code\n let x = 1;\nEND", false),
+        ("PUBLIC\u{a0}code\n  let x = 2;\nEND", false),
+        ("PUBLIC\u{a0}code\n  let x = 1\nEND", false),
+        ("PUBLIC\u{a0}code\n\tlet x = 1;\nEND", false),
+        ("PUBLIC\u{a0}code  let x = 1;\nEND", false),
+        (prompt, false),
+    ] {
+        let mut value = observed.clone();
+        value["userText"] = json!(source);
+        assert_eq!(
+            intent.require_answer(&receipt, &owner, &value).is_ok(),
+            accepted,
+            "{source:?}"
+        );
+    }
+    let original_nbsp = "PUBLIC\u{a0}code  \n  let x = 1; \nEND";
+    let mut nbsp_receipt = receipt.clone();
+    nbsp_receipt["promptSha256"] = json!(sha256(original_nbsp.as_bytes()));
+    let mut nbsp_observed = observed;
+    nbsp_observed["wireReceipt"] = nbsp_receipt.clone();
+    nbsp_observed["userText"] = json!(original_nbsp);
+    assert!(
+        Intent::new(original_nbsp, "Auto", DISPATCH)
+            .unwrap()
+            .require_answer(&nbsp_receipt, &owner, &nbsp_observed)
+            .is_err()
+    );
+    nbsp_observed.as_object_mut().unwrap().remove("promptMatch");
+    Intent::new(original_nbsp, "Auto", DISPATCH)
+        .unwrap()
+        .require_answer(&nbsp_receipt, &owner, &nbsp_observed)
+        .unwrap();
+}
 
 #[test]
 fn live_witness_extends_only_the_same_saved_commitment() {
@@ -429,7 +485,7 @@ async fn setup_with_lifetime(
     Ok(reservation)
 }
 async fn composer(page: &Cdp, mode: &str) -> Result<RendererReservation> {
-    page.evaluate_with_arguments("(cfg)=>{window.__oracleGrokWitness?.stop();delete window.__oracleGrokWitness;sessionStorage.removeItem('oracle:target-claim');document.body.innerHTML='<div class=\"query-bar bg-surface-incognito\"><textarea></textarea><a aria-label=\"Switch to Default Chat\">Private</a><button aria-haspopup=\"menu\">'+cfg.mode+'</button><button aria-label=\"Send message\">Send</button></div>';class PublicSocket extends EventTarget {constructor(){super();this.url='wss://grok.com/PUBLIC-fixture';}send(raw){window.PUBLIC_sent.push(raw);}emit(value){this.dispatchEvent(new MessageEvent('message',{data:typeof value==='string'?value:JSON.stringify(value)}));}};window.WebSocket=PublicSocket;window.PUBLIC_sent=[];window.PUBLIC_socket=new WebSocket();document.querySelector('textarea').value='PUBLIC Grok request';document.querySelector('button[aria-label=\"Send message\"]').onclick=()=>PUBLIC_socket.send(JSON.stringify({type:'response.create',item:{type:'message',role:'user',x_grok:{client_message_id:{uuid:'00000000-0000-4000-8000-000000000001'},input_chunks:[{text:{text:document.querySelector('textarea').value}}]}}}));return true;}", &json!([{"mode":mode}]),SHORT,&CancellationToken::new()).await?;
+    page.evaluate_with_arguments("(cfg)=>{window.__oracleGrokWitness?.stop();delete window.__oracleGrokWitness;sessionStorage.removeItem('oracle:target-claim');document.body.innerHTML='<div class=\"query-bar bg-surface-incognito\"><textarea></textarea><a aria-label=\"Switch to Default Chat\">Private</a><button aria-haspopup=\"menu\">'+cfg.mode+'</button><button aria-label=\"Send message\">Send</button></div>';class PublicSocket extends EventTarget {constructor(){super();this.url='wss://grok.com/PUBLIC-fixture';}send(raw){window.PUBLIC_sent.push(raw);}emit(value){this.dispatchEvent(new MessageEvent('message',{data:typeof value==='string'?value:JSON.stringify(value)}));}};window.WebSocket=PublicSocket;window.PUBLIC_sent=[];window.PUBLIC_socket=new WebSocket();document.querySelector('textarea').value='PUBLIC Grok request';document.querySelector('button[aria-label=\"Send message\"]').onclick=()=>PUBLIC_socket.send(JSON.stringify({session_id:'00000000-0000-4000-8000-000000000005',event:{type:'response.create',event_id:'evt_PUBLIC',item:{type:'message',role:'user',x_grok:{client_message_id:'00000000-0000-4000-8000-000000000001',input_chunks:[{text:{text:document.querySelector('textarea').value}}]}}},castle_request_token:'PUBLIC'}));return true;}", &json!([{"mode":mode}]),SHORT,&CancellationToken::new()).await?;
     RendererReservation::acquire_grok(
         page.clone(),
         uuid::Uuid::new_v4().to_string(),
@@ -441,6 +497,14 @@ async fn composer(page: &Cdp, mode: &str) -> Result<RendererReservation> {
 
 async fn mount_answer(page: &Cdp) -> Result<()> {
     page.evaluate_with_arguments("(cfg)=>{for(const [role,id,value] of [['user',cfg.user,cfg.prompt],['assistant',cfg.assistant,'PUBLIC verified answer']]){const root=document.createElement('article');root.id=id;root.dataset.role=role;const content=document.createElement('div');content.dataset.testid='message-content';content.textContent=value;root.append(content);if(role==='assistant'){for(const label of ['Copy','Regenerate']){const button=document.createElement('button');button.setAttribute('aria-label',label);button.textContent=label;root.append(button);}}document.body.append(root);}return true;}",
+        &json!([{"user":format!("response-{USER}"),"assistant":format!("response-{RESPONSE}"),"prompt":PROMPT}]),SHORT,&CancellationToken::new()).await?;
+    Ok(())
+}
+
+/// grok.com's completed-turn markup as probed on 3 November 2026: labelled bubbles,
+/// a reasoning-time trigger, content controls, the toolbar and follow-up prompts.
+async fn mount_grok_answer(page: &Cdp) -> Result<()> {
+    page.evaluate_with_arguments("(cfg)=>{const add=(parent,tag,attributes={},value)=>{const el=document.createElement(tag);for(const [name,setting] of Object.entries(attributes))el.setAttribute(name,setting);if(value!==undefined)el.textContent=value;parent.append(el);return el;};for(const [role,id,label,value] of [['user',cfg.user,'You',cfg.prompt],['assistant',cfg.assistant,'Grok','PUBLIC verified answer']]){const root=add(document.body,'div',{id,class:'relative group'});const unit=add(root,'div',{'data-testid':role+'-message',class:'message-bubble relative chat-md prose'});add(unit,'h2',{class:'sr-only'},label);if(role==='assistant')add(add(add(unit,'div',{class:'thinking-container'}),'div',{class:'not-prose'}),'button',{'data-testid':'canvas-trigger'},'Worked for 11s');const content=add(add(unit,'div',{class:'relative'}),'div',{class:'relative response-content-markdown markdown chat-md'},value);add(unit,'section',{class:'inline-media-container'});if(role==='assistant'){for(const control of ['Copy table','Save table','Copy Rust code'])add(content,'button',{'aria-label':control});const bar=add(add(root,'div',{class:'action-buttons'}),'div');for(const control of ['Copy response','Create share link','Like','Dislike','Regenerate','More actions'])add(bar,'button',{'aria-label':control});const suggestions=add(root,'div',{class:'flex flex-col'});for(const prompt of ['PUBLIC follow-up one','PUBLIC follow-up two'])add(add(suggestions,'button'),'span',{},prompt);}}return true;}",
         &json!([{"user":format!("response-{USER}"),"assistant":format!("response-{RESPONSE}"),"prompt":PROMPT}]),SHORT,&CancellationToken::new()).await?;
     Ok(())
 }
@@ -529,6 +593,13 @@ async fn dom_cases(page: &Cdp) -> Result<()> {
         "hidden-image",
         "outside-image",
         "download-button",
+        "grok-markup",
+        "grok-label",
+        "grok-thinking",
+        "grok-bubble-control",
+        "grok-suggestion-label",
+        "nbsp-source",
+        "nbsp-source-changed",
     ] {
         let mut reservation = setup(page, "Auto").await?;
         send(&mut reservation).await?;
@@ -552,9 +623,31 @@ async fn dom_cases(page: &Cdp) -> Result<()> {
                 .await?["state"],
             "pending"
         );
-        mount_answer(page).await?;
+        if fault.starts_with("grok-") {
+            mount_grok_answer(page).await?;
+        } else {
+            mount_answer(page).await?;
+        }
         let expression = match fault {
-            "none" => "true",
+            "none" | "grok-markup" => "true",
+            "grok-label" => {
+                "document.querySelector('[data-testid=assistant-message] h2').textContent='PUBLIC label';true"
+            }
+            "grok-thinking" => {
+                "document.querySelector('[data-testid=canvas-trigger]').textContent='PUBLIC reasoning';true"
+            }
+            "grok-bubble-control" => {
+                "document.querySelector('[data-testid=assistant-message] section').append(document.createElement('button'));true"
+            }
+            "grok-suggestion-label" => {
+                "document.querySelector('.flex.flex-col button').setAttribute('aria-label','Download PUBLIC file');true"
+            }
+            "nbsp-source" => {
+                "document.querySelector('[data-role=user] [data-testid]').textContent='PUBLIC\\u00a0Grok request';true"
+            }
+            "nbsp-source-changed" => {
+                "document.querySelector('[data-role=user] [data-testid]').textContent='PUBLIC\\u00a0other request';true"
+            }
             "user-source" => {
                 "document.querySelector('[data-role=user] [data-testid]').textContent='PUBLIC changed source';true"
             }
@@ -600,7 +693,9 @@ async fn dom_cases(page: &Cdp) -> Result<()> {
             .observe_grok_answer(PROMPT, SHORT, &cancel)
             .await;
         match fault {
-            "none" => assert_eq!(result?["text"], "PUBLIC verified answer"),
+            "none" | "grok-markup" | "nbsp-source" => {
+                assert_eq!(result?["text"], "PUBLIC verified answer")
+            }
             "copy-pending" | "streaming-pending" => assert_eq!(result?["state"], "pending"),
             _ => assert!(result.is_err(), "{fault}"),
         }
@@ -936,16 +1031,44 @@ async fn retirement_close_cases(
     Ok(())
 }
 
+/// grok.com's /ws/mgw/ envelope (3 November 2026).
+fn wire(event: Value) -> Value {
+    json!({"session_id":SESSION,"event":event})
+}
 fn user() -> Value {
-    json!({"type":"conversation.item.added","item":{"id":{"uuid":USER},"type":"message","role":"user","x_grok":{"client_message_id":{"uuid":CLIENT},"input_chunks":[{"text":{"text":PROMPT}}]}}})
+    wire(
+        json!({"type":"conversation.item.added","item":{"id":USER,"type":"message","role":"user","x_grok":{"client_message_id":CLIENT,"input_chunks":[{"text":{"text":PROMPT}}]}}}),
+    )
 }
 fn frames() -> Vec<Value> {
     vec![
         user(),
-        json!({"type":"response.created","response":{"id":{"uuid":RESPONSE},"status":"in_progress"}}),
-        json!({"type":"response.output_item.added","response_id":{"uuid":RESPONSE},"output_index":0,"item":{"id":{"uuid":RESPONSE},"role":"assistant","x_grok":{"parent_response_id":{"uuid":USER}}}}),
-        json!({"type":"response.output_item.done","response_id":{"uuid":RESPONSE},"output_index":0,"item":{"id":{"uuid":RESPONSE},"role":"assistant","status":"completed"}}),
-        json!({"type":"response.done","response":{"id":{"uuid":RESPONSE},"status":"completed"}}),
+        wire(json!({"type":"response.created","response":{"id":RESPONSE,"status":"in_progress"}})),
+        wire(
+            json!({"type":"response.output_item.added","response_id":RESPONSE,"output_index":0,"item":{"id":RESPONSE,"role":"assistant","x_grok":{"parent_response_id":USER}}}),
+        ),
+        wire(
+            json!({"type":"response.chunk","response_id":RESPONSE,"item_id":RESPONSE,"chunk":{"text":{"text":"PUBLIC answer","channel":"CHANNEL_ASSISTANT_RESPONSE"}}}),
+        ),
+        wire(
+            json!({"type":"response.output_item.done","response_id":RESPONSE,"output_index":0,"item":{"id":RESPONSE,"role":"assistant","status":"completed"}}),
+        ),
+        wire(json!({"type":"response.done","response":{"id":RESPONSE,"status":"completed"}})),
+    ]
+}
+/// What grok.com sends after response.done: notetaker headers naming no response, a
+/// follow-up suggestion chunk and a title, around a heartbeat and a live-state update.
+fn after_done() -> Vec<Value> {
+    vec![
+        wire(
+            json!({"type":"response.chunk","response_id":"","item_id":"","chunk":{"text":{"text":"PUBLIC header","channel":"CHANNEL_ASSISTANT_NOTETAKER_HEADER"}}}),
+        ),
+        json!({"event":{"type":"pong","event_id":"evt_hb_1"}}),
+        json!({"event":{"type":"conversation.live.updated","conversation_id":SESSION,"streaming":false}}),
+        wire(
+            json!({"type":"response.chunk","response_id":RESPONSE,"item_id":RESPONSE,"chunk":{"follow_up_suggestions":{"suggestions":[]}}}),
+        ),
+        wire(json!({"type":"conversation.title.updated","title":"PUBLIC title"})),
     ]
 }
 async fn emit(page: &Cdp, values: &[Value]) -> Result<()> {
@@ -983,11 +1106,12 @@ pub(crate) async fn native_cases(
             .acknowledge_grok(&committed, SHORT, &cancel)
             .await?;
         emit(page, &frames()[1..]).await?;
+        emit(page, &after_done()).await?;
         let completed = reservation
             .grok_witness(DISPATCH, false, SHORT, &cancel)
             .await?;
         require_receipt(&completed, reservation.owner())?;
-        assert_eq!(completed["state"], "completed");
+        assert_eq!(completed["state"], "completed", "{mode}: {completed}");
         let stopped = reservation
             .grok_witness(DISPATCH, true, SHORT, &cancel)
             .await?;
@@ -1014,25 +1138,26 @@ pub(crate) async fn native_cases(
         "part-item",
         "text-index",
         "content-after-done",
+        "unattributed-answer",
     ] {
         let mut reservation = setup(page, "Auto").await?;
         send(&mut reservation).await?;
         let mut values = frames();
         match case {
             "wrong-client" => {
-                values[0]["item"]["x_grok"]["client_message_id"]["uuid"] = json!(DISPATCH)
+                values[0]["event"]["item"]["x_grok"]["client_message_id"] = json!(DISPATCH)
             }
             "wrong-prompt" => {
-                values[0]["item"]["x_grok"]["input_chunks"][0]["text"]["text"] =
+                values[0]["event"]["item"]["x_grok"]["input_chunks"][0]["text"]["text"] =
                     json!("PUBLIC other")
             }
             "wrong-parent" => {
-                values[2]["item"]["x_grok"]["parent_response_id"]["uuid"] = json!(DISPATCH)
+                values[2]["event"]["item"]["x_grok"]["parent_response_id"] = json!(DISPATCH)
             }
-            "wrong-response" => values[4]["response"]["id"]["uuid"] = json!(DISPATCH),
-            "wrong-assistant" => values[3]["item"]["id"]["uuid"] = json!(DISPATCH),
-            "early-complete" => values = vec![values[4].clone()],
-            "incomplete" => values[3]["item"]["status"] = json!("in_progress"),
+            "wrong-response" => values[5]["event"]["response"]["id"] = json!(DISPATCH),
+            "wrong-assistant" => values[4]["event"]["item"]["id"] = json!(DISPATCH),
+            "early-complete" => values = vec![values[5].clone()],
+            "incomplete" => values[4]["event"]["item"]["status"] = json!("in_progress"),
             "duplicate-user" => values.insert(1, user()),
             "oversized" => values = vec![json!("x".repeat(1048577))],
             "opaque" => {
@@ -1077,10 +1202,11 @@ pub(crate) async fn native_cases(
                 )
                 .await?;
             }
-            "chunk-response"=>values.insert(3,json!({"type":"response.chunk","response_id":{"uuid":DISPATCH},"item_id":{"uuid":RESPONSE}})),
-            "part-item"=>values.insert(3,json!({"type":"response.content_part.added","response_id":{"uuid":RESPONSE},"item_id":{"uuid":DISPATCH},"output_index":0,"content_index":0})),
-            "text-index"=>values.insert(3,json!({"type":"response.output_text.done","response_id":{"uuid":RESPONSE},"item_id":{"uuid":RESPONSE},"output_index":1,"content_index":0})),
-            "content-after-done"=>values.push(json!({"type":"response.chunk","response_id":{"uuid":RESPONSE},"item_id":{"uuid":RESPONSE}})),
+            "chunk-response"=>values.insert(3,wire(json!({"type":"response.chunk","response_id":DISPATCH,"item_id":RESPONSE}))),
+            "part-item"=>values.insert(3,wire(json!({"type":"response.content_part.added","response_id":RESPONSE,"item_id":DISPATCH,"output_index":0,"content_index":0}))),
+            "text-index"=>values.insert(3,wire(json!({"type":"response.output_text.done","response_id":RESPONSE,"item_id":RESPONSE,"output_index":1,"content_index":0}))),
+            "content-after-done"=>values.push(wire(json!({"type":"response.chunk","response_id":RESPONSE,"item_id":RESPONSE,"chunk":{"text":{"text":"PUBLIC late","channel":"CHANNEL_ASSISTANT_RESPONSE"}}}))),
+            "unattributed-answer"=>values.insert(3,wire(json!({"type":"response.chunk","response_id":"","item_id":"","chunk":{"text":{"text":"PUBLIC stray","channel":"CHANNEL_ASSISTANT_RESPONSE"}}}))),
             _ => unreachable!(),
         }
         emit(page, &values).await?;
@@ -1103,6 +1229,16 @@ pub(crate) async fn native_cases(
     let mut reservation = setup(page, "Auto").await?;
     send(&mut reservation).await?;
     page.evaluate_with_arguments("(cfg)=>{const other=new WebSocket();for(const value of cfg.frames)other.emit(value);return true;}",&json!([{"frames":frames()}]),SHORT,&cancel).await?;
+    // Nor can another session's events or the retired unenveloped frames.
+    let foreign: Vec<Value> = frames()
+        .into_iter()
+        .flat_map(|mut value| {
+            let legacy = value["event"].clone();
+            value["session_id"] = json!(DISPATCH);
+            [value, legacy]
+        })
+        .collect();
+    emit(page, &foreign).await?;
     assert_eq!(
         reservation
             .grok_witness(DISPATCH, false, SHORT, &cancel)
@@ -1251,7 +1387,7 @@ pub(crate) async fn native_cases(
     // Rejection consumes the arm but never removes the outstanding click's
     // no-replay barrier. A later provider retry stays blocked after cleanup.
     let mut rejected = setup(page, "Auto").await?;
-    page.evaluate("document.querySelector('button[aria-label=\"Send message\"]').onclick=()=>{try{PUBLIC_socket.send(JSON.stringify({type:'response.create',item:{role:'user',x_grok:{client_message_id:{uuid:'00000000-0000-4000-8000-000000000001'},input_chunks:[{text:{text:'PUBLIC wrong prompt'}}]}}}));}catch{}};true",SHORT,&cancel).await?;
+    page.evaluate("document.querySelector('button[aria-label=\"Send message\"]').onclick=()=>{try{PUBLIC_socket.send(JSON.stringify({session_id:'00000000-0000-4000-8000-000000000005',event:{type:'response.create',item:{role:'user',x_grok:{client_message_id:'00000000-0000-4000-8000-000000000001',input_chunks:[{text:{text:'PUBLIC wrong prompt'}}]}}}}));}catch{}};true",SHORT,&cancel).await?;
     send(&mut rejected).await?;
     assert_eq!(
         rejected
@@ -1259,7 +1395,19 @@ pub(crate) async fn native_cases(
             .await?["state"],
         "invalid"
     );
-    assert!(page.evaluate_with_arguments("(cfg)=>{PUBLIC_socket.send(JSON.stringify({type:'response.create',item:{role:'user',x_grok:{client_message_id:{uuid:cfg.client},input_chunks:[{text:{text:cfg.prompt}}]}}}));return true;}",&json!([{"client":CLIENT,"prompt":PROMPT}]),SHORT,&cancel).await.is_err());
+    assert!(page.evaluate_with_arguments("(cfg)=>{PUBLIC_socket.send(JSON.stringify({session_id:cfg.session,event:{type:'response.create',item:{role:'user',x_grok:{client_message_id:cfg.client,input_chunks:[{text:{text:cfg.prompt}}]}}}}));return true;}",&json!([{"session":SESSION,"client":CLIENT,"prompt":PROMPT}]),SHORT,&cancel).await.is_err());
+    assert_eq!(
+        page.evaluate("PUBLIC_sent.length", SHORT, &cancel).await?,
+        0
+    );
+    // The retired unenveloped request is refused, never passed through unobserved.
+    let mut legacy = setup(page, "Auto").await?;
+    page.evaluate_with_arguments("(cfg)=>{document.querySelector('button[aria-label=\"Send message\"]').onclick=()=>{try{PUBLIC_socket.send(JSON.stringify({type:'response.create',item:{role:'user',x_grok:{client_message_id:cfg.client,input_chunks:[{text:{text:cfg.prompt}}]}}}));}catch{}};return true;}",&json!([{"client":CLIENT,"prompt":PROMPT}]),SHORT,&cancel).await?;
+    send(&mut legacy).await?;
+    assert_eq!(
+        legacy.grok_witness(DISPATCH, true, SHORT, &cancel).await?["state"],
+        "invalid"
+    );
     assert_eq!(
         page.evaluate("PUBLIC_sent.length", SHORT, &cancel).await?,
         0

@@ -385,6 +385,7 @@ pub async fn inspect(
                     headless: false,
                     hide_window: false,
                     keep_window_behind: cfg!(windows),
+                    borrow_profile_owner: false,
                 },
                 input["chromePath"]
                     .as_str()

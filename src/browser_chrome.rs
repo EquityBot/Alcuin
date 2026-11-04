@@ -267,6 +267,8 @@ pub struct ChromeLaunch {
     pub headless: bool,
     pub hide_window: bool,
     pub keep_window_behind: bool,
+    /// Borrow, without kill authority, a browser another launcher left on this profile.
+    pub borrow_profile_owner: bool,
 }
 /// A launch refused because the profile's Chrome cannot be proven to be Alcuin's own
 /// (reference `HealthChromeIdentityError`).
@@ -513,8 +515,9 @@ impl ChromeConnection {
         timeout: Duration,
         cancel: &CancellationToken,
     ) -> Result<ConfiguredChrome> {
-        Self::configured_provider(config, environment, cwd, timeout, cancel).await
+        Self::configured_provider(config, environment, cwd, timeout, cancel, false).await
     }
+    /// Grok may borrow the browser another launcher left on its separate profile.
     pub(crate) async fn configured_grok(
         config: &Value,
         environment: &Environment,
@@ -523,7 +526,7 @@ impl ChromeConnection {
         cancel: &CancellationToken,
     ) -> Result<ConfiguredChrome> {
         crate::browser_grok::require_config(config)?;
-        Self::configured_provider(config, environment, cwd, timeout, cancel).await
+        Self::configured_provider(config, environment, cwd, timeout, cancel, true).await
     }
     async fn configured_provider(
         config: &Value,
@@ -531,6 +534,7 @@ impl ChromeConnection {
         cwd: &Path,
         timeout: Duration,
         cancel: &CancellationToken,
+        borrow_profile_owner: bool,
     ) -> Result<ConfiguredChrome> {
         let copied = if let Some(source) = crate::browser_profile_copy::configured_source(config)? {
             let deadline = std::time::Instant::now()
@@ -701,6 +705,7 @@ impl ChromeConnection {
                         headless: config["headless"] == true,
                         hide_window: config["hideWindow"] == true,
                         keep_window_behind: config["keepWindowBehind"] == true,
+                        borrow_profile_owner,
                     },
                     &startup_url,
                     true,
@@ -860,7 +865,9 @@ impl ChromeConnection {
         let executable = fs::canonicalize(&options.executable)?;
         let profile_entry = NativeEntry::open(profile.path(), true)?;
         let record_path = profile.path().join("oracle-chrome-native.json");
-        if let Some(raw) = read_record(&record_path)? {
+        let raw = read_record(&record_path)?;
+        let recorded = raw.is_some();
+        if let Some(raw) = raw {
             let record: LaunchRecord = serde_json::from_value(raw)
                 .context("Native Chrome ownership record is malformed; refusing launch")?;
             anyhow::ensure!(
@@ -909,60 +916,40 @@ impl ChromeConnection {
                     {
                         eprintln!("Could not start the Chrome window keeper: {error}");
                     }
-                    // Idle cleanup takes this bring-up lock; mark the attachment before releasing it.
-                    let marker_profile = Arc::clone(&profile);
-                    let attachment = Some(
-                        tokio::task::spawn_blocking(move || {
-                            marker_profile
-                                .mark_attachment(std::time::Instant::now() + Duration::from_secs(5))
-                        })
-                        .await
-                        .context("Borrowed attachment marker worker failed")??,
-                    );
-                    lock.release()?;
-                    admission.release()?;
-                    // Reusing a recorded process is a borrowed-process attachment, not new kill authority.
-                    return Ok(Self {
+                    return Self::borrowed_process(
+                        profile,
                         endpoint,
                         browser,
-                        profile: Some(profile),
-                        child: None,
-                        identity: Some(record.process_identity),
-                        keep_browser: true,
-                        bootstrap_lock: None,
-                        bootstrap_admission: None,
-                        temporary_profile: None,
-                        copied_group: None,
-                        #[cfg(windows)]
-                        copied_job: None,
-                        fresh: None,
-                        idle_startup: None,
-                        attachment,
-                    });
+                        record.process_identity,
+                        lock,
+                        admission,
+                    )
+                    .await;
                 }
                 Liveness::Unknown => {
                     bail!(ChromeIdentityRefusal(
                         "Chrome native process identity is unknown; preserving profile"
                     ))
                 }
-                Liveness::Dead => {
-                    // The stale record alone cannot rule out a separately launched profile owner.
-                    anyhow::ensure!(
-                        profile_processes(profile.path())?.is_empty(),
-                        ChromeIdentityRefusal(
-                            "A foreign Chrome process occupies this profile; refusing launch"
-                        )
-                    );
-                }
+                // The stale record alone cannot rule out a separately launched profile owner.
+                Liveness::Dead => {}
             }
-        } else {
-            anyhow::ensure!(
-                profile_processes(profile.path())?.is_empty(),
-                ChromeIdentityRefusal(
-                    "A foreign Chrome process occupies this profile; use an explicit borrowed attachment"
-                )
-            );
         }
+        let owners = profile_processes(profile.path())?;
+        if options.borrow_profile_owner && !owners.is_empty() {
+            return Self::borrow_profile_owner(
+                profile, &owners, &options, bootstrap, lock, admission, cancel,
+            )
+            .await;
+        }
+        anyhow::ensure!(
+            owners.is_empty(),
+            ChromeIdentityRefusal(if recorded {
+                "A foreign Chrome process occupies this profile; refusing launch"
+            } else {
+                "A foreign Chrome process occupies this profile; use an explicit borrowed attachment"
+            })
+        );
         profile.check()?;
         anyhow::ensure!(
             chrome_basename(
@@ -1168,6 +1155,85 @@ impl ChromeConnection {
             attachment: None,
         })
     }
+    /// Reusing a process this launch did not start is a borrowed-process attachment, not new
+    /// kill authority. Idle cleanup takes the bring-up lock, so the attachment is marked first.
+    async fn borrowed_process(
+        profile: Arc<ProfileRegistry>,
+        endpoint: AttachmentEndpoint,
+        browser: Cdp,
+        identity: ProcessIdentity,
+        lock: DirectoryLock,
+        admission: DirectoryLock,
+    ) -> Result<Self> {
+        let marker_profile = Arc::clone(&profile);
+        let attachment = Some(
+            tokio::task::spawn_blocking(move || {
+                marker_profile.mark_attachment(std::time::Instant::now() + Duration::from_secs(5))
+            })
+            .await
+            .context("Borrowed attachment marker worker failed")??,
+        );
+        lock.release()?;
+        admission.release()?;
+        Ok(Self {
+            endpoint,
+            browser,
+            profile: Some(profile),
+            child: None,
+            identity: Some(identity),
+            keep_browser: true,
+            bootstrap_lock: None,
+            bootstrap_admission: None,
+            temporary_profile: None,
+            copied_group: None,
+            #[cfg(windows)]
+            copied_job: None,
+            fresh: None,
+            idle_startup: None,
+            attachment,
+        })
+    }
+    /// Borrow the one live browser another launcher left on this profile, once the process
+    /// list and the browser behind the profile's debugging record name the same process.
+    async fn borrow_profile_owner(
+        profile: Arc<ProfileRegistry>,
+        owners: &[u32],
+        options: &ChromeLaunch,
+        bootstrap: bool,
+        lock: DirectoryLock,
+        admission: DirectoryLock,
+        cancel: &CancellationToken,
+    ) -> Result<Self> {
+        anyhow::ensure!(
+            !bootstrap,
+            "Explicit cookie bootstrap requires a newly owned Chrome process; close its existing browser or select a separate profile"
+        );
+        let &[pid] = owners else {
+            bail!(ChromeIdentityRefusal(
+                "Several browsers occupy this profile; refusing attachment"
+            ));
+        };
+        let identity = ProcessIdentity::read(pid)?
+            .filter(|identity| identity.liveness() == Liveness::Alive)
+            .ok_or(ChromeIdentityRefusal(
+                "The profile's browser exited before attachment",
+            ))?;
+        let endpoint = read_devtools_endpoint(profile.path())?.ok_or(ChromeIdentityRefusal(
+            "The profile's browser has no debugging endpoint; refusing attachment",
+        ))?;
+        let browser = endpoint.connect_admitted(options.timeout, cancel).await?;
+        // Any process could leave that record; the browser behind it must report the owner's PID.
+        anyhow::ensure!(
+            browser_pid(&browser, options.timeout, cancel).await? == Some(u64::from(pid)),
+            ChromeIdentityRefusal("The profile's debugging endpoint belongs to another browser")
+        );
+        profile.check()?;
+        anyhow::ensure!(
+            profile_processes(profile.path())? == [pid] && identity.liveness() == Liveness::Alive,
+            ChromeIdentityRefusal("The profile's browser changed during attachment")
+        );
+        Self::borrowed_process(profile, endpoint, browser, identity, lock, admission).await
+    }
     pub fn borrowed(&self) -> bool {
         self.child.is_none()
     }
@@ -1186,31 +1252,7 @@ impl ChromeConnection {
             .as_ref()
             .context("Health Chrome has no native profile")?;
         profile.check()?;
-        let info = self
-            .browser
-            .call(
-                "SystemInfo.getProcessInfo",
-                serde_json::json!({}),
-                timeout,
-                cancel,
-            )
-            .await?;
-        let rows = info["processInfo"]
-            .as_array()
-            .context("Health browser process list is missing")?;
-        anyhow::ensure!(
-            rows.iter().all(|row| row["type"].is_string()
-                && row["id"]
-                    .as_u64()
-                    .is_some_and(|id| id > 0 && id <= u32::MAX as u64)),
-            "Health browser process list is malformed"
-        );
-        let browsers = rows
-            .iter()
-            .filter(|row| row["type"] == "browser")
-            .collect::<Vec<_>>();
-        if browsers.len() != 1
-            || browsers[0]["id"] != identity.pid
+        if browser_pid(&self.browser, timeout, cancel).await? != Some(u64::from(identity.pid))
             || identity.liveness() != Liveness::Alive
         {
             return Ok(false);
@@ -1935,6 +1977,36 @@ fn read_record(path: &Path) -> Result<Option<Value>> {
     entry.require_matches(path)?;
     Ok(Some(serde_json::from_slice(&bytes)?))
 }
+/// The browser process a DevTools connection reports, when it reports exactly one.
+async fn browser_pid(
+    browser: &Cdp,
+    timeout: Duration,
+    cancel: &CancellationToken,
+) -> Result<Option<u64>> {
+    let info = browser
+        .call(
+            "SystemInfo.getProcessInfo",
+            serde_json::json!({}),
+            timeout,
+            cancel,
+        )
+        .await?;
+    let rows = info["processInfo"]
+        .as_array()
+        .context("Browser process list is missing")?;
+    anyhow::ensure!(
+        rows.iter().all(|row| row["type"].is_string()
+            && row["id"]
+                .as_u64()
+                .is_some_and(|id| id > 0 && id <= u32::MAX as u64)),
+        "Browser process list is malformed"
+    );
+    let mut browsers = rows.iter().filter(|row| row["type"] == "browser");
+    Ok(match (browsers.next(), browsers.next()) {
+        (Some(row), None) => row["id"].as_u64(),
+        _ => None,
+    })
+}
 pub fn read_devtools_endpoint(profile: &Path) -> Result<Option<AttachmentEndpoint>> {
     let directory = NativeEntry::open(profile, true)?;
     for path in [
@@ -1990,6 +2062,10 @@ const CHROME_BASENAMES: &[&str] = &[
     "google-chrome-stable",
     "chrome-headless-shell",
     "chrome-headless-shell.exe",
+    // Brave is Chromium with the same profile and DevTools contract; the Grok profile is signed in there.
+    "brave",
+    "brave.exe",
+    "brave-browser",
 ];
 fn chrome_basename(name: &str) -> bool {
     CHROME_BASENAMES
@@ -2081,6 +2157,14 @@ fn profile_processes_at(profile: &Path, proc_root: &Path) -> Result<Vec<u32>> {
             Err(error) => return Err(error.into()),
         };
         let args: Vec<_> = raw.split(|b| *b == 0).filter(|a| !a.is_empty()).collect();
+        if let &[title] = args.as_slice()
+            && title.contains(&b' ')
+        {
+            if title_names_profile(&entry.path(), title, profile)? {
+                owners.push(pid);
+            }
+            continue;
+        }
         if args.iter().any(|a| a.starts_with(b"--type=")) {
             continue;
         }
@@ -2100,6 +2184,89 @@ fn profile_processes_at(profile: &Path, proc_root: &Path) -> Result<Vec<u32>> {
         }
     }
     Ok(owners)
+}
+/// Chromium on Linux replaces its argv with one space-joined process title, so a
+/// `--user-data-dir=` value containing spaces spans several words and the title alone
+/// cannot say where it ends. The files the browser holds open settle which reading it uses:
+/// the kernel reports their canonical paths, and in testing Chromium 156 opened its first profile
+/// file 45 to 111 ms after starting, before it wrote `DevToolsActivePort`. Absence needs that
+/// positive evidence; without it the browser counts as an owner or occupancy is unknown.
+#[cfg(target_os = "linux")]
+fn title_names_profile(process: &Path, title: &[u8], profile: &Path) -> Result<bool> {
+    use std::os::unix::ffi::OsStrExt;
+    let words: Vec<_> = title.split(|b| *b == b' ').collect();
+    // shortcut: a profile path containing " --type=" hides its browser; such paths are unsupported.
+    if words.iter().any(|word| word.starts_with(b"--type=")) {
+        return Ok(false);
+    }
+    let mut readings = vec![];
+    let starts: Vec<_> = (0..words.len())
+        .filter(|&start| words[start].starts_with(b"--user-data-dir="))
+        .collect();
+    if starts.is_empty() {
+        return Ok(false);
+    }
+    for start in starts {
+        for end in start..words.len() {
+            let value = words[start..=end].join(&b' ');
+            let path = std::ffi::OsStr::from_bytes(&value[b"--user-data-dir=".len()..]);
+            // A profile is a directory; a file named by a shorter reading is no evidence.
+            if let Ok(reading) = fs::canonicalize(path)
+                && reading.is_dir()
+                && !readings.contains(&reading)
+            {
+                readings.push(reading);
+            }
+        }
+    }
+    let open = match open_paths(process) {
+        Ok(open) => open,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && !process.try_exists()? => {
+            return Ok(false);
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let holds = |directory: &Path, from: u32| {
+        open.iter()
+            .any(|(descriptor, path)| *descriptor >= from && path.starts_with(directory))
+    };
+    if holds(profile, 0) {
+        return Ok(true);
+    }
+    // Files the browser opened under another reading show that it uses that profile. Descriptors
+    // 0 to 2 can be the launcher's redirected standard streams, so they show nothing.
+    // shortcut: other descriptors a launcher leaks without close-on-exec are trusted the same way.
+    if readings
+        .iter()
+        .any(|reading| reading != profile && holds(reading, 3))
+    {
+        return Ok(false);
+    }
+    // A browser that has not yet opened profile files counts for every reading.
+    // shortcut: a profile renamed whilst open also counts for an existing reading of its old path.
+    anyhow::ensure!(
+        readings.iter().any(|reading| reading == profile),
+        "A Chromium browser's profile cannot be established; profile occupancy is unknown"
+    );
+    Ok(true)
+}
+/// The descriptors a Linux process holds open, with their paths; descriptors closed during the
+/// scan are skipped.
+#[cfg(target_os = "linux")]
+fn open_paths(process: &Path) -> std::io::Result<Vec<(u32, PathBuf)>> {
+    let mut paths = vec![];
+    for entry in fs::read_dir(process.join("fd"))? {
+        let entry = entry?;
+        let Ok(descriptor) = entry.file_name().to_string_lossy().parse() else {
+            continue;
+        };
+        match fs::read_link(entry.path()) {
+            Ok(path) => paths.push((descriptor, path)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(paths)
 }
 #[cfg(windows)]
 fn profile_processes(profile: &Path) -> Result<Vec<u32>> {
@@ -2780,6 +2947,7 @@ mod tests {
                 headless: true,
                 hide_window: false,
                 keep_window_behind: false,
+                borrow_profile_owner: false,
             },
             "about:blank",
             true,
@@ -3825,6 +3993,116 @@ mod tests {
             "Missing command metadata on a present candidate cannot establish absence"
         );
     }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn rewritten_chromium_titles_name_their_profile() {
+        use std::os::unix::fs::symlink;
+        let home = tempfile::tempdir().unwrap();
+        let directory = |name: &str| {
+            let path = home.path().join(name);
+            fs::create_dir(&path).unwrap();
+            fs::canonicalize(path).unwrap()
+        };
+        // PUBLIC is a space-separated prefix of PUBLIC profile, so a title naming the longer one has 2 readings.
+        let short = directory("PUBLIC");
+        let profile = directory("PUBLIC profile");
+        let moved = directory("PUBLIC-moved");
+        let removed = home.path().join("PUBLIC-removed");
+        // Writes a rewritten title, as Chromium 156 leaves it, and optionally one open profile file.
+        let browser = |root: &str, pid: u32, flags: &str, value: &Path, open: Option<&Path>| {
+            let process = home.path().join(root).join(pid.to_string());
+            fs::create_dir_all(process.join("fd")).unwrap();
+            symlink(home.path().join("chromium"), process.join("exe")).unwrap();
+            let title = format!(
+                "/usr/lib/chromium/chromium{flags} --user-data-dir={} about:blank\0",
+                value.display()
+            );
+            fs::write(process.join("cmdline"), title).unwrap();
+            if let Some(open) = open {
+                symlink(open.join("Default/History"), process.join("fd/3")).unwrap();
+            }
+            home.path().join(root)
+        };
+        let running = browser(
+            "PUBLIC-proc",
+            20,
+            " --headless=new",
+            &profile,
+            Some(profile.as_path()),
+        );
+        browser(
+            "PUBLIC-proc",
+            21,
+            " --type=renderer",
+            &profile,
+            Some(profile.as_path()),
+        );
+        browser("PUBLIC-proc", 22, "", &short, Some(short.as_path()));
+        assert_eq!(profile_processes_at(&profile, &running).unwrap(), vec![20]);
+        assert_eq!(profile_processes_at(&short, &running).unwrap(), vec![22]);
+        let starting = browser("PUBLIC-starting", 30, "", &profile, None);
+        assert_eq!(
+            profile_processes_at(&short, &starting).unwrap(),
+            vec![30],
+            "Before it opens profile files, a browser counts for every reading"
+        );
+        assert_eq!(profile_processes_at(&profile, &starting).unwrap(), vec![30]);
+        let unresolved = browser("PUBLIC-unresolved", 40, "", &removed, None);
+        assert!(
+            profile_processes_at(&profile, &unresolved).is_err(),
+            "An unresolvable profile path cannot establish absence"
+        );
+        let renamed = browser("PUBLIC-renamed", 50, "", &removed, Some(moved.as_path()));
+        assert_eq!(profile_processes_at(&moved, &renamed).unwrap(), vec![50]);
+        assert!(profile_processes_at(&profile, &renamed).is_err());
+        // Renamed away from a path whose space-separated prefix exists, with no files seen open.
+        let away = home.path().join("PUBLIC renamed-away");
+        let unseen = browser("PUBLIC-unseen", 60, "", &away, None);
+        assert!(
+            profile_processes_at(&moved, &unseen).is_err(),
+            "Without open-file evidence, another reading cannot establish absence"
+        );
+        assert_eq!(profile_processes_at(&short, &unseen).unwrap(), vec![60]);
+        // Whilst starting, a file named by a shorter reading shows nothing, even when held open.
+        let log = home.path().join("PUBLIC-log");
+        fs::write(&log, "").unwrap();
+        let logged = directory("PUBLIC-log profile");
+        let leaked = browser("PUBLIC-leaked", 70, "", &logged, None);
+        symlink(&log, leaked.join("70/fd/4")).unwrap();
+        assert_eq!(profile_processes_at(&logged, &leaked).unwrap(), vec![70]);
+        // Nor does a launcher's redirected stdout under a shorter directory reading.
+        let redirected = browser("PUBLIC-redirected", 71, "", &profile, None);
+        symlink(short.join("launcher.log"), redirected.join("71/fd/1")).unwrap();
+        assert_eq!(
+            profile_processes_at(&profile, &redirected).unwrap(),
+            vec![71]
+        );
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "Uses only disposable synthetic profiles and installed Linux Chromium"]
+    fn real_chromium_on_prefixed_profiles_owns_only_its_own() {
+        let home = tempfile::Builder::new()
+            .prefix("PUBLIC-prefixed-")
+            .tempdir()
+            .unwrap();
+        let short = home.path().join("PUBLIC");
+        let long = home.path().join("PUBLIC profile");
+        fs::create_dir(&short).unwrap();
+        fs::create_dir(&long).unwrap();
+        let (short, long) = (
+            fs::canonicalize(short).unwrap(),
+            fs::canonicalize(long).unwrap(),
+        );
+        let mut browsers = [foreign_chromium(&short), foreign_chromium(&long)];
+        let owners = [profile_processes(&short), profile_processes(&long)];
+        for browser in &mut browsers {
+            browser.kill().unwrap();
+            browser.wait().unwrap();
+        }
+        assert_eq!(owners[0].as_ref().unwrap(), &[browsers[0].id()]);
+        assert_eq!(owners[1].as_ref().unwrap(), &[browsers[1].id()]);
+    }
     #[test]
     fn endpoint_identity_and_native_devtools_record_refuse_foreign_sockets() {
         let home = tempfile::tempdir().unwrap();
@@ -4014,6 +4292,7 @@ mod tests {
                 headless: false,
                 hide_window: false,
                 keep_window_behind: false,
+                borrow_profile_owner: false,
             },
             &cancel,
         )
@@ -4025,6 +4304,135 @@ mod tests {
         assert!(cancel.is_cancelled());
         assert!(error.to_string().contains("cancelled"), "{error:#}");
         assert!(!home.path().join("oracle-chrome-native.json").exists());
+    }
+    /// Starts Chromium on `profile` as another launcher would, outside Alcuin's records.
+    #[cfg(target_os = "linux")]
+    fn foreign_chromium(profile: &Path) -> Child {
+        let _ = fs::remove_file(profile.join("DevToolsActivePort"));
+        let child = Command::new("/usr/lib/chromium/chromium")
+            .args([
+                "--headless=new",
+                "--remote-debugging-port=0",
+                "--no-first-run",
+                "--password-store=basic",
+                "--disable-component-update",
+                "--host-resolver-rules=MAP * ~NOTFOUND",
+            ])
+            .arg(format!("--user-data-dir={}", profile.display()))
+            .arg("about:blank")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        while !read_devtools_endpoint(profile).is_ok_and(|endpoint| endpoint.is_some()) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "Foreign Chromium wrote no debugging record"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        child
+    }
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    #[ignore = "Uses only disposable synthetic profiles and installed Linux Chromium"]
+    async fn grok_borrows_only_the_verified_browser_left_on_its_profile() {
+        use std::os::unix::fs::PermissionsExt;
+        let home = tempfile::Builder::new()
+            .prefix("PUBLIC-grok-borrow-")
+            .tempdir()
+            .unwrap();
+        let executable = home.path().join("chrome");
+        fs::write(&executable,"#!/bin/sh\nexec /usr/lib/chromium/chromium '--host-resolver-rules=MAP * ~NOTFOUND' --password-store=basic --disable-component-update \"$@\"\n").unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+        let grok = home.path().join("grok-browser-profile");
+        fs::create_dir(&grok).unwrap();
+        let env = Environment::from([
+            ("HOME".into(), home.path().to_string_lossy().into_owned()),
+            ("PATH".into(), "/usr/bin:/bin".into()),
+            ("TMPDIR".into(), home.path().to_string_lossy().into_owned()),
+        ]);
+        let cancel = CancellationToken::new();
+        let timeout = Duration::from_secs(10);
+        // Alcuin's own earlier launch leaves a record whose process has since died.
+        let mut earlier = ChromeConnection::launch_or_reuse(
+            ProfileRegistry::open(&grok).unwrap(),
+            ChromeLaunch {
+                executable: executable.clone(),
+                cwd: home.path().into(),
+                environment: env.clone(),
+                debug_port: None,
+                timeout,
+                keep_browser: true,
+                headless: true,
+                hide_window: false,
+                keep_window_behind: false,
+                borrow_profile_owner: false,
+            },
+            &cancel,
+        )
+        .await
+        .unwrap();
+        let identity = earlier.identity.clone().unwrap();
+        let mut child = earlier.child.take().unwrap();
+        child.kill().unwrap();
+        child.wait().unwrap();
+        drop(earlier);
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while identity.liveness() != Liveness::Dead {
+            assert!(std::time::Instant::now() < deadline);
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(grok.join("oracle-chrome-native.json").exists());
+        // Another launcher then opens the profile, as the shared Grok browser was.
+        let mut owner = foreign_chromium(&grok);
+        let other = home.path().join("PUBLIC-other-profile");
+        fs::create_dir(&other).unwrap();
+        let decoy = foreign_chromium(&other);
+        let config = serde_json::json!({"manualLogin":true,"manualLoginProfileDir":grok,"cookieSync":false,
+            "manualLoginCookieSync":false,"headless":false,"fallbackProvider":"none","keepBrowser":false,
+            "maxConcurrentTabs":1,"chromePath":executable});
+        let refused = ChromeConnection::configured(&config, &env, home.path(), timeout, &cancel)
+            .await
+            .err()
+            .expect("ChatGPT adopted a browser it did not launch");
+        assert!(
+            format!("{refused:#}").contains("A foreign Chrome process occupies this profile"),
+            "{refused:#}"
+        );
+        let borrowed =
+            ChromeConnection::configured_grok(&config, &env, home.path(), timeout, &cancel)
+                .await
+                .unwrap()
+                .connection;
+        assert!(borrowed.borrowed() && borrowed.keep_browser);
+        assert_eq!(borrowed.identity.as_ref().unwrap().pid, owner.id());
+        drop(borrowed);
+        assert!(
+            owner.try_wait().unwrap().is_none(),
+            "Borrowing ended the profile's browser"
+        );
+        // A debugging record naming any other browser is refused.
+        fs::copy(
+            other.join("DevToolsActivePort"),
+            grok.join("DevToolsActivePort"),
+        )
+        .unwrap();
+        let mismatched =
+            ChromeConnection::configured_grok(&config, &env, home.path(), timeout, &cancel)
+                .await
+                .err()
+                .expect("Grok borrowed a browser outside its profile");
+        assert!(
+            format!("{mismatched:#}").contains("another browser"),
+            "{mismatched:#}"
+        );
+        for mut child in [owner, decoy] {
+            child.kill().unwrap();
+            child.wait().unwrap();
+        }
     }
     #[tokio::test]
     async fn persistent_child_is_reaped_after_it_exits() {
