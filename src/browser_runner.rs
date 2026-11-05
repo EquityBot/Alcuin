@@ -35,6 +35,7 @@ pub(crate) use grok::tests::native_cases as native_grok_runner_cases;
 mod read_recovery;
 mod recovery_capture;
 pub(crate) mod transcript;
+pub(crate) mod turn_retry;
 pub(crate) use recovery_capture::recover_child_capture;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -2621,7 +2622,7 @@ async fn send_owned_turn_inner(
     let receipt = recovery
         .observe(
             initial,
-            read_context,
+            &read_context,
             limits,
             cancel,
             |bounded| async move {
@@ -3798,6 +3799,8 @@ async fn ensure_not_blocked(
         other => other,
     }
 }
+/// How long a remote browser's failed sign-in check rests before its one recheck.
+const LOGIN_RECHECK_PAUSE: Duration = Duration::from_secs(5);
 /// Reference waitForLogin on a new owned chat, before any selection. A session that appeared
 /// only during the manual-login wait reopens the exact landing page and rechecks it.
 #[allow(clippy::too_many_arguments)] // The page, its destination and the login hint stay explicit.
@@ -3818,7 +3821,7 @@ async fn wait_for_login(
         config["keepBrowser"] == true,
     );
     let manual = config["manualLogin"] == true && !hint.remote;
-    if crate::browser_page::wait_for_login(
+    let reopen = match crate::browser_page::wait_for_login(
         page,
         manual,
         hint,
@@ -3828,8 +3831,24 @@ async fn wait_for_login(
         cancel,
         &log,
     )
-    .await?
+    .await
     {
+        Ok(reopen) => reopen,
+        // Signing in is the user's, so this is one more look and no loop. A signed-in remote
+        // browser has failed this check for moments at a time, and nothing is sent yet.
+        Err(error) if hint.remote && error.is::<crate::browser_page::SessionMissing>() => {
+            log(
+                "[browser] ChatGPT session not detected; retrying the sign-in check once on a reopened page.",
+            );
+            pause(LOGIN_RECHECK_PAUSE, cancel).await?;
+            navigate_exact(page, url, expected, limits, cancel).await?;
+            ensure_not_blocked(store, id, page, config, profile, limits, cancel).await?;
+            return crate::browser_page::ensure_logged_in(page, hint, limits.command, cancel, &log)
+                .await;
+        }
+        Err(error) => return Err(error),
+    };
+    if reopen {
         navigate_exact(page, url, expected, limits, cancel).await?;
         ensure_not_blocked(store, id, page, config, profile, limits, cancel).await?;
     }
@@ -4730,7 +4749,7 @@ async fn wait_original_answer(
         ))
         .await;
     let observed = recovery
-        .observe(initial, context, limits, cancel, |bounded| async move {
+        .observe(initial, &context, limits, cancel, |bounded| async move {
             wait_answer(
                 store,
                 id,
@@ -4745,6 +4764,62 @@ async fn wait_original_answer(
             .await
         })
         .await;
+    let observed = match observed {
+        Err(failure) if recovery.enabled() && turn_retry::eligible(&failure) => {
+            let retried = match turn_retry::attempt(
+                store,
+                id,
+                witness,
+                &context,
+                reservation,
+                receipt,
+                limits,
+                cancel,
+            )
+            .await
+            {
+                Ok(true) => wait_answer(
+                    store,
+                    id,
+                    reservation,
+                    receipt,
+                    selection,
+                    limits,
+                    false,
+                    Some(witness),
+                    cancel,
+                )
+                .await
+                .map(Some),
+                Ok(false) => Ok(None),
+                Err(error) => Err(error),
+            };
+            // The first failure stands, as the harvest and the recovery wording depend on it, unless
+            // the retried turn would not load: only that failure says the reply may be in the page.
+            match retried {
+                Ok(Some(answer)) => Ok(answer),
+                Ok(None) => Err(failure),
+                Err(error)
+                    if cancel.is_cancelled()
+                        || matches!(
+                            error.downcast_ref::<crate::browser_provider::Failure>(),
+                            Some(crate::browser_provider::Failure::ResponseLoadFailed)
+                        ) =>
+                {
+                    Err(error)
+                }
+                Err(error) => {
+                    page_log(
+                        store,
+                        id,
+                        &format!("[browser] Same-turn retry stopped: {error:#}"),
+                    );
+                    Err(failure)
+                }
+            }
+        }
+        other => other,
+    };
     match observed {
         // Reference createAssistantTimeoutError; the typed failure stays the source.
         Err(error)

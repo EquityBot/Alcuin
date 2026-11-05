@@ -27,6 +27,26 @@ const SEND_FOCUS: &str = include_str!("../browser-scripts/send-focus.js");
 const SEND_PREPARE: &str = include_str!("../browser-scripts/send-prepare.js");
 const WITNESS_CLEAN: &str = "(cfg) => { /* alcuin-dom:submission-witness-clean */ const record=window.__oracleSubmissionWitness; if(!record)return true; if(record.witnessId!==cfg.witnessId || record.dispatchGuardId!==cfg.dispatchGuardId || record.owner.claimId!==cfg.owner.claimId || record.owner.reservationId!==cfg.owner.reservationId) return false; if(typeof record.stop==='function')return cfg.retain===true ? record.stop() : record.cleanup(); if(cfg.retain!==true)delete window.__oracleSubmissionWitness; return true; }";
 const INSTALL: &str = include_str!("../browser-scripts/completion-install.js");
+/// A fresh completion tracker for a turn about to be retried. The first one stopped watching at
+/// the failed turn's 'Response complete' and would call the retried turn complete from its start.
+pub(crate) async fn rearm_completion(
+    reservation: &crate::browser_renderer::RendererReservation,
+    baseline: &Value,
+    timeout: Duration,
+    cancel: &CancellationToken,
+) -> Result<()> {
+    let cfg = json!({"owner":reservation.owner(),"baseline":baseline});
+    reservation
+        .page()
+        .evaluate_with_arguments(
+            &crate::browser_privacy::guard(INSTALL),
+            &json!([cfg]),
+            timeout,
+            cancel,
+        )
+        .await?;
+    Ok(())
+}
 // Reference buildChatListRateLimitExpression: read-only and advisory.
 const CHAT_LIST_RATE_LIMIT: &str = r#"(cfg) => { /* alcuin-dom:chat-list-rate-limit */
     // A resumed conversation may still be usable while the unrelated sidebar list is limited.

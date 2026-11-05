@@ -88,15 +88,25 @@ const content = Array.from(assistant.querySelectorAll('[data-markdown-text-style
   assistant.querySelector('.markdown, [data-message-content], .prose, [class*="MarkdownRoot"]') || assistant;
 const rawText = content.innerText || content.textContent || '';
 const text = legacyDisposition ? rawText.trim() : rawText;
-const tracker = window.__oracleCurrentTurnCompletionV1;
-const completionVisible = hasTurnCompletion({ messageId, turnId }, assistantIndex, false) ||
-  tracker?.completedTurnIndex === assistantIndex && assistantIndex >= tracker.baseline;
-const retryVisible = Array.from(assistantTurn.querySelectorAll('button, [role="button"]')).some(node => visible(node) && (node.innerText || node.textContent || node.getAttribute('aria-label') || '').trim().toLowerCase() === 'retry');
+// A turn can hold the user's message too; a control counts only from the assistant's message on.
+const retryVisible = Array.from(assistantTurn.querySelectorAll('button, [role="button"]')).some(node => (assistant.compareDocumentPosition(node) & 4) && visible(node) && (node.innerText || node.textContent || node.getAttribute('aria-label') || '').trim().toLowerCase() === 'retry');
 // Reference isAssistantTurnUiErrorText: this terminal state can render without Retry. Only known
 // UI chrome may follow it, so an answer that quotes the phrase stays an answer.
 const thinkingFailed = /^thinking failed[.!]?(?:\s+retry)?(?:\s+is this conversation helpful so far\??(?:\s+yes\s+no)?)?$/.test(text.toLowerCase().replace(/\s+/g, ' ').trim());
-if ((retryVisible || thinkingFailed) && !strongThinkingActive) {
-  if (cfg.uiErrors === true) return { ...source, uiError:'temporary_unavailable' };
+const roots = Array.from(assistant.querySelectorAll('[data-markdown-text-style="assistant-message"], .markdown, [data-message-content], .prose, [class*="MarkdownRoot"], [class*="markdown"]'));
+const notice = Array.from(assistant.querySelectorAll('p, [role="alert"]'))
+  .filter(node => !roots.some(root => root.contains(node)) && visible(node))
+  .map(node => String(node.innerText || node.textContent || '').trim()).filter(Boolean).join('\n');
+const isLoadNotice = value => /^this response couldn['’]t load[.!]?(?:\s+retry)?$/.test(value.toLowerCase().replace(/\s+/g, ' ').trim());
+// The load notice can sit beside a Retry of its own, and activity summaries can share its turn.
+// It stays a load failure, whose reply may still be read, and that Retry says the turn has ended.
+const loadNotice = [text, notice, assistant.innerText || assistant.textContent || ''].some(isLoadNotice);
+const tracker = window.__oracleCurrentTurnCompletionV1;
+const completionVisible = retryVisible && loadNotice && !strongThinkingActive ||
+  hasTurnCompletion({ messageId, turnId }, assistantIndex, false) ||
+  tracker?.completedTurnIndex === assistantIndex && assistantIndex >= tracker.baseline;
+if ((retryVisible || thinkingFailed) && !strongThinkingActive && !loadNotice) {
+  if (cfg.uiErrors === true) return { ...source, uiError:'temporary_unavailable', lastAssistantMessageId:messageId };
   throw Error('Assistant displays a generation failure; result refused');
 }
 const images = serializeImages(assistant);
@@ -104,13 +114,9 @@ const files = serializeFiles(assistant, assistantIndex);
 // Reference withheld candidate: empty answer roots beside a visible notice in the last turn.
 // Only the terminal gate decides it, and it is never answer text.
 if (!legacyDisposition && assistantIndex === turns.length - 1 && content !== assistant) {
-  const roots = Array.from(assistant.querySelectorAll('[data-markdown-text-style="assistant-message"], .markdown, [data-message-content], .prose, [class*="MarkdownRoot"], [class*="markdown"]'));
   const answerEmpty = roots.filter(node => node.getAttribute('data-markdown-text-tone') !== 'tertiary')
     .every(node => !String(node.textContent || '').trim());
-  const notice = Array.from(assistant.querySelectorAll('p, [role="alert"]'))
-    .filter(node => visible(node) && !roots.some(root => root.contains(node)))
-    .map(node => String(node.innerText || node.textContent || '').trim()).filter(Boolean).join('\n');
-  const unloaded = /^this response couldn['’]t load\.?$/.test(notice.toLowerCase().replace(/\s+/g, ' ').trim());
+  const unloaded = isLoadNotice(notice);
   if (answerEmpty && notice && (images.length === 0 || unloaded))
     return { ...source, sameTurnExchange:assistantTurn === user.turn, lastAssistantMessageId:messageId,
       lastAssistantTurnId:turnId, lastAssistantTurnIndex:assistantIndex, assistantFollowsLatestUser:true,

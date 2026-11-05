@@ -67,6 +67,15 @@ fn a_failed_turn_is_no_answer_for_any_consumer() {
     );
 }
 #[test]
+fn the_load_notice_is_never_ready_as_an_answer() {
+    let mut tab = summary(&endpoint(), &target(), &info()).unwrap();
+    tab["completionConfirmed"] = json!(true);
+    assert!(ready_for_session(&json!({}), &tab, false).unwrap());
+    tab["lastAssistantMarkdown"] = json!("This response couldn\u{2019}t load\nRetry");
+    assert!(!ready_for_session(&json!({}), &tab, false).unwrap());
+    assert!(!ready_for_session(&json!({}), &tab, true).unwrap());
+}
+#[test]
 fn legacy_missing_hash_null_hash_and_exact_original_source_have_distinct_rules() {
     let mut tab = summary(&endpoint(), &target(), &info()).unwrap();
     tab["completionConfirmed"] = json!(true);

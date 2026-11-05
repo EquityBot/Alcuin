@@ -28,8 +28,9 @@ fn input_tokens(request: &BrowserRequest) -> Option<u64> {
     request.extra.get("estimatedInputTokens")?.as_u64()
 }
 /// Reference automation logger words: a `[browser] ` line containing one prints without --verbose.
-const ALWAYS_PRINTED: [&str; 13] = [
+const ALWAYS_PRINTED: [&str; 14] = [
     "archive",
+    "login probe failed",
     "fallback",
     "follow-up",
     "retry",
