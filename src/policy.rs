@@ -31,6 +31,19 @@ fn replace_runs(value: &str, separator: impl Fn(char) -> bool, replacement: char
     normalised
 }
 
+fn canonical_model(model: &str) -> String {
+    model
+        .strip_prefix("openai/")
+        .unwrap_or(model)
+        .replace(['_', ' '], "-")
+}
+
+/// Whether a model name asks for GPT-6 Pro, in any spelling new dispatch admits.
+pub(crate) fn is_pro_model(model: &str) -> bool {
+    let model = trim(model).to_lowercase();
+    matches!(canonical_model(&model).as_str(), "gpt6-pro" | "gpt-6-pro")
+}
+
 /// New requests are restricted; historical stored requests remain readable.
 pub fn assert_model_allowed(model: Option<&str>) -> Result<()> {
     let Some(model) = model else { return Ok(()) };
@@ -38,8 +51,7 @@ pub fn assert_model_allowed(model: Option<&str>) -> Result<()> {
     if model.is_empty() || model == "latest" {
         return Ok(());
     }
-    let model = model.strip_prefix("openai/").unwrap_or(&model);
-    let model = model.replace(['_', ' '], "-");
+    let model = canonical_model(&model);
     if !matches!(
         model.as_str(),
         "gpt6" | "gpt-6" | "gpt6-pro" | "gpt-6-pro" | "gpt6-astra" | "gpt-6-astra"

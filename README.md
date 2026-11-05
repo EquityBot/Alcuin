@@ -64,7 +64,7 @@ Then run consultations with `--engine browser`. Each new request opens a Tempora
 
 **Sessions.** `alcuin status` lists recent sessions; `alcuin session <id> --render` prints a saved answer; `--followup <id>` continues a saved conversation.
 
-**MCP.** `alcuin bridge codex-config` and `alcuin bridge claude-config` print a server entry for Codex and Claude Code.
+**MCP.** `alcuin bridge codex-config` and `alcuin bridge claude-config` print a server entry for Codex and Claude Code. `consult` and `wait` return the whole saved answer in `output` and the last 4,000 UTF-16 units of the session log in `log`, with `modelSelection` and `thinkingSelection` naming the model and effort the browser verified.
 
 **Remote browser.** `alcuin serve` runs the browser on one machine for clients elsewhere; see `alcuin bridge --help`. It listens on 127.0.0.1 unless you pass `--host`. Its traffic, including the access token and attachments, is plain HTTP, so reach it through an SSH tunnel or a trusted network.
 

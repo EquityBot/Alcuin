@@ -34,34 +34,58 @@ async fn follow_log<T>(store: &SessionStore, id: &str, run: impl Future<Output =
         return run.await;
     }
     tokio::pin!(run);
-    let mut sent = 0;
+    let mut forward = LogForward::default();
     let mut tick = tokio::time::interval(Duration::from_millis(250));
     loop {
         tokio::select! {
             output = &mut run => {
-                forward_log(store, id, &mut sent, true);
+                forward.step(store, id, true);
                 return output;
             }
-            _ = tick.tick() => forward_log(store, id, &mut sent, false),
+            _ = tick.tick() => forward.step(store, id, false),
         }
     }
 }
-// shortcut: rereads the composed session log each tick, which is linear in the log size; one
-// consult's log is small, and per-file offset readers are the upgrade path.
-fn forward_log(store: &SessionStore, id: &str, sent: &mut usize, done: bool) {
-    let Ok(log) = store.log(id) else { return };
-    let Some(fresh) = log.get(*sent..) else {
-        return;
-    };
-    let end = if done {
-        fresh.len()
-    } else {
-        fresh.rfind('\n').map_or(0, |index| index + 1)
-    };
-    for line in fresh[..end].lines() {
-        notify(line);
+/// The most of one log line that a notification carries.
+const MAX_FORWARDED_LINE_BYTES: usize = 8 * 1024;
+/// The most one call forwards; the session keeps the whole log.
+const MAX_FORWARDED_BYTES: usize = 64 * 1024;
+#[derive(Default)]
+struct LogForward {
+    offset: usize,
+    bytes: usize,
+    stopped: bool,
+}
+impl LogForward {
+    // shortcut: rereads the composed session log each tick until the budget ends forwarding,
+    // which is linear in the log size; per-file offset readers are the upgrade path.
+    fn step(&mut self, store: &SessionStore, id: &str, done: bool) {
+        if self.stopped {
+            return;
+        }
+        let Ok(log) = store.log(id) else { return };
+        let Some(fresh) = log.get(self.offset..) else {
+            return;
+        };
+        let end = if done {
+            fresh.len()
+        } else {
+            fresh.rfind('\n').map_or(0, |index| index + 1)
+        };
+        for line in fresh[..end].lines() {
+            let line = &line[..line.floor_char_boundary(MAX_FORWARDED_LINE_BYTES)];
+            // The stripped newline counts too, so blank lines cannot escape the limit.
+            let cost = line.len() + 1;
+            if self.bytes + cost > MAX_FORWARDED_BYTES {
+                notify("Log forwarding stopped at its limit; the session keeps the whole log.");
+                self.stopped = true;
+                return;
+            }
+            notify(line);
+            self.bytes += cost;
+        }
+        self.offset += end;
     }
-    *sent += end;
 }
 
 #[derive(Clone)]
@@ -174,19 +198,16 @@ impl AlcuinMcp {
             .as_f64()
             .map(|n| Duration::from_secs_f64(n / 1000.0));
         let (meta, timed_out) = self.store.wait(id, timeout, cancel).await?;
-        let tail = log_tail(&self.store.log(id)?, 4000);
+        let output = saved_answer(&self.store, id, &meta)?;
+        let log = log_tail(&self.store.log(id)?, 4000);
         let wait_status = if timed_out { "timed_out" } else { "terminal" };
         let text = format!(
             "Session {} ({}; wait={wait_status})\n{}",
             meta["id"].as_str().unwrap_or(id),
             meta["status"].as_str().unwrap_or("unknown"),
-            if tail.is_empty() {
-                "(log empty)"
-            } else {
-                &tail
-            }
+            answer_or_log(&output, &log)
         );
-        let mut structured = json!({"sessionId":meta["id"],"status":meta["status"],"waitStatus":wait_status,"timedOut":timed_out,"cancelled":meta["status"]=="cancelled","output":tail});
+        let mut structured = json!({"sessionId":meta["id"],"status":meta["status"],"waitStatus":wait_status,"timedOut":timed_out,"cancelled":meta["status"]=="cancelled","output":output,"log":log});
         add_summaries(&mut structured, &meta);
         tool_result(text, structured)
     }
@@ -401,18 +422,16 @@ impl AlcuinMcp {
                 "Session {id} failed: {error}"
             ))]));
         }
-        let output = log_tail(&self.store.log(id)?, 4000);
-        let mut structured = json!({"sessionId":id,"status":meta["status"],"output":output});
+        let output = saved_answer(&self.store, id, &meta)?;
+        let log = log_tail(&self.store.log(id)?, 4000);
+        let mut structured =
+            json!({"sessionId":id,"status":meta["status"],"output":output,"log":log});
         add_summaries(&mut structured, &meta);
         let mut response = tool_result(
             format!(
                 "Session {id} ({})\n{}",
                 meta["status"].as_str().unwrap_or("unknown"),
-                if output.is_empty() {
-                    "(log empty)"
-                } else {
-                    &output
-                }
+                answer_or_log(&output, &log)
             )
             .trim()
             .to_owned(),
@@ -735,6 +754,21 @@ fn session_line(meta: &Value) -> String {
         meta["id"].as_str().unwrap_or("")
     )
 }
+/// The whole saved answer, or nothing whilst the session has saved none.
+fn saved_answer(store: &SessionStore, id: &str, meta: &Value) -> Result<String> {
+    if !(meta["browser"]["capturedAnswer"].is_object() || meta["capturedAnswer"].is_object()) {
+        return Ok(String::new());
+    }
+    String::from_utf8(crate::browser_runner::captured(store, id)?)
+        .context("Saved answer is not UTF-8")
+}
+fn answer_or_log<'a>(answer: &'a str, log: &'a str) -> &'a str {
+    match (answer.is_empty(), log.is_empty()) {
+        (false, _) => answer,
+        (true, false) => log,
+        (true, true) => "(log empty)",
+    }
+}
 /// The last `max` UTF-16 units, as the reference `log.slice(-max)`; a split pair is dropped.
 pub fn log_tail(log: &str, max: usize) -> String {
     let mut units = 0;
@@ -758,6 +792,33 @@ fn select(value: &Value, keys: &[&str]) -> Value {
     }
     out
 }
+/// The picker evidence that crosses this public boundary: these fields only.
+const SELECTION_EVIDENCE: [(&str, &[&str]); 2] = [
+    (
+        "modelSelection",
+        &[
+            "requestedModel",
+            "resolvedLabel",
+            "status",
+            "strategy",
+            "verified",
+            "source",
+            "capturedAt",
+        ],
+    ),
+    (
+        "thinkingSelection",
+        &[
+            "requestedLevel",
+            "resolvedLabel",
+            "status",
+            "verified",
+            "strictFailClosed",
+            "source",
+            "capturedAt",
+        ],
+    ),
+];
 pub fn add_summaries(out: &mut Value, meta: &Value) {
     if meta["status"] == "completed"
         && (meta["cleanupWarning"].is_string()
@@ -795,6 +856,15 @@ pub fn add_summaries(out: &mut Value, meta: &Value) {
                 })
                 .collect::<Vec<_>>()
         );
+    }
+    for (key, fields) in SELECTION_EVIDENCE {
+        let browser = &meta["browser"];
+        if let Some(evidence) = [&browser[key], &browser["runtime"][key]]
+            .into_iter()
+            .find(|evidence| evidence.is_object())
+        {
+            out[key] = select(evidence, fields);
+        }
     }
     if let Some(artifacts) = meta["artifacts"].as_array().filter(|a| !a.is_empty()) {
         out["artifacts"] = json!(
@@ -925,6 +995,55 @@ fn decode_component(raw: &str) -> Result<String> {
         }
     }
     Ok(String::from_utf8(bytes)?)
+}
+#[cfg(test)]
+mod log_forwarding_tests {
+    use super::*;
+
+    async fn forwarded(log: &str) -> Vec<String> {
+        let home = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(home.path());
+        let meta = store
+            .create(json!({"prompt":"PUBLIC forwarding"}), home.path(), None)
+            .unwrap();
+        let id = meta["id"].as_str().unwrap();
+        store.append_log(id, None, log).unwrap();
+        let (sender, mut lines) = tokio::sync::mpsc::unbounded_channel();
+        LOG.scope(sender, follow_log(&store, id, async {})).await;
+        let mut forwarded = vec![];
+        while let Ok(line) = lines.try_recv() {
+            forwarded.push(line);
+        }
+        forwarded
+    }
+
+    #[tokio::test]
+    async fn forwarding_stops_at_its_budget_and_says_so() {
+        let long = "z".repeat(100_000);
+        let forwarded = forwarded(&format!("{long}\n{}", "PUBLIC line\n".repeat(50_000))).await;
+        assert!(forwarded[0].len() < 9 * 1024, "{}", forwarded[0].len());
+        assert!(forwarded.iter().map(String::len).sum::<usize>() < 66 * 1024);
+        assert!(
+            forwarded.last().unwrap().contains("Log forwarding stopped"),
+            "{:?}",
+            forwarded.last()
+        );
+    }
+
+    #[tokio::test]
+    async fn blank_lines_count_towards_the_forwarding_budget() {
+        let forwarded = forwarded(&"\n".repeat(70_000)).await;
+        assert!(
+            forwarded.len() <= MAX_FORWARDED_BYTES + 1,
+            "{}",
+            forwarded.len()
+        );
+        assert!(
+            forwarded.last().unwrap().contains("Log forwarding stopped"),
+            "{:?}",
+            forwarded.last()
+        );
+    }
 }
 #[cfg(test)]
 mod initialize_tests {

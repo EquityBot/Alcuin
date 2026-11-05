@@ -538,8 +538,17 @@ fn resolve_origin(
     browser["requestedModel"] = json!(requested.unwrap_or(&model));
     browser["modelIsImplicitDefault"] =
         json!(requested.is_none() && input.get("browserModelLabel").is_none());
+    // Reference buildConsultBrowserConfig: an explicit Pro model outranks a saved thinking time,
+    // but not a per-call one or a strategy that keeps the model already selected.
+    let strategy = input["browserModelStrategy"]
+        .as_str()
+        .or(browser["modelStrategy"].as_str())
+        .map(|raw| policy::trim(raw).to_lowercase());
+    let explicit_pro = input["model"].as_str().is_some_and(policy::is_pro_model)
+        && !matches!(strategy.as_deref(), Some("current" | "ignore"));
     let time = input["browserThinkingTime"]
         .as_str()
+        .or(explicit_pro.then_some("pro"))
         .or(browser["thinkingTime"].as_str())
         .unwrap_or("pro");
     browser["thinkingTime"] =
