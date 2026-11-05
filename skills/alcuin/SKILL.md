@@ -9,7 +9,7 @@ Alcuin sends a prompt and the files you choose to a model and saves the answer a
 
 ## Before you send
 
-Everything you attach goes to the provider, so attach only what the user would share with it, and never secrets. Preview what would go:
+Everything you attach goes to the provider. Show the user the provider and the files, and get their approval before you send. Never attach secrets. Preview what would go:
 
 ```sh
 alcuin --dry-run summary --files-report -p "Review this module" --file src/lib.rs
@@ -44,6 +44,6 @@ alcuin session <id> --render   # a saved answer
 
 `--followup <id>` continues a saved conversation.
 
-If a run fails after sending, don't send the prompt again: the answer may still arrive. Run `alcuin session <id> --harvest --write-output answer.md` to read it from the conversation. If that shows an error rather than an answer, tell the user before you resend.
+If a run fails after sending, don't send the prompt again: the answer may still arrive. Run `alcuin session <id> --harvest --write-output answer.md` to read it from the conversation. If that shows an error rather than an answer, resend only with the user's approval.
 
 Run `alcuin --help --verbose` for every option.
