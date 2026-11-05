@@ -1341,6 +1341,9 @@ async fn run_command(args: Vec<OsString>) -> Result<i32> {
     if specified(&matches, "browser-follow-up") {
         input["browserFollowUps"] = json!(values(&matches, "browser-follow-up"));
     }
+    if specified(&matches, "allow-secret-file") {
+        input["allowSecretFiles"] = json!(values(&matches, "allow-secret-file"));
+    }
     let copy_requested = flag(&matches, "copy-markdown") || flag(&matches, "copy");
     if render || copy_requested {
         input["renderOnly"] = json!(true);
@@ -1967,6 +1970,7 @@ const ROOT_RUN_FLAGS: &[&str] = &[
     "followup",
     "followup-model",
     "file",
+    "allow-secret-file",
     "include",
     "files",
     "path",

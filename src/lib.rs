@@ -75,6 +75,7 @@ pub mod remote_slots;
 mod remote_transfer;
 mod response_stream;
 mod restart;
+pub mod secret_scan;
 mod session_attach;
 mod session_display;
 pub mod sessions;

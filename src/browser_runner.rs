@@ -4404,6 +4404,7 @@ fn materialize_fallback(
                     size_bytes: saved.manifest["bytes"]
                         .as_u64()
                         .context("Fallback source has no size")?,
+                    scanned_sha256: None,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -4431,6 +4432,7 @@ fn materialize_fallback(
             size_bytes: saved.manifest["bytes"]
                 .as_u64()
                 .context("Fallback source has no size")?,
+            scanned_sha256: None,
         });
     }
     if let Some(raw) = fallback
@@ -4453,6 +4455,7 @@ fn materialize_fallback(
                 size_bytes: saved.manifest["bytes"]
                     .as_u64()
                     .context("Raw fallback source has no size")?,
+                scanned_sha256: None,
             });
         }
     }
