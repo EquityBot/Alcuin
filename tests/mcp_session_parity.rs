@@ -149,6 +149,101 @@ async fn cleanup_summaries_conform_to_the_consult_image_and_wait_output_schemas(
 }
 
 #[tokio::test]
+async fn wait_returns_the_saved_browser_answer_and_only_the_named_evidence() {
+    let home = tempfile::tempdir().unwrap();
+    let server = server(home.path());
+    let cancel = CancellationToken::new();
+    let meta = server
+        .store
+        .create(json!({"prompt":"PUBLIC saved answer"}), home.path(), None)
+        .unwrap();
+    let id = meta["id"].as_str().unwrap();
+    let answer = format!("PUBLIC opening\n{}\nPUBLIC closing", "y".repeat(20_000));
+    let capture = alcuin::artifacts::capture(
+        &server.store,
+        id,
+        "captured-answer-public.md",
+        answer.as_bytes(),
+        &cancel,
+    )
+    .unwrap();
+    server
+        .store
+        .append_log(id, None, "PUBLIC progress line\n")
+        .unwrap();
+    server.store.update(id, |_| {
+        Ok(Some(json!({"status":"completed","browser":{
+            "capturedAnswer":capture,
+            "modelSelection":{"requestedModel":"GPT-6","resolvedLabel":"GPT-6","status":"already-selected","strategy":"select","verified":true,"source":"chatgpt-model-picker","capturedAt":"PUBLIC time","privateNote":"PUBLIC not for clients"},
+            "runtime":{"thinkingSelection":{"requestedLevel":"pro","resolvedLabel":"Pro","status":"already-selected","verified":true,"strictFailClosed":true,"source":"chatgpt-thinking-picker","capturedAt":"PUBLIC time","privateNote":"PUBLIC not for clients"}}
+        }})))
+    }).unwrap();
+    let wait = structured(
+        server
+            .invoke("wait", json!({"id":id}), &cancel)
+            .await
+            .unwrap(),
+    );
+    assert_eq!(wait["output"], answer);
+    assert!(
+        wait["log"]
+            .as_str()
+            .unwrap()
+            .contains("PUBLIC progress line")
+    );
+    assert_eq!(
+        wait["modelSelection"],
+        json!({"requestedModel":"GPT-6","resolvedLabel":"GPT-6","status":"already-selected","strategy":"select","verified":true,"source":"chatgpt-model-picker","capturedAt":"PUBLIC time"})
+    );
+    assert_eq!(
+        wait["thinkingSelection"],
+        json!({"requestedLevel":"pro","resolvedLabel":"Pro","status":"already-selected","verified":true,"strictFailClosed":true,"source":"chatgpt-thinking-picker","capturedAt":"PUBLIC time"})
+    );
+    conforms(&wait, &output_schema("wait"), "wait");
+    let mut consult = json!({"sessionId":id,"status":"completed","output":"","log":""});
+    add_summaries(&mut consult, &server.store.require(id).unwrap());
+    conforms(&consult, &output_schema("consult"), "consult");
+}
+
+#[tokio::test]
+async fn wait_without_a_saved_answer_keeps_the_log_apart_from_the_output() {
+    let home = tempfile::tempdir().unwrap();
+    let server = server(home.path());
+    let meta = server
+        .store
+        .create(json!({"prompt":"PUBLIC no answer"}), home.path(), None)
+        .unwrap();
+    let id = meta["id"].as_str().unwrap();
+    server
+        .store
+        .append_log(id, None, "PUBLIC progress line\n")
+        .unwrap();
+    server
+        .store
+        .update(id, |_| Ok(Some(json!({"status":"error"}))))
+        .unwrap();
+    let wait = server
+        .invoke("wait", json!({"id":id}), &CancellationToken::new())
+        .await
+        .unwrap();
+    assert!(
+        wait.content[0]
+            .as_text()
+            .unwrap()
+            .text
+            .ends_with("PUBLIC progress line\n")
+    );
+    let wait = structured(wait);
+    assert_eq!(wait["output"], "");
+    assert!(
+        wait["log"]
+            .as_str()
+            .unwrap()
+            .contains("PUBLIC progress line")
+    );
+}
+
+#[tokio::test]
 async fn consult_dry_runs_keep_the_fallback_consent() {
     let home = tempfile::tempdir().unwrap();
     let server = server(home.path());

@@ -614,6 +614,39 @@ fn zombie_options_are_saved_for_status_reconciliation() {
     assert_eq!(request.options["zombieUseLastActivity"], true);
 }
 #[test]
+fn an_explicit_pro_model_outranks_a_saved_thinking_time() {
+    let root = tempfile::tempdir().unwrap();
+    let env = Environment::new();
+    let saved = json!({"browser":{"thinkingTime":"extra-high"}});
+    let thinking = |extra: serde_json::Value| {
+        let mut input = json!({"prompt":"PUBLIC explicit Pro","engine":"browser"});
+        for (key, value) in extra.as_object().unwrap() {
+            input[key] = value.clone();
+        }
+        let cli = execution::resolve(&input, &saved, &env, root.path()).unwrap();
+        let mcp = execution::resolve_mcp(&input, &saved, &env, root.path()).unwrap();
+        assert_eq!(cli.browser["thinkingTime"], mcp.browser["thinkingTime"]);
+        cli.browser["thinkingTime"].as_str().unwrap().to_owned()
+    };
+    for model in ["gpt-6-pro", "GPT_6 Pro", "openai/gpt6-pro"] {
+        assert_eq!(thinking(json!({"model":model})), "pro", "{model}");
+    }
+    // A per-call choice and a strategy that keeps the current model both stay in charge.
+    for extra in [
+        json!({"model":"gpt-6-pro","browserThinkingTime":"extra-high"}),
+        json!({"model":"gpt-6-pro","browserModelStrategy":" Current "}),
+        json!({"model":"gpt-6-astra"}),
+        json!({}),
+    ] {
+        assert_eq!(thinking(extra.clone()), "extra-high", "{extra}");
+    }
+    // A saved model is a default, not an explicit request.
+    let configured = json!({"model":"gpt-6-pro","browser":{"thinkingTime":"extra-high"}});
+    let input = json!({"prompt":"PUBLIC explicit Pro","engine":"browser"});
+    let request = execution::resolve(&input, &configured, &env, root.path()).unwrap();
+    assert_eq!(request.browser["thinkingTime"], "extra-high");
+}
+#[test]
 fn partial_mode_is_saved_with_the_run_options() {
     let root = tempfile::tempdir().unwrap();
     let input = json!({"prompt":"PUBLIC partial mode","engine":"api","partialMode":"ok"});

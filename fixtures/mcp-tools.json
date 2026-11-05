@@ -162,7 +162,12 @@
             "type": "string"
           },
           "output": {
-            "type": "string"
+            "type": "string",
+            "description": "The whole saved answer; empty until one is saved. A dry run returns its preview here."
+          },
+          "log": {
+            "type": "string",
+            "description": "The last 4,000 UTF-16 units of the session log."
           },
           "dryRun": {
             "type": "boolean"
@@ -364,6 +369,60 @@
               ],
               "additionalProperties": false
             }
+          },
+          "modelSelection": {
+            "type": "object",
+            "properties": {
+              "requestedModel": {
+                "type": "string"
+              },
+              "resolvedLabel": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "strategy": {
+                "type": "string"
+              },
+              "verified": {
+                "type": "boolean"
+              },
+              "source": {
+                "type": "string"
+              },
+              "capturedAt": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "thinkingSelection": {
+            "type": "object",
+            "properties": {
+              "requestedLevel": {
+                "type": "string"
+              },
+              "resolvedLabel": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "verified": {
+                "type": "boolean"
+              },
+              "strictFailClosed": {
+                "type": "boolean"
+              },
+              "source": {
+                "type": "string"
+              },
+              "capturedAt": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
           },
           "artifacts": {
             "type": "array",
@@ -894,7 +953,12 @@
             "type": "boolean"
           },
           "output": {
-            "type": "string"
+            "type": "string",
+            "description": "The whole saved answer; empty until one is saved."
+          },
+          "log": {
+            "type": "string",
+            "description": "The last 4,000 UTF-16 units of the session log."
           },
           "models": {
             "type": "array",
@@ -974,6 +1038,60 @@
               ],
               "additionalProperties": false
             }
+          },
+          "modelSelection": {
+            "type": "object",
+            "properties": {
+              "requestedModel": {
+                "type": "string"
+              },
+              "resolvedLabel": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "strategy": {
+                "type": "string"
+              },
+              "verified": {
+                "type": "boolean"
+              },
+              "source": {
+                "type": "string"
+              },
+              "capturedAt": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "thinkingSelection": {
+            "type": "object",
+            "properties": {
+              "requestedLevel": {
+                "type": "string"
+              },
+              "resolvedLabel": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "verified": {
+                "type": "boolean"
+              },
+              "strictFailClosed": {
+                "type": "boolean"
+              },
+              "source": {
+                "type": "string"
+              },
+              "capturedAt": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
           },
           "artifacts": {
             "type": "array",

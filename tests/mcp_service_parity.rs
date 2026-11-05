@@ -389,9 +389,17 @@ async fn inline_api_consults_log_the_reference_run_and_trace() {
     let mut env = azure(&endpoint);
     env.insert("ORACLE_PERF_TRACE".into(), "PUBLIC-trace.json".into());
     let traced = server(home.path(), env);
-    let reply = call(&traced, "consult", json!({"prompt":PROMPT,"engine":"api"}))
+    let result = traced
+        .invoke(
+            "consult",
+            json!({"prompt":PROMPT,"engine":"api"}),
+            &CancellationToken::new(),
+        )
         .await
         .unwrap();
+    let reply = text(&result);
+    let structured = result.structured_content.unwrap();
+    let log = structured["log"].as_str().unwrap();
     assert_eq!(seen.lock().unwrap().len(), 1);
     let id = reply
         .strip_prefix("Session ")
@@ -399,16 +407,13 @@ async fn inline_api_consults_log_the_reference_run_and_trace() {
         .unwrap()
         .0
         .to_owned();
+    assert_eq!(reply, format!("Session {id} (completed)\nPUBLIC answer"));
+    assert_eq!(structured["output"], "PUBLIC answer");
     assert!(
-        reply.contains(&format!("Session {id} (completed)\n")),
-        "{reply}"
+        log.contains("Calling gpt-6-astra (API: PUBLIC-deployment)"),
+        "{log}"
     );
-    assert!(
-        reply.contains("Calling gpt-6-astra (API: PUBLIC-deployment)"),
-        "{reply}"
-    );
-    assert!(reply.contains("\nAnswer:\nPUBLIC answer\n"), "{reply}");
-    assert!(reply.contains("gpt-6-astra"), "{reply}");
+    assert!(log.contains("\nAnswer:\nPUBLIC answer\n"), "{log}");
     let traces = std::fs::read_dir(home.path())
         .unwrap()
         .flatten()
@@ -439,6 +444,45 @@ async fn inline_api_consults_log_the_reference_run_and_trace() {
     let id = message["Session ".len()..].split_once(' ').unwrap().0;
     let log = server.store.log(id).unwrap();
     assert!(log.contains("Run failed: "), "{log}");
+}
+
+#[tokio::test]
+async fn a_long_answer_comes_back_whole_with_the_log_apart() {
+    let home = tempfile::tempdir().unwrap();
+    let (opening, closing) = ("PUBLIC opening 🦀\n", "\nPUBLIC closing");
+    let filler = 20_000 - opening.encode_utf16().count() - closing.encode_utf16().count();
+    let answer = format!("{opening}{}{closing}", "x".repeat(filler));
+    assert_eq!(answer.encode_utf16().count(), 20_000);
+    let completed = json!({"id":"resp_PUBLIC","status":"completed","output_text":[answer],"reasoning":{"mode":"pro"},"usage":{"input_tokens":5,"output_tokens":3,"total_tokens":8}}).to_string();
+    let (endpoint, _) = stub(vec![(200, completed)]);
+    let server = server(home.path(), azure(&endpoint));
+    let cancel = CancellationToken::new();
+    let consult = server
+        .invoke("consult", json!({"prompt":PROMPT,"engine":"api"}), &cancel)
+        .await
+        .unwrap();
+    let reply = text(&consult);
+    let structured = consult.structured_content.unwrap();
+    let id = structured["sessionId"].as_str().unwrap();
+    assert_eq!(structured["output"], answer);
+    assert_eq!(reply, format!("Session {id} (completed)\n{answer}"));
+    let log = structured["log"].as_str().unwrap();
+    assert!(log.encode_utf16().count() <= 4000, "{}", log.len());
+    assert!(log.contains("PUBLIC closing"), "{log}");
+    assert!(!log.contains("PUBLIC opening"));
+    let wait = server
+        .invoke("wait", json!({"id":id}), &cancel)
+        .await
+        .unwrap();
+    assert!(text(&wait).ends_with(&answer));
+    let structured = wait.structured_content.unwrap();
+    assert_eq!(structured["output"], answer);
+    assert!(
+        structured["log"]
+            .as_str()
+            .unwrap()
+            .contains("PUBLIC closing")
+    );
 }
 
 #[tokio::test]
