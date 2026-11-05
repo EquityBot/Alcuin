@@ -72,6 +72,34 @@ fn ui_warning_text_classifies_and_sanitises_like_the_reference() {
         300
     );
 }
+#[test]
+fn any_limit_or_account_warning_holds_a_retry_back_but_a_temporary_notice_does_not() {
+    for (raw, held) in [
+        (json!(null), false),
+        (json!([{"text":"Something went wrong"}]), false),
+        (json!([{"text":"Please try again later."}]), false),
+        (
+            json!([{"text":"Something went wrong"},{"text":"Too many requests"}]),
+            true,
+        ),
+        (
+            json!([{"text":"You've hit your limit. Please try again later."}]),
+            true,
+        ),
+        (json!([{"text":"Verify you are human"}]), true),
+        (json!([{"text":"Usage limit reached."}]), true),
+        (
+            json!([{"text":"Unusual activity has been detected from your device. Try again later."}]),
+            true,
+        ),
+        (
+            json!([{"text":"Something went wrong. Please sign in."}]),
+            true,
+        ),
+    ] {
+        assert_eq!(holds_retry_back(&raw), held, "{raw}");
+    }
+}
 
 #[test]
 fn manual_login_wait_follows_resolve_manual_login_wait_ms() {

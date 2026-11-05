@@ -622,7 +622,9 @@ impl Parent {
             && recovery["state"] == "expired"
             && recovery["readOnly"] == true
             && recovery["targetId"].is_string()
-            && recovery["targetId"] == child["browser"]["runtime"]["chromeTargetId"])
+            && recovery["targetId"] == child["browser"]["runtime"]["chromeTargetId"]
+            // A clicked retry leaves ChatGPT generating, so that record no longer means read-only.
+            && child["browser"]["runtime"]["providerRetry"].is_null())
     }
 
     fn reserve(
@@ -1664,6 +1666,18 @@ mod tests {
                 anyhow::Error::new(Failure::AnswerMissing),
                 none,
                 true,
+            ),
+            (
+                "retried in its turn",
+                consent.clone(),
+                json!({}),
+                typed(),
+                |store, f| {
+                    patch_meta(store, &f.first.child_id, |meta| {
+                        meta["browser"]["runtime"]["providerRetry"] = json!({"version":1});
+                    })
+                },
+                false,
             ),
             (
                 "personal-config",

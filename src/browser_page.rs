@@ -163,14 +163,17 @@ pub(crate) async fn ensure_logged_in(
         return Ok(());
     }
     log(&format!(
-        "Login probe failed (sessionStatus={status}, sessionAuthenticated={}, sessionResolved={}, backendStatus={backend}, domLoginCta={}, onAuthPage={}, appAuthenticated={}, cfBlocked={}, url={}, error={})",
+        "[browser] Login probe failed (sessionStatus={status}, sessionAuthenticated={}, sessionResolved={}, backendStatus={backend}, domLoginCta={}, onAuthPage={}, appAuthenticated={}, cfBlocked={}, url={}, error={})",
         flag("sessionAuthenticated"),
         flag("sessionResolved"),
         flag("domLoginCta"),
         flag("onAuthPage"),
         flag("appAuthenticated"),
         flag("cfBlocked"),
-        probe["pageUrl"].as_str().unwrap_or("n/a"),
+        probe["pageUrl"]
+            .as_str()
+            .and_then(|url| url.split(['?', '#']).next())
+            .unwrap_or("n/a"),
         probe["error"].as_str().unwrap_or("none")
     ));
     let dom = if flag("domLoginCta") {
@@ -328,8 +331,7 @@ static KEY: LazyLock<regex::Regex> = LazyLock::new(|| {
 /// Reference classifyChatGptUiWarningText. Codes such as `cloudflare_challenge` compare as
 /// separate words: `_` is a word character, so the patterns' boundaries would miss them.
 pub(crate) fn classify_ui_warning(text: &str) -> Option<&'static str> {
-    let normalized = text.to_lowercase();
-    let normalized = SEPARATORS.replace_all(&normalized, " ");
+    let normalized = warning_words(text);
     [
         (&*RATE_LIMIT, "rate_limit"),
         (&*UNAVAILABLE, "temporary_unavailable"),
@@ -339,29 +341,58 @@ pub(crate) fn classify_ui_warning(text: &str) -> Option<&'static str> {
     .find(|(pattern, _)| pattern.is_match(&normalized))
     .map(|(_, kind)| kind)
 }
+fn warning_words(text: &str) -> String {
+    SEPARATORS
+        .replace_all(&text.to_lowercase(), " ")
+        .into_owned()
+}
 /// Reference sanitizeChatGptUiWarningText.
 fn sanitise_ui_warning(text: &str) -> String {
     let text = EMAIL.replace_all(text, "[redacted-email]");
     let text = TOKEN.replace_all(&text, "$1=[redacted]");
     KEY.replace_all(&text, "[redacted-token]").into_owned()
 }
+fn ui_warning_texts(raw: &Value) -> impl Iterator<Item = String> + '_ {
+    raw.as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|candidate| {
+            let text = candidate["text"].as_str()?;
+            let text = sanitise_ui_warning(
+                text.split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .as_str(),
+            );
+            Some(prefix(&text, 300)).filter(|text| !text.is_empty())
+        })
+}
 /// Reference collectChatGptUiWarnings, first warning only: its type and sanitised message.
 pub(crate) fn first_ui_warning(raw: &Value) -> Option<(&'static str, String)> {
-    raw.as_array()?.iter().find_map(|candidate| {
-        let text = candidate["text"].as_str()?;
-        let text = sanitise_ui_warning(
-            text.split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ")
-                .as_str(),
-        );
-        let text = prefix(&text, 300);
-        if text.is_empty() {
-            return None;
-        }
-        Some((classify_ui_warning(&text)?, text))
+    ui_warning_texts(raw).find_map(|text| Some((classify_ui_warning(&text)?, text)))
+}
+/// Any warning counts, not just the first, and by its words rather than its class: 'try again
+/// later' classifies limit and account notices as temporary. A truly temporary notice can be the
+/// failure being retried, so it does not count.
+fn holds_retry_back(raw: &Value) -> bool {
+    ui_warning_texts(raw).any(|text| {
+        let words = warning_words(&text);
+        words.contains("limit") || RATE_LIMIT.is_match(&words) || CHALLENGE.is_match(&words)
     })
 }
+/// True when ChatGPT shows a rate-limit or account warning, so retrying a failed turn would only
+/// add load.
+pub(crate) async fn warns_against_retry(
+    page: &Cdp,
+    timeout: Duration,
+    cancel: &CancellationToken,
+) -> Result<bool> {
+    let raw = page
+        .evaluate_with_arguments(UI_WARNINGS, &json!([{}]), timeout, cancel)
+        .await?;
+    Ok(holds_retry_back(&raw))
+}
+
 /// Reference createChatGptUiWarningError: the warning wording when ChatGPT shows one, logged
 /// as the reference does. A failed read finds no warning.
 pub(crate) async fn ui_warning(

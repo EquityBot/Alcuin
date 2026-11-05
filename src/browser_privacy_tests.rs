@@ -1504,6 +1504,148 @@ async fn failed_turn_cases(page: &Cdp) -> Result<()> {
         inspected["assistantFollowsLatestUser"] == false,
         "Historical inspection, earlier turn: {inspected}"
     );
+    // The page's own retry control: found and hit-tested here, clicked only by Rust.
+    let retry = async |cfg: &Value| {
+        page.evaluate_with_arguments(
+            &crate::browser_runner::turn_retry::expression(),
+            &json!([cfg]),
+            SHORT,
+            &cancel,
+        )
+        .await
+    };
+    let notice = "This response couldn\u{2019}t load";
+    let regenerate =
+        "<button aria-label='Regenerate response' aria-haspopup='menu'>PUBLIC</button>";
+    open(&format!("{user}{}", assistant(notice, regenerate))).await?;
+    let found = retry(&reporting).await?;
+    anyhow::ensure!(
+        found["ok"] == true
+            && found["menu"] == true
+            && found["baseline"] == 0
+            && found["messageId"] == "PUBLIC-assistant",
+        "Regenerate control: {found}"
+    );
+    let menu = "<div role='menu'><div role='menuitem'>Try again \u{2022} 6 Thinking</div></div>";
+    open(&format!("{user}{}{menu}", assistant(notice, regenerate))).await?;
+    let mut choosing = reporting.clone();
+    choosing["menu"] = json!(true);
+    let item = retry(&choosing).await?;
+    anyhow::ensure!(
+        item["ok"] == true
+            && item["menu"].is_null()
+            && item["label"] == "Try again \u{2022} 6 Thinking",
+        "Try again item: {item}"
+    );
+    // A turn can hold the user's message too, and nothing before the assistant's may be pressed,
+    // wrapped as the user's or not, nor make a good answer look failed.
+    let shared = |before: &str, text: &str, after: &str| {
+        format!(
+            "<article data-turn-key='PUBLIC-turn'><div data-message-author-role='user' data-message-id='PUBLIC-user'>PUBLIC prompt</div>{before}<div data-message-author-role='assistant' data-message-id='PUBLIC-assistant'><div class='markdown'>{text}</div></div>{after}</article>"
+        )
+    };
+    open(&shared("<button>Retry</button>", notice, regenerate)).await?;
+    let found = retry(&reporting).await?;
+    anyhow::ensure!(
+        found["ok"] == true && found["menu"] == true,
+        "Retry before the assistant: {found}"
+    );
+    open(&shared("<button>Retry</button>", "PUBLIC answer", "")).await?;
+    let reported = live(&reporting).await?;
+    anyhow::ensure!(
+        reported.get("uiError").is_none() && reported["text"] == "PUBLIC answer",
+        "Good answer after a Retry: {reported}"
+    );
+    let found = retry(&reporting).await?;
+    anyhow::ensure!(found["failed"] == false, "Good answer retried: {found}");
+    // A Retry beside the notice leaves it a load failure, so the read recovery still runs first.
+    open(&format!(
+        "{user}{}",
+        assistant(notice, "<button>Retry</button>")
+    ))
+    .await?;
+    let reported = live(&reporting).await?;
+    anyhow::ensure!(
+        reported.get("uiError").is_none()
+            && reported["text"] == notice
+            && reported["completionVisible"] == true,
+        "Load notice beside Retry: {reported}"
+    );
+    let found = retry(&reporting).await?;
+    anyhow::ensure!(
+        found["ok"] == true && found["menu"].is_null() && found["label"] == "Retry",
+        "Plain Retry: {found}"
+    );
+    // An activity summary in the assistant node leaves it the same load failure.
+    open(&format!(
+        "{user}<article data-turn-key='PUBLIC-assistant-turn'><div data-message-author-role='assistant' data-message-id='PUBLIC-assistant'><button>Worked for 9m 1s</button><div class='markdown'></div><p>{notice}</p></div><button>Retry</button></article>"
+    ))
+    .await?;
+    let reported = live(&reporting).await?;
+    anyhow::ensure!(
+        reported.get("uiError").is_none() && reported["unloaded"] == true,
+        "Load notice beside activity: {reported}"
+    );
+    open(&format!(
+        "{user}{}",
+        assistant("Thinking failed", "<button>Retry</button>")
+    ))
+    .await?;
+    let found = retry(&reporting).await?;
+    anyhow::ensure!(
+        found["ok"] == true && found["messageId"] == "PUBLIC-assistant",
+        "Generation failure: {found}"
+    );
+    // The same failure with only ChatGPT's Regenerate menu in the turn.
+    open(&format!(
+        "{user}{}",
+        assistant("Thinking failed", regenerate)
+    ))
+    .await?;
+    let found = retry(&reporting).await?;
+    anyhow::ensure!(
+        found["ok"] == true && found["menu"] == true,
+        "Generation failure with Regenerate: {found}"
+    );
+    for (case, controls) in [
+        (
+            "still generating",
+            format!("{regenerate}<button data-testid='stop-button'>Stop</button>"),
+        ),
+        (
+            "covered control",
+            format!("{regenerate}<div style='position:fixed;inset:0;background:#fff'></div>"),
+        ),
+    ] {
+        open(&format!("{user}{}", assistant(notice, &controls))).await?;
+        let found = retry(&reporting).await?;
+        anyhow::ensure!(
+            found["ok"] == false && found["failed"] == true,
+            "{case}: {found}"
+        );
+    }
+    open(&format!("{user}{}", assistant("PUBLIC answer", ""))).await?;
+    let mut waiting = reporting.clone();
+    waiting["before"] = json!("PUBLIC-assistant");
+    let same = retry(&waiting).await?;
+    anyhow::ensure!(
+        same["failed"] == false && same["started"] == false,
+        "Same message, no activity: {same}"
+    );
+    waiting["before"] = json!("PUBLIC-older");
+    let replaced = retry(&waiting).await?;
+    anyhow::ensure!(replaced["started"] == true, "New message: {replaced}");
+    waiting["before"] = json!("PUBLIC-assistant");
+    open(&format!(
+        "{user}{}",
+        assistant(
+            "PUBLIC answer",
+            "<button data-testid='stop-button'>Stop</button>"
+        )
+    ))
+    .await?;
+    let generating = retry(&waiting).await?;
+    anyhow::ensure!(generating["started"] == true, "Stop control: {generating}");
     page.evaluate_with_arguments(
         "()=>{sessionStorage.removeItem('oracle:target-claim');return true;}",
         &json!([]),
@@ -1613,6 +1755,29 @@ async fn ui_warning_code_case(page: &Cdp) -> Result<()> {
         crate::browser_page::first_ui_warning(&raw)
             == Some(("rate_limit", "rate_limit_exceeded Retry".to_owned())),
         "Warning code was not collected: {raw}"
+    );
+    // Limit wording no warning class names still reaches the retry hold.
+    mount(
+        page,
+        &ACTIVE.replace(
+            "</main>",
+            "<aside role='alert'>Usage limit reached.</aside></main>",
+        ),
+        "/",
+        "",
+    )
+    .await?;
+    let raw = page
+        .evaluate_with_arguments(
+            include_str!("../browser-scripts/ui-warnings.js"),
+            &json!([{}]),
+            SHORT,
+            &CancellationToken::new(),
+        )
+        .await?;
+    anyhow::ensure!(
+        raw[0]["text"] == "Usage limit reached.",
+        "Limit wording was not collected: {raw}"
     );
     Ok(())
 }

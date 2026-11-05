@@ -503,7 +503,7 @@ pub fn ready_for_session(meta: &Value, tab: &Value, explicit: bool) -> Result<bo
                 .filter(|v| !v.is_null())
                 .unwrap_or(&tab["lastAssistantText"]),
         )
-        .is_some();
+        .is_some_and(|answer| !crate::browser::response_load_label(answer));
     Ok(paired
         && (explicit
             || tab["completionConfirmed"] == true

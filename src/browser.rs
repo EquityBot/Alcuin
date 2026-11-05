@@ -269,7 +269,7 @@ pub fn accept_answer(metadata: &Value, observed: &Value, result: &Value) -> Resu
     Ok(())
 }
 
-fn response_load_label(text: &str) -> bool {
+pub(crate) fn response_load_label(text: &str) -> bool {
     let normalised = text
         .to_lowercase()
         .split(crate::policy::javascript_whitespace)

@@ -33,6 +33,19 @@ enum Fault {
     GenericUnavailable,
     ResponseLoadFailed,
     ResponseLoadFailedBesideImage,
+    UnloadedThenTryAgain,
+    UnloadedAfterTryAgain,
+    UnloadedRateLimited,
+    UnloadedRetrySpent,
+    UnloadedBorrowed,
+    UnloadedSequential,
+    UnloadedHealed,
+    RetriedThenTimesOut,
+    RetriedThenGenerationFails,
+    RetryNeverStarts,
+    RetryAuthorityLost,
+    GenerationFailedThenRetry,
+    GeneratedThenUnloaded,
     ContentWithheld,
     RetryOffered,
     NavigationFailsOnce,
@@ -204,6 +217,8 @@ enum Fault {
     PromptRollbackFailed,
     Cloudflare,
     SignedOut,
+    RemoteSignedOut,
+    RemoteSignedOutBriefly,
     ManualLoginLate,
     ManualLoginTimeout,
     OwnedWork,
@@ -261,7 +276,8 @@ impl Exchange {
         }
         if expression.contains("alcuin-dom:health-login") {
             let ok = match self.fault {
-                Fault::SignedOut | Fault::ManualLoginTimeout => false,
+                Fault::SignedOut | Fault::RemoteSignedOut | Fault::ManualLoginTimeout => false,
+                Fault::RemoteSignedOutBriefly => count("alcuin-dom:health-login") > 1,
                 Fault::ManualLoginLate => count("alcuin-dom:health-login") > 2,
                 _ => true,
             };
@@ -283,7 +299,10 @@ impl Exchange {
         }
         if expression.contains("alcuin-dom:ui-warnings") {
             return Some(
-                if matches!(self.fault, Fault::UiWarningTimeout | Fault::ImageUiWarning) {
+                if matches!(
+                    self.fault,
+                    Fault::UiWarningTimeout | Fault::ImageUiWarning | Fault::UnloadedRateLimited
+                ) {
                     json!([{"text":"  Too many requests.
  Contact PUBLIC@example.com  ","source":"selector","role":"alert","ariaLive":null,"selector":"[role=\"alert\"]"}])
                 } else {
@@ -292,6 +311,69 @@ impl Exchange {
             );
         }
         None
+    }
+    /// The fake page's own retry controls: Regenerate at x=1 opens the menu, whose Try again is
+    /// at x=2; a plain Retry is at x=3. Coordinates stand in for the controls they would hit.
+    fn turn_retry(&self, cfg: &Value) -> Value {
+        let pressed = |x: i32| {
+            self.trace.lock().unwrap().iter().any(|r| {
+                r["method"] == "Input.dispatchMouseEvent"
+                    && r["params"]["type"] == "mousePressed"
+                    && r["params"]["x"] == x
+            })
+        };
+        let still_failed = matches!(self.fault, Fault::UnloadedAfterTryAgain);
+        if self.turn_retried() && !still_failed {
+            let started = !matches!(self.fault, Fault::RetryNeverStarts);
+            return json!({"ok":false,"failed":false,"started":started});
+        }
+        if matches!(
+            self.fault,
+            Fault::GenerationFailedThenRetry
+                | Fault::GeneratedThenUnloaded
+                | Fault::RetryAuthorityLost
+        ) {
+            return json!({"ok":true,"failed":true,"x":3,"y":3,"baseline":0});
+        }
+        if matches!(self.fault, Fault::UnloadedHealed) {
+            return json!({"ok":false,"failed":false,"started":false});
+        }
+        if !matches!(
+            self.fault,
+            Fault::UnloadedThenTryAgain
+                | Fault::UnloadedAfterTryAgain
+                | Fault::UnloadedRateLimited
+                | Fault::UnloadedRetrySpent
+                | Fault::UnloadedBorrowed
+                | Fault::UnloadedSequential
+                | Fault::RetryNeverStarts
+                | Fault::RetriedThenTimesOut
+                | Fault::RetriedThenGenerationFails
+        ) {
+            return json!({"ok":false,"failed":true});
+        }
+        if cfg["menu"] == true {
+            return if pressed(1) {
+                json!({"ok":true,"failed":true,"x":2,"y":2,"label":"Try again \u{2022} 6 Thinking"})
+            } else {
+                json!({"ok":false,"failed":true})
+            };
+        }
+        json!({"ok":true,"failed":true,"x":1,"y":1,"menu":true,"baseline":0})
+    }
+    fn retry_read(&self) -> bool {
+        self.trace.lock().unwrap().iter().any(|r| {
+            r["params"]["expression"]
+                .as_str()
+                .is_some_and(|s| s.contains("alcuin-dom:turn-retry"))
+        })
+    }
+    fn turn_retried(&self) -> bool {
+        self.trace.lock().unwrap().iter().any(|r| {
+            r["method"] == "Input.dispatchMouseEvent"
+                && r["params"]["type"] == "mousePressed"
+                && (r["params"]["x"] == 2 || r["params"]["x"] == 3)
+        })
     }
     /// Live predicate reads since the fake last remounted the conversation view: at each
     /// send, and as each later sequential turn reacquires its renderer. Includes this read.
@@ -355,6 +437,7 @@ impl Exchange {
                 | Fault::BorrowedSecondUploadPrepareFailed
                 | Fault::BorrowedUploadAckFailed
                 | Fault::BorrowedReleaseFailed
+                | Fault::UnloadedBorrowed
         )
     }
     fn sequential(&self) -> bool {
@@ -384,6 +467,7 @@ impl Exchange {
                 | Fault::SequentialPrivacyOff
                 | Fault::SequentialProModel
                 | Fault::SequentialExtraHighProModel
+                | Fault::UnloadedSequential
         )
     }
     /// The model radio the picker shows after effort selection for the Pro-model faults.
@@ -663,6 +747,9 @@ impl Exchange {
         }
         if expression.contains("alcuin-dom:download-click") {
             return json!({"clicked":1});
+        }
+        if expression.contains("alcuin-dom:turn-retry") {
+            return self.turn_retry(cfg);
         }
         if expression.contains("alcuin-dom:submission") {
             self.owner = cfg["owner"].clone();
@@ -1028,6 +1115,48 @@ impl Exchange {
                 Fault::RetryOffered if cfg["uiErrors"] == true => {
                     return json!({"uiError":"temporary_unavailable"});
                 }
+                Fault::GenerationFailedThenRetry | Fault::GeneratedThenUnloaded
+                    if cfg["uiErrors"] == true && !self.turn_retried() =>
+                {
+                    return json!({"uiError":"temporary_unavailable"});
+                }
+                Fault::RetryAuthorityLost if cfg["uiErrors"] == true => {
+                    patch_runtime(
+                        &self.store,
+                        &self.id,
+                        json!({"submissionOwner":"PUBLIC another owner"}),
+                    );
+                    return json!({"uiError":"temporary_unavailable"});
+                }
+                Fault::UnloadedRetrySpent if !self.turn_retried() => {
+                    if self.result_reads == 1 {
+                        runtime_marker(&self.store, &self.id);
+                    }
+                    result = unloaded(result);
+                }
+                Fault::UnloadedThenTryAgain
+                | Fault::UnloadedRateLimited
+                | Fault::UnloadedBorrowed
+                | Fault::UnloadedSequential
+                | Fault::RetryNeverStarts
+                | Fault::RetriedThenTimesOut
+                | Fault::RetriedThenGenerationFails
+                    if !self.turn_retried() =>
+                {
+                    result = unloaded(result);
+                }
+                Fault::RetriedThenTimesOut => {
+                    return json!({"pending":true,"stopExists":false,"strongThinkingActive":false});
+                }
+                Fault::RetriedThenGenerationFails => {
+                    return json!({"uiError":"temporary_unavailable"});
+                }
+                Fault::UnloadedAfterTryAgain => result = unloaded(result),
+                Fault::GeneratedThenUnloaded if self.turn_retried() => result = unloaded(result),
+                Fault::UnloadedHealed if self.retry_read() => {
+                    return json!({"pending":true,"stopExists":false,"strongThinkingActive":false});
+                }
+                Fault::UnloadedHealed => result = unloaded(result),
                 Fault::AnswerlessComplete => {
                     return json!({"pending":true,"stopExists":false,"strongThinkingActive":false,"answerless":true});
                 }
@@ -1406,7 +1535,17 @@ impl Exchange {
                         json!({"frameId":"FRAME-PUBLIC"})
                     }
                 }
-                "Page.enable" | "Input.dispatchMouseEvent" => json!({}),
+                "Input.dispatchMouseEvent" => {
+                    let x = &request["params"]["x"];
+                    if request["params"]["type"] == "mousePressed" && (*x == 2 || *x == 3) {
+                        let meta = self.store.require(&self.id).unwrap();
+                        let marked = meta["browser"]["runtime"]["providerRetry"].is_object();
+                        let click = json!({"method":"PUBLIC retry click","marked":marked});
+                        self.trace.lock().unwrap().push(click);
+                    }
+                    json!({})
+                }
+                "Page.enable" => json!({}),
                 "Emulation.setFocusEmulationEnabled" => {
                     assert_eq!(request["params"], json!({"enabled":true}));
                     json!({})
@@ -1897,6 +2036,7 @@ async fn fixture_attempt_in(
             | Fault::SequentialPrivacySettling
             | Fault::SequentialPrivacyUnknown
             | Fault::SequentialPrivacyOff
+            | Fault::UnloadedSequential
     ) {
         resolved.options["browserFollowUps"] =
             json!([" PUBLIC second turn ", "  ", "PUBLIC third turn"]);
@@ -1928,6 +2068,13 @@ async fn fixture_attempt_in(
         }
         resolved.options["browserConfig"] = resolved.browser.clone();
     }
+    if matches!(
+        fault,
+        Fault::RemoteSignedOut | Fault::RemoteSignedOutBriefly
+    ) {
+        resolved.browser["remoteChrome"] = json!({"host":"127.0.0.1","port":9});
+        resolved.options["browserConfig"] = resolved.browser.clone();
+    }
     let borrowed = matches!(
         fault,
         Fault::Borrowed
@@ -1938,6 +2085,7 @@ async fn fixture_attempt_in(
             | Fault::BorrowedSecondUploadPrepareFailed
             | Fault::BorrowedUploadAckFailed
             | Fault::BorrowedReleaseFailed
+            | Fault::UnloadedBorrowed
     );
     if borrowed {
         resolved.browser["browserTabRef"] = json!("TARGET-PUBLIC");
@@ -4202,6 +4350,232 @@ fn page_stalls_are_ridden_out_only_within_their_window_and_other_errors_pass() {
             .is_some()
     );
     assert_eq!(stalled.to_string(), "PUBLIC stall");
+}
+fn unloaded(mut result: Value) -> Value {
+    result["text"] = json!("This response couldn\u{2019}t load");
+    result["withheld"] = json!(true);
+    result["unloaded"] = json!(true);
+    result
+}
+fn patch_runtime(store: &SessionStore, id: &str, patch: Value) {
+    store
+        .update(id, |current| {
+            let runtime = merge_object(&current["browser"]["runtime"], &patch);
+            let browser = merge_object(&current["browser"], &json!({"runtime":runtime}));
+            Ok(Some(json!({"browser":browser})))
+        })
+        .unwrap();
+}
+fn runtime_marker(store: &SessionStore, id: &str) {
+    patch_runtime(
+        store,
+        id,
+        json!({"providerRetry":{"version":1,"at":"PUBLIC earlier run"}}),
+    );
+}
+fn presses(f: &Fixture) -> Vec<Value> {
+    f.trace
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|r| {
+            r["method"] == "Input.dispatchMouseEvent" && r["params"]["type"] == "mousePressed"
+        })
+        .map(|r| r["params"]["x"].clone())
+        .collect()
+}
+#[tokio::test]
+async fn an_unloaded_answer_gets_one_try_again_in_its_turn_and_no_second_send() {
+    let f = fixture(Fault::UnloadedThenTryAgain, false).await;
+    let meta = run(&f).await.unwrap();
+    assert_eq!(meta["status"], "completed");
+    assert_eq!(presses(&f), [json!(1), json!(2)]);
+    assert_eq!(f.sends.load(Ordering::SeqCst), 1);
+    let dispatches = submission_actions(&f)
+        .iter()
+        .filter(|action| *action == "dispatch")
+        .count();
+    assert_eq!(dispatches, 1);
+    assert!(
+        meta["browser"]["runtime"]["providerRetry"]["at"].is_string(),
+        "{meta}"
+    );
+    assert_eq!(
+        meta["browser"]["runtime"]["providerRetry"]["control"],
+        "Try again \u{2022} 6 Thinking"
+    );
+    assert_eq!(
+        meta["browser"]["runtime"]["providerRetry"]["modelVerified"],
+        false
+    );
+    let log = f.store.log(&f.id).unwrap();
+    assert!(log.contains("no new message"), "{log}");
+    // The durable marker and the re-armed tracker both precede the click that restarts the turn.
+    let trace = f.trace.lock().unwrap().clone();
+    let click = trace
+        .iter()
+        .position(|r| r["method"] == "PUBLIC retry click")
+        .unwrap();
+    assert_eq!(trace[click]["marked"], true);
+    let menu = trace
+        .iter()
+        .position(|r| r["params"]["type"] == "mousePressed" && r["params"]["x"] == 1)
+        .unwrap();
+    assert!(trace[menu..click].iter().any(|r| {
+        r["params"]["expression"]
+            .as_str()
+            .is_some_and(|e| e.contains("alcuin-dom:completion-install"))
+    }));
+    stop(f).await;
+}
+#[tokio::test]
+async fn a_retry_that_never_starts_keeps_the_failure() {
+    let f = fixture(Fault::RetryNeverStarts, false).await;
+    let error = run(&f).await.unwrap_err();
+    assert!(
+        matches!(
+            error.downcast_ref::<crate::browser_provider::Failure>(),
+            Some(crate::browser_provider::Failure::ResponseLoadFailed)
+        ),
+        "{error:#}"
+    );
+    assert_eq!(presses(&f), [json!(1), json!(2)]);
+    assert_eq!(f.sends.load(Ordering::SeqCst), 1);
+    stop(f).await;
+}
+#[tokio::test]
+async fn a_run_that_lost_its_authority_is_not_retried() {
+    let f = fixture(Fault::RetryAuthorityLost, false).await;
+    assert!(run(&f).await.is_err());
+    assert!(presses(&f).is_empty());
+    let log = f.store.log(&f.id).unwrap();
+    assert!(log.contains("Same-turn retry stopped"), "{log}");
+    stop(f).await;
+}
+#[tokio::test]
+async fn a_borrowed_tab_is_never_retried() {
+    let f = fixture(Fault::UnloadedBorrowed, false).await;
+    let error = format!("{:#}", run(&f).await.unwrap_err());
+    assert!(error.contains("could not load the answer"), "{error}");
+    assert!(error.contains("borrowed tab cleanup required"), "{error}");
+    assert_eq!(f.sends.load(Ordering::SeqCst), 1);
+    assert!(presses(&f).is_empty());
+    stop(f).await;
+}
+/// A retried turn that then fails keeps the first failure, which is what the harvest follows.
+#[tokio::test]
+async fn a_retry_that_fails_afterwards_keeps_the_first_failure() {
+    for fault in [
+        Fault::RetriedThenTimesOut,
+        Fault::RetriedThenGenerationFails,
+    ] {
+        let f = fixture(fault, false).await;
+        let error = run(&f).await.unwrap_err();
+        assert!(
+            matches!(
+                error.downcast_ref::<crate::browser_provider::Failure>(),
+                Some(crate::browser_provider::Failure::ResponseLoadFailed)
+            ),
+            "{fault:?}: {error:#}"
+        );
+        assert_eq!(f.sends.load(Ordering::SeqCst), 1);
+        assert_eq!(presses(&f), [json!(1), json!(2)]);
+        let log = f.store.log(&f.id).unwrap();
+        assert!(log.contains("Same-turn retry stopped"), "{log}");
+        stop(f).await;
+    }
+}
+/// A page that drops the notice by itself gets no fresh answer timeout: the typed failure stands,
+/// so the harvest that follows it reads the tab.
+#[tokio::test]
+async fn a_healed_page_keeps_its_failure_for_the_harvest() {
+    let f = fixture(Fault::UnloadedHealed, false).await;
+    let error = run(&f).await.unwrap_err();
+    assert!(
+        matches!(
+            error.downcast_ref::<crate::browser_provider::Failure>(),
+            Some(crate::browser_provider::Failure::ResponseLoadFailed)
+        ),
+        "{error:#}"
+    );
+    assert_eq!(f.sends.load(Ordering::SeqCst), 1);
+    assert!(presses(&f).is_empty());
+    let log = f.store.log(&f.id).unwrap();
+    assert!(log.contains("no longer shows the failure"), "{log}");
+    stop(f).await;
+}
+#[tokio::test]
+async fn a_sequential_run_is_never_retried() {
+    let f = fixture(Fault::UnloadedSequential, false).await;
+    let error = run(&f).await.unwrap_err();
+    assert!(
+        matches!(
+            error.downcast_ref::<crate::browser_provider::Failure>(),
+            Some(crate::browser_provider::Failure::ResponseLoadFailed)
+        ),
+        "{error:#}"
+    );
+    assert_eq!(f.sends.load(Ordering::SeqCst), 1);
+    assert!(presses(&f).is_empty());
+    stop(f).await;
+}
+#[tokio::test]
+async fn a_generation_failure_gets_one_retry_in_its_turn_and_no_second_send() {
+    let f = fixture(Fault::GenerationFailedThenRetry, false).await;
+    let meta = run(&f).await.unwrap();
+    assert_eq!(meta["status"], "completed");
+    assert_eq!(presses(&f), [json!(3)]);
+    assert_eq!(f.sends.load(Ordering::SeqCst), 1);
+    stop(f).await;
+}
+/// Only the load failure tells the caller a reply may still be in the page, so it replaces the first.
+#[tokio::test]
+async fn a_retried_generation_that_will_not_load_reports_the_load_failure() {
+    let f = fixture(Fault::GeneratedThenUnloaded, false).await;
+    let error = run(&f).await.unwrap_err();
+    assert!(
+        matches!(
+            error.downcast_ref::<crate::browser_provider::Failure>(),
+            Some(crate::browser_provider::Failure::ResponseLoadFailed)
+        ),
+        "{error:#}"
+    );
+    assert_eq!(presses(&f), [json!(3)]);
+    assert_eq!(f.sends.load(Ordering::SeqCst), 1);
+    stop(f).await;
+}
+#[tokio::test]
+async fn a_turn_that_fails_after_its_retry_keeps_the_failure_and_is_not_retried_again() {
+    let f = fixture(Fault::UnloadedAfterTryAgain, false).await;
+    let error = run(&f).await.unwrap_err();
+    assert!(
+        matches!(
+            error.downcast_ref::<crate::browser_provider::Failure>(),
+            Some(crate::browser_provider::Failure::ResponseLoadFailed)
+        ),
+        "{error:#}"
+    );
+    assert_eq!(presses(&f), [json!(1), json!(2)]);
+    let meta = f.store.require(&f.id).unwrap();
+    assert_eq!(meta["recoveryRequired"], true);
+    assert_eq!(f.sends.load(Ordering::SeqCst), 1);
+    assert_eq!(f.closes.load(Ordering::SeqCst), 0);
+    stop(f).await;
+}
+#[tokio::test]
+async fn a_visible_rate_limit_warning_holds_the_retry_back() {
+    let f = fixture(Fault::UnloadedRateLimited, false).await;
+    assert!(run(&f).await.is_err());
+    assert!(presses(&f).is_empty());
+    stop(f).await;
+}
+#[tokio::test]
+async fn a_retry_recorded_before_the_click_is_never_spent_twice() {
+    let f = fixture(Fault::UnloadedRetrySpent, false).await;
+    assert!(run(&f).await.is_err());
+    assert!(presses(&f).is_empty());
+    assert_eq!(f.sends.load(Ordering::SeqCst), 1);
+    stop(f).await;
 }
 #[tokio::test]
 async fn response_load_error_is_not_captured_and_retains_the_committed_target() {
@@ -8735,6 +9109,57 @@ async fn signed_out_owned_run_refuses_after_one_login_check_and_retires_its_tab(
     );
     assert!(!submission_actions(&f).iter().any(|a| a == "dispatch"));
     stop(f).await;
+}
+#[tokio::test]
+async fn a_remote_sign_in_miss_is_rechecked_once_on_a_reopened_page_and_then_runs() {
+    let f = fixture(Fault::RemoteSignedOutBriefly, false).await;
+    let meta = run(&f).await.unwrap();
+    assert_eq!(meta["status"], "completed");
+    assert_eq!(f.sends.load(Ordering::SeqCst), 1);
+    assert_eq!(login_probes(&f), 2);
+    assert!(reopened_between_probes(&f));
+    let log = f.store.log(&f.id).unwrap();
+    assert!(log.contains("retrying the sign-in check once"), "{log}");
+    stop(f).await;
+}
+#[tokio::test]
+async fn a_signed_out_remote_browser_is_rechecked_once_and_refused_with_nothing_sent() {
+    let f = fixture(Fault::RemoteSignedOut, false).await;
+    let error = run(&f).await.unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "ChatGPT session not detected. Login button detected on page. The remote Chrome session is not signed into ChatGPT. Sign in there, then rerun."
+    );
+    assert_eq!(login_probes(&f), 2);
+    assert!(reopened_between_probes(&f));
+    assert_eq!(f.sends.load(Ordering::SeqCst), 0);
+    assert!(!submission_actions(&f).iter().any(|a| a == "dispatch"));
+    stop(f).await;
+}
+fn reopened_between_probes(f: &Fixture) -> bool {
+    let trace = f.trace.lock().unwrap();
+    let probe = |r: &Value| {
+        r["params"]["expression"]
+            .as_str()
+            .is_some_and(|e| e.contains("alcuin-dom:health-login"))
+    };
+    let first = trace.iter().position(probe).unwrap();
+    let last = trace.iter().rposition(probe).unwrap();
+    trace[first..last]
+        .iter()
+        .any(|r| r["method"] == "Page.navigate")
+}
+fn login_probes(f: &Fixture) -> usize {
+    f.trace
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|r| {
+            r["params"]["expression"]
+                .as_str()
+                .is_some_and(|e| e.contains("alcuin-dom:health-login"))
+        })
+        .count()
 }
 #[tokio::test]
 async fn manual_login_waits_for_the_session_then_reopens_the_landing_page() {

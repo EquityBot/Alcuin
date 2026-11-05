@@ -13,6 +13,10 @@ impl Budget {
             deadline: None,
         }
     }
+    /// Whether this run is the one newly owned submission recovery may act on.
+    pub(super) fn enabled(&self) -> bool {
+        self.enabled
+    }
     /// A recovered commitment cannot start a fresh full answer timeout.
     pub(super) fn limits(&self, limits: &RunnerLimits) -> RunnerLimits {
         let mut bounded = limits.clone();
@@ -64,7 +68,7 @@ impl Budget {
     pub(super) async fn observe<T, F, Fut>(
         &mut self,
         initial: Result<T>,
-        context: Context<'_>,
+        context: &Context<'_>,
         limits: &RunnerLimits,
         cancel: &CancellationToken,
         mut read: F,
@@ -217,7 +221,7 @@ impl<'a> Context<'a> {
             identity: identity(&store.require(id)?),
         })
     }
-    fn require(&self, cancel: &CancellationToken) -> Result<()> {
+    pub(super) fn require(&self, cancel: &CancellationToken) -> Result<()> {
         anyhow::ensure!(
             !cancel.is_cancelled(),
             "Original-target observation cancelled; recovery retained"
@@ -269,7 +273,11 @@ impl<'a> Context<'a> {
         self.target.lease().require()?;
         Ok(())
     }
-    async fn require_browser(&self, timeout: Duration, cancel: &CancellationToken) -> Result<()> {
+    pub(super) async fn require_browser(
+        &self,
+        timeout: Duration,
+        cancel: &CancellationToken,
+    ) -> Result<()> {
         self.target.require(timeout, cancel).await?;
         self.require(cancel)?;
         crate::browser_privacy::require(self.target.page(), timeout, cancel).await?;
