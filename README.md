@@ -13,7 +13,7 @@
 [![OpenSSF Scorecard](https://raw.githubusercontent.com/ryanduguid/.github/badges/EquityBot/Alcuin.svg)](https://scorecard.dev/viewer/?uri=github.com/yungSNAT/Alcuin)<br>
 [![rust: 1.99+](.github/assets/badges/rust.svg)](https://www.rust-lang.org/) [![licence: FSL-1.1-ALv2](.github/assets/badges/licence.svg)](LICENSE)
 
-[Install](#install) · [Use](#use) · [Settings and storage](#settings-and-storage) · [Known limitations](#known-limitations) · [Security](#security) · [Licence](#licence)
+[Install](#install) · [Use](#use) · [Settings and storage](#settings-and-storage) · [Known limitations](#known-limitations) · [Security](#security) · [Development](#development) · [Credits](#credits) · [Licence](#licence)
 
 </div>
 
@@ -90,11 +90,25 @@ Alcuin keeps Oracle's names so existing setups carry over: settings use `ORACLE_
 
 Read [SECURITY.md](SECURITY.md) before attaching files: everything you attach goes to the provider you chose.
 
+## Development
+
+```bash
+cargo fmt --check
+cargo clippy --all-targets --locked -- -D warnings
+cargo test --locked -- --test-threads=1
+```
+
+[CONTRIBUTING.md](CONTRIBUTING.md) lists the checks a pull request must pass.
+
+## Credits
+
+Alcuin is a Rust port of a maintained fork of [Oracle](https://github.com/steipete/oracle) by Peter Steinberger.
+
+The banner's lettering and emblem are drawn from Cascadia Mono and Besley glyphs (SIL OFL 1.1).
+
 ## Licence
 
 FSL-1.1-ALv2 (Functional Source License, Version 1.1, ALv2 Future License); see [LICENSE](LICENSE). Two years after its release, each version also becomes available under Apache-2.0. Oracle's MIT notice and third-party notices are in [NOTICE](NOTICE).
-
-The banner's lettering and emblem are drawn from Cascadia Mono and Besley glyphs (SIL OFL 1.1).
 
 ---
 
