@@ -843,8 +843,10 @@ pub fn add_summaries(out: &mut Value, meta: &Value) {
                         ],
                     );
                     if run["response"].is_object() {
-                        summary["response"] =
-                            select(&run["response"], &["id", "requestId", "status"]);
+                        summary["response"] = select(
+                            &run["response"],
+                            &["id", "requestId", "status", "incompleteReason"],
+                        );
                     }
                     if run["error"].is_object() {
                         summary["error"] = select(&run["error"], &["category", "message"]);

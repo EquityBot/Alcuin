@@ -296,6 +296,9 @@ fn finished(meta: &Value, output: &mut impl Write) -> Result<()> {
     {
         writeln!(output, "\nResult:\nSession failed: {error}")?;
     }
+    if let Some(notice) = session_display::incomplete_notice(meta) {
+        writeln!(output, "\n{notice}")?;
+    }
     if matches!(meta["status"].as_str(), Some("completed" | "partial")) && meta["usage"].is_object()
     {
         match session_display::completion_summary(meta) {
@@ -426,6 +429,9 @@ async fn attach_inner(
         }
         let shown = cli_format::terminal_text(shown, std::io::stdout().is_terminal());
         output.write_all(shown.as_bytes())?;
+        if let Some(notice) = session_display::incomplete_notice(&initial) {
+            writeln!(output, "\n{notice}")?;
+        }
         if let Some(summary) = session_display::completion_summary(&store.require(id)?) {
             writeln!(output, "\n{summary}")?;
         }
@@ -512,8 +518,11 @@ async fn attach_inner(
         if sessions::terminal(meta["status"].as_str().unwrap_or("")) {
             let final_meta = store.require(id)?;
             cursor.drain(store, id, &final_meta, model, output)?;
+            let incomplete = session_display::incomplete_notice(&final_meta);
             if launched.is_none() {
                 finished(&final_meta, output)?;
+            } else if let Some(notice) = &incomplete {
+                writeln!(output, "\n{notice}")?;
             }
             output.flush()?;
             if let Some(marker) = cancellation_marker {
@@ -524,7 +533,9 @@ async fn attach_inner(
                     && !matches!(final_meta["status"].as_str(), Some("completed" | "partial"))
                 {
                     130
-                } else if launched.is_some() && final_meta["status"] == "error" {
+                } else if launched.is_some()
+                    && (final_meta["status"] == "error" || incomplete.is_some())
+                {
                     1
                 } else {
                     0
@@ -744,6 +755,43 @@ mod tests {
             }
         }
         assert_eq!(actual.liveness(), Liveness::Alive);
+    }
+    #[tokio::test]
+    async fn a_launched_run_saved_partial_fails_with_its_notice_unless_still_delivering() {
+        let reason = json!({"status":"incomplete","incompleteReason":"end-marker-missing"});
+        for (changes, exit, notice) in [
+            (json!({"status":"partial","response":reason}), 1, true),
+            (
+                json!({"status":"partial","browser":{"remoteDelivery":{"acknowledged":true,"producerFinished":false}}}),
+                0,
+                false,
+            ),
+            (json!({"status":"completed"}), 0, false),
+        ] {
+            let (_home, store, id) = fixture();
+            store.update(&id, |_| Ok(Some(changes.clone()))).unwrap();
+            let mut output = vec![];
+            assert_eq!(
+                attach_launched(
+                    &store,
+                    &id,
+                    &ProcessIdentity::current().unwrap(),
+                    &Environment::new(),
+                    &CancellationToken::new(),
+                    &mut output
+                )
+                .await
+                .unwrap(),
+                exit,
+                "{changes}"
+            );
+            let output = String::from_utf8(output).unwrap();
+            assert_eq!(
+                output.contains("Answer incomplete (end-marker-missing)"),
+                notice,
+                "{output}"
+            );
+        }
     }
     #[tokio::test]
     async fn final_log_is_drained_and_error_status_still_has_successful_attachment_exit() {

@@ -1156,7 +1156,7 @@ impl TargetJournal {
             );
         }
         ensure!(
-            session["status"] == "completed"
+            crate::sessions::answered(&session["status"])
                 && session["completedAt"] == commit["completedAt"]
                 && session["id"] == creator["sessionId"]
                 && runtime["controllerPid"] == creator["controllerPid"]

@@ -54,10 +54,57 @@ async fn mount(page: &Cdp, html: &str, path: &str, setup: &str) -> Result<()> {
     Ok(())
 }
 
+/// Captured ChatGPT pages through the real inspection script and completion gate.
+async fn captured_pages_meet_the_completion_gate(page: &Cdp) -> Result<()> {
+    let inspection = include_str!("../browser-scripts/historical-inspection.js");
+    let cfg =
+        json!([{"expectedConversationId":"PUBLIC-fixture","expectedOrigin":"https://chatgpt.com"}]);
+    for (name, html, stopped, finished) in [
+        (
+            "streaming",
+            include_str!("../fixtures/browser-dom/streaming.html"),
+            false,
+            false,
+        ),
+        (
+            "completed",
+            include_str!("../fixtures/browser-dom/completed.html"),
+            true,
+            true,
+        ),
+    ] {
+        mount(page, html, "/c/PUBLIC-fixture?temporary-chat=true", "").await?;
+        let mut gate = crate::browser_tabs::HarvestCompletionGate::default();
+        let mut tab = Value::Null;
+        // Well past the live gate's 3 confirmations and 1,200 ms of stability.
+        for sample in 0..8 {
+            tab = page
+                .evaluate_with_arguments(inspection, &cfg, SHORT, &CancellationToken::new())
+                .await?;
+            anyhow::ensure!(tab.is_object(), "{name}: inspection returned {tab}");
+            gate.observe(&mut tab, sample * 500, 3, 1200);
+        }
+        anyhow::ensure!(
+            tab["stopExists"] == !stopped
+                && tab["completionVisible"] == finished
+                && tab["completionConfirmed"] == finished,
+            "{name}: stop={} visible={} confirmed={} state={}",
+            tab["stopExists"],
+            tab["completionVisible"],
+            tab["completionConfirmed"],
+            tab["state"]
+        );
+    }
+    Ok(())
+}
+
 async fn cases(page: &Cdp, file: &std::path::Path) -> Result<()> {
     crate::browser_page::tests::native_cases(page)
         .await
         .context("Page gate regression")?;
+    captured_pages_meet_the_completion_gate(page)
+        .await
+        .context("Captured page gate regression")?;
     crate::project_sources::native_surface_scope_cases(page)
         .await
         .context("Sources scope/list regression")?;

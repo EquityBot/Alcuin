@@ -62,7 +62,7 @@ Then run consultations with `--engine browser`. Each new request opens a Tempora
 
 **API.** Set `OPENAI_API_KEY` (optionally `OPENAI_BASE_URL`), or `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_DEPLOYMENT`, then run with `--engine api`. Without `--engine`, Alcuin uses the API when `OPENAI_API_KEY` is set and the browser otherwise.
 
-**Sessions.** `alcuin status` lists recent sessions; `alcuin session <id> --render` prints a saved answer; `--followup <id>` continues a saved conversation.
+**Sessions.** `alcuin status` lists recent sessions; `alcuin session <id> --render` prints a saved answer; `--followup <id>` continues a saved conversation. A run that saved an answer which may be cut ends as `partial`, with `response.status: incomplete` and the reason in `response.incompleteReason`. `--browser-end-marker` (MCP `browserEndMarker`, config `browser.endMarker`) asks ChatGPT to finish with a line unique to the run and saves any answer without it as `partial`; it stays in the saved answer. It needs one turn and a local browser. Without a marker, a local 1 or 2 character answer to a prompt of 1,000 tokens or more is also `partial`; results from `--remote-host` are not size checked. A foreground or `--wait` run saved as `partial` prints a notice and exits 1, with the text kept in the session and any `--write-output` file. `alcuin session <id>` shows the same notice and exits 0.
 
 **MCP.** `alcuin bridge codex-config` and `alcuin bridge claude-config` print a server entry for Codex and Claude Code. `consult` and `wait` return the whole saved answer in `output` and the last 4,000 UTF-16 units of the session log in `log`, with `modelSelection` and `thinkingSelection` naming the model and effort the browser verified.
 

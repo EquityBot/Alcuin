@@ -436,6 +436,51 @@ fn actual_stored_references_trim_preserve_lineage_and_use_only_the_last_log_id()
         "--followup requires a session id or response id."
     );
 }
+#[tokio::test]
+async fn a_browser_followup_honours_the_end_marker_asked_for_on_this_run() {
+    let home = tempfile::tempdir().unwrap();
+    let store = SessionStore::new(home.path());
+    store
+        .create(
+            json!({"prompt":"PUBLIC parent","model":"gpt-6-pro"}),
+            home.path(),
+            Some("public-parent"),
+        )
+        .unwrap();
+    let parent = browser_parent();
+    store
+        .update("public-parent", |_| {
+            Ok(Some(
+                json!({"mode":"browser","options":parent["options"],"browser":parent["browser"]}),
+            ))
+        })
+        .unwrap();
+    let config = home.path().join("config.json");
+    for (saved, flag, expected) in [
+        (json!({}), None, false),
+        (json!({}), Some("--browser-end-marker"), true),
+        (json!({"browser":{"endMarker":true}}), None, true),
+    ] {
+        std::fs::write(&config, saved.to_string()).unwrap();
+        let mut args = vec![
+            "-p",
+            "PUBLIC child",
+            "--followup",
+            "public-parent",
+            "--dry-run",
+            "summary",
+        ];
+        args.extend(flag);
+        let output = cli(home.path(), &args).await;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let text = String::from_utf8(output.stdout).unwrap();
+        assert_eq!(text.contains("[preview] End marker:"), expected, "{text}");
+    }
+}
 fn browser_parent() -> Value {
     json!({"id":"public-parent","mode":"browser","options":{"model":"gpt-6-pro"},"browser":{"config":{"url":"https://chatgpt.com/","desiredModel":"GPT-6","thinkingTime":"pro","requireVerifiedSelection":true,"modelStrategy":"select","attachmentTimeoutMs":65432,"manualLogin":true,"browserTabRef":"old-owned-tab","researchMode":"on","archiveConversations":"always"},"runtime":{"tabUrl":"https://chatgpt.com/c/public-runtime","conversationId":"public-runtime"}}})
 }

@@ -48,7 +48,9 @@ impl Parent {
             Ok(())
         };
         let committed = crate::browser_runner::request(&self.store, &self.id)?;
-        let added = crate::browser_log::completion_warnings(&snapshot, &committed);
+        let incomplete = crate::browser_log::incomplete_reason(&snapshot, &committed, &text);
+        let mut added = crate::browser_log::completion_warnings(&snapshot, &committed);
+        added.extend(incomplete.map(crate::browser_log::incomplete_warning));
         let mut warnings = snapshot["browser"]["warnings"]
             .as_array()
             .cloned()
@@ -65,17 +67,16 @@ impl Parent {
         self.store
             .update_session_and_model(&self.id, model, |current, run| {
                 require(current, run)?;
-                let mut response = merge_object(
+                let (status, response) = crate::browser_log::answer_outcome(
                     &run.map_or(Value::Null, |run| run["response"].clone()),
-                    &json!({"status":"completed"}),
-                );
-                response
-                    .as_object_mut()
-                    .context("Consultation response missing")?
-                    .remove("incompleteReason");
+                    incomplete,
+                )?;
                 let completed = timestamp();
-                let mut changes =
-                    json!({"status":"completed","completedAt":completed,"recoveryRequired":true});
+                // Recovery reopens a completed session only; a partial one stays as saved.
+                let mut changes = json!({"status":status,"completedAt":completed,"recoveryRequired":incomplete.is_none()});
+                if incomplete.is_some() {
+                    changes["response"] = response.clone();
+                }
                 changes["browser"] = if added.is_empty() {
                     current["browser"].clone()
                 } else {
@@ -84,7 +85,7 @@ impl Parent {
                 changes["browser"]["archive"] = archive.clone();
                 Ok(Some((
                     changes,
-                    Some(json!({"status":"completed","completedAt":completed,"response":response})),
+                    Some(json!({"status":status,"completedAt":completed,"response":response})),
                 )))
             })
     }
@@ -98,10 +99,15 @@ fn acknowledged_parent(
     let link = require_selected(store, id, cancel)?;
     let parent = store.require(id)?;
     let delivery = &parent["browser"]["remoteDelivery"];
+    // A remote parent is partial between capture and result; only a local one has finished so.
     ensure!(
-        parent["status"] == "completed"
-            && (delivery.is_null()
-                || delivery["acknowledged"] == true && delivery["producerFinished"] == true),
+        if delivery.is_null() {
+            crate::sessions::answered(&parent["status"])
+        } else {
+            parent["status"] == "completed"
+                && delivery["acknowledged"] == true
+                && delivery["producerFinished"] == true
+        },
         "Selected child requires durable parent completion or final remote ACK"
     );
     require_completed_model(store, &parent)?;
@@ -115,7 +121,9 @@ fn require_completed_model(store: &SessionStore, meta: &Value) -> Result<()> {
         .filter(|run| run["model"] == meta["model"])
         .collect::<Vec<_>>();
     ensure!(
-        matching.len() == 1 && matching[0]["status"] == "completed",
+        matching.len() == 1
+            && matching[0]["status"] == meta["status"]
+            && crate::sessions::answered(&meta["status"]),
         "Selected session model outcome changed before retirement"
     );
     Ok(())
@@ -290,7 +298,7 @@ fn finish_retirement(
     store.update(id, |current| {
         acknowledged_parent(store, id, cancel)?;
         ensure!(
-            current["status"] == "completed",
+            crate::sessions::answered(&current["status"]),
             "Parent outcome changed during selected-child settlement"
         );
         Ok(Some(

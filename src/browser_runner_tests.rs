@@ -19,6 +19,8 @@ enum Fault {
     UploadCleanupWrongNavigation,
     #[default]
     None,
+    MarkedAnswer,
+    TinyAnswer,
     CookieBootstrap,
     CookieRejected,
     CookieCancelled,
@@ -45,6 +47,7 @@ enum Fault {
     RetryNeverStarts,
     RetryAuthorityLost,
     GenerationFailedThenRetry,
+    GenerationFailedThenMarked,
     GeneratedThenUnloaded,
     ContentWithheld,
     RetryOffered,
@@ -330,6 +333,7 @@ impl Exchange {
         if matches!(
             self.fault,
             Fault::GenerationFailedThenRetry
+                | Fault::GenerationFailedThenMarked
                 | Fault::GeneratedThenUnloaded
                 | Fault::RetryAuthorityLost
         ) {
@@ -505,6 +509,17 @@ impl Exchange {
         };
         json!({"currentUrl":if before && !historical {"https://chatgpt.com/"} else {"https://chatgpt.com/c/consult-public"},"workSelected":false,"modeUnverified":false,"invalid":false,"turnIds":if before && !historical {vec![]} else {vec!["user-turn-public"]},"messages":messages,"canonicalPrompt":self.prompt})
     }
+    /// The owned answer, ending with the end marker the prompt asked for when the fault says so.
+    fn answer(&self) -> String {
+        let answer = "PUBLIC exact owned answer\n\nEnd\n";
+        match self.fault {
+            Fault::MarkedAnswer | Fault::GenerationFailedThenMarked => {
+                format!("{answer}\n{}\n", self.prompt.lines().last().unwrap())
+            }
+            Fault::TinyAnswer => "I".into(),
+            _ => answer.into(),
+        }
+    }
     fn result(&self) -> Value {
         if self.sequential() {
             let count = self.turns.len();
@@ -558,7 +573,7 @@ impl Exchange {
                 | Fault::CancelDuringDownload
                 | Fault::NewerReceipt
         );
-        json!({"currentUrl":"https://chatgpt.com/c/consult-public","conversationId":"consult-public","origin":"https://chatgpt.com","lastUserMessageId":"user-public","lastUserTurnIndex":0,"lastUserOriginalSourceMessageId":"user-public","lastUserOriginalSourceText":self.prompt,"lastAssistantMessageId":"assistant-public","lastAssistantTurnId":"assistant-turn-public","lastAssistantTurnIndex":1,"assistantFollowsLatestUser":true,"stopExists":false,"strongThinkingActive":false,"completionVisible":!matches!(self.fault, Fault::Incomplete | Fault::UiWarningTimeout),"text":if matches!(self.fault,Fault::ImageOnly){""}else if matches!(self.fault,Fault::ResponseLoadFailed){"This response couldn’t load"}else{"PUBLIC exact owned answer\n\nEnd\n"},"html":"<p>PUBLIC exact owned answer</p><p>End</p>","images":if images{vec![json!({"url":"https://chatgpt.com/backend-api/estuary/content?id=file_public","alt":"Generated image","width":12,"height":12})]}else{vec![]},"files":if matches!(self.fault,Fault::TwoFilePartial){vec![json!({"url":"browser-download","filename":"PUBLIC-first.txt","candidateId":"1:0","label":"Download PUBLIC first"}),json!({"url":"browser-download","filename":"PUBLIC-second.txt","candidateId":"1:1","label":"Download PUBLIC second"})]}else if files{vec![json!({"url":"https://chatgpt.com/backend-api/files/file_public/download","downloadUrl":"https://chatgpt.com/backend-api/files/file_public/download","filename":"PUBLIC.txt","candidateId":"","label":"Download PUBLIC.txt"})]}else{vec![]}})
+        json!({"currentUrl":"https://chatgpt.com/c/consult-public","conversationId":"consult-public","origin":"https://chatgpt.com","lastUserMessageId":"user-public","lastUserTurnIndex":0,"lastUserOriginalSourceMessageId":"user-public","lastUserOriginalSourceText":self.prompt,"lastAssistantMessageId":"assistant-public","lastAssistantTurnId":"assistant-turn-public","lastAssistantTurnIndex":1,"assistantFollowsLatestUser":true,"stopExists":false,"strongThinkingActive":false,"completionVisible":!matches!(self.fault, Fault::Incomplete | Fault::UiWarningTimeout),"text":if matches!(self.fault,Fault::ImageOnly){String::new()}else if matches!(self.fault,Fault::ResponseLoadFailed){"This response couldn’t load".to_owned()}else{self.answer()},"html":"<p>PUBLIC exact owned answer</p><p>End</p>","images":if images{vec![json!({"url":"https://chatgpt.com/backend-api/estuary/content?id=file_public","alt":"Generated image","width":12,"height":12})]}else{vec![]},"files":if matches!(self.fault,Fault::TwoFilePartial){vec![json!({"url":"browser-download","filename":"PUBLIC-first.txt","candidateId":"1:0","label":"Download PUBLIC first"}),json!({"url":"browser-download","filename":"PUBLIC-second.txt","candidateId":"1:1","label":"Download PUBLIC second"})]}else if files{vec![json!({"url":"https://chatgpt.com/backend-api/files/file_public/download","downloadUrl":"https://chatgpt.com/backend-api/files/file_public/download","filename":"PUBLIC.txt","candidateId":"","label":"Download PUBLIC.txt"})]}else{vec![]}})
     }
     fn evaluate(&mut self, expression: &str) -> Value {
         if expression == "location.href" {
@@ -740,7 +755,7 @@ impl Exchange {
             if matches!(self.fault, Fault::ImageOnly) {
                 return json!({"success":true,"markdown":""});
             }
-            return json!({"success":true,"markdown":if matches!(self.fault,Fault::FileExportFormatted | Fault::FormattedMarkdown | Fault::FormattedImage){"**PUBLIC exact owned answer**\n\nEnd\n"}else{"PUBLIC exact owned answer\n\nEnd\n"}});
+            return json!({"success":true,"markdown":if matches!(self.fault,Fault::FileExportFormatted | Fault::FormattedMarkdown | Fault::FormattedImage){"**PUBLIC exact owned answer**\n\nEnd\n".to_owned()}else{self.answer()}});
         }
         if expression.contains("return claim.submission.commitReceipt;") {
             return self.commit.clone();
@@ -1115,7 +1130,9 @@ impl Exchange {
                 Fault::RetryOffered if cfg["uiErrors"] == true => {
                     return json!({"uiError":"temporary_unavailable"});
                 }
-                Fault::GenerationFailedThenRetry | Fault::GeneratedThenUnloaded
+                Fault::GenerationFailedThenRetry
+                | Fault::GenerationFailedThenMarked
+                | Fault::GeneratedThenUnloaded
                     if cfg["uiErrors"] == true && !self.turn_retried() =>
                 {
                     return json!({"uiError":"temporary_unavailable"});
@@ -2396,6 +2413,8 @@ async fn orphan_provider_attempt_helper() {
             Fault::File
         } else if matches!(capture_kind.as_str(), "captured-export" | "reserved-export") {
             Fault::FileExport
+        } else if capture_kind == "captured-marked-whole" {
+            Fault::MarkedAnswer
         } else if capture_kind == "images" {
             Fault::SequentialNamedLast
         } else if capture_kind == "buttons" {
@@ -2413,6 +2432,8 @@ async fn orphan_provider_attempt_helper() {
         true,
         if capture_kind.starts_with("remote") {
             json!({})
+        } else if capture_kind.starts_with("captured-marked") {
+            json!({"writeOutputPath":"PUBLIC-recovered.md","browserEndMarker":true})
         } else {
             json!({"writeOutputPath":"PUBLIC-recovered.md"})
         },
@@ -2807,6 +2828,8 @@ async fn captured_parent_resumes_after_worker_exit_without_recapture() {
         ("captured-image", Fault::FormattedImage),
         ("captured-file", Fault::File),
         ("captured-export", Fault::FileExport),
+        ("captured-marked", Fault::None),
+        ("captured-marked-whole", Fault::MarkedAnswer),
     ] {
         assert_parent_recovery_from(false, Some(fault), Some(kind)).await;
     }
@@ -3133,6 +3156,23 @@ async fn assert_parent_recovery_from(
         )
         .await;
     }
+    if capture_kind == Some("captured-marked") {
+        let saved = recovered.unwrap();
+        assert_eq!(saved["status"], "partial");
+        assert_eq!(saved["response"]["incompleteReason"], "end-marker-missing");
+        assert_eq!(saved["recoveryRequired"], false);
+        assert_eq!(store.model_runs(parent_id).unwrap()[0]["status"], "partial");
+        assert_eq!(store.require(child_id).unwrap()["status"], "completed");
+        assert!(home.join("PUBLIC-recovered.md").is_file());
+        assert_eq!(sends.load(Ordering::SeqCst), 1);
+        assert_eq!(closes.load(Ordering::SeqCst), 1);
+        browser
+            .disconnect_and_wait(Duration::from_secs(1))
+            .await
+            .unwrap();
+        peer.await.unwrap();
+        return;
+    }
     if recovered.is_ok() {
         let repaired = recover_existing(
             &store,
@@ -3429,6 +3469,293 @@ async fn parent_adoption_completes_then_retires_only_selected_child_and_duplicat
         .unwrap();
     assert_eq!(f.closes.load(Ordering::SeqCst), 1);
     assert_eq!(f.sends.load(Ordering::SeqCst), 1);
+    stop(f).await;
+}
+/// Runs a provider child to a settled parent, as `run_native_consultation` does.
+async fn settled_parent(f: &mut Fixture) -> String {
+    let child = run_attempt_capture(f).await.unwrap();
+    let parent = child["browser"]["attempt"]["parentId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let coordinator = f.coordinator.as_mut().unwrap();
+    coordinator.adopt(&f.id, &f.cancel).unwrap();
+    coordinator.complete(&f.cancel).unwrap();
+    crate::browser_attempt::settle_selected(&f.store, &parent, &f.cdp, &f.endpoint, &f.cancel)
+        .await
+        .unwrap();
+    parent
+}
+const CUT_ANSWER: &str = "PUBLIC exact owned answer\n\nEnd\n";
+#[tokio::test]
+async fn an_answer_without_its_end_marker_is_saved_partial_and_its_tab_still_retires() {
+    let mut f = fixture_attempt(Fault::None, false, true, json!({"browserEndMarker":true})).await;
+    let parent_id = settled_parent(&mut f).await;
+    let parent = f.store.require(&parent_id).unwrap();
+    let incomplete = json!({"status":"incomplete","incompleteReason":"end-marker-missing"});
+    assert_eq!(parent["status"], "partial");
+    assert_eq!(parent["response"], incomplete);
+    assert_eq!(parent["recoveryRequired"], false);
+    let run = &f.store.model_runs(&parent_id).unwrap()[0];
+    assert_eq!(run["status"], "partial");
+    assert_eq!(run["response"]["status"], "incomplete");
+    assert_eq!(run["response"]["incompleteReason"], "end-marker-missing");
+    assert!(
+        parent["browser"]["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| warning["code"] == "browser-answer-incomplete")
+    );
+    assert!(
+        f.store
+            .log(&parent_id)
+            .unwrap()
+            .contains("[browser] Answer lacks this run's end marker")
+    );
+    // The cut text stays saved, and the owned tab retires as a completed run's does.
+    assert_eq!(
+        captured(&f.store, &parent_id).unwrap(),
+        CUT_ANSWER.as_bytes()
+    );
+    assert_eq!(f.closes.load(Ordering::SeqCst), 1);
+    assert_eq!(f.store.require(&f.id).unwrap()["status"], "completed");
+    let server = crate::mcp::AlcuinMcp {
+        store: f.store.clone(),
+        cwd: f.home.path().into(),
+        env: Default::default(),
+    };
+    let wait = server
+        .invoke("wait", json!({"id":parent_id}), &f.cancel)
+        .await
+        .unwrap();
+    assert!(
+        wait.content[0]
+            .as_text()
+            .unwrap()
+            .text
+            .starts_with(&format!("Session {parent_id} (partial; wait=terminal)\n"))
+    );
+    let wait = wait.structured_content.unwrap();
+    assert_eq!(wait["status"], "partial");
+    assert_eq!(wait["output"], CUT_ANSWER);
+    assert_eq!(wait["models"][0]["response"]["status"], "incomplete");
+    assert_eq!(
+        wait["models"][0]["response"]["incompleteReason"],
+        "end-marker-missing"
+    );
+    stop(f).await;
+}
+#[tokio::test]
+async fn a_direct_run_without_its_end_marker_is_saved_partial() {
+    let f = fixture_attempt(Fault::None, false, false, json!({"browserEndMarker":true})).await;
+    let result = run(&f).await.unwrap();
+    assert_eq!(result["status"], "partial");
+    assert_eq!(result["response"]["incompleteReason"], "end-marker-missing");
+    assert_eq!(result["recoveryRequired"], false);
+    assert_eq!(f.closes.load(Ordering::SeqCst), 1);
+    stop(f).await;
+}
+/// A retry regenerates the turn behind the same user message, so its answer owes the same marker.
+#[tokio::test]
+async fn a_retried_turn_still_owes_its_end_marker() {
+    for attempt in [false, true] {
+        for (fault, status, reason) in [
+            (
+                Fault::GenerationFailedThenRetry,
+                "partial",
+                json!("end-marker-missing"),
+            ),
+            (Fault::GenerationFailedThenMarked, "completed", Value::Null),
+        ] {
+            let mut f =
+                fixture_attempt(fault, false, attempt, json!({"browserEndMarker":true})).await;
+            let id = if attempt {
+                settled_parent(&mut f).await
+            } else {
+                run(&f).await.unwrap();
+                f.id.clone()
+            };
+            let saved = f.store.require(&id).unwrap();
+            assert_eq!(saved["status"], status, "attempt={attempt}");
+            assert_eq!(saved["response"]["incompleteReason"], reason);
+            assert_eq!(f.store.model_runs(&id).unwrap()[0]["status"], status);
+            assert_eq!(presses(&f), [json!(3)]);
+            assert_eq!(f.sends.load(Ordering::SeqCst), 1);
+            stop(f).await;
+        }
+    }
+}
+/// A worker that dies between saving a partial and retiring its tab must not send a reattachment
+/// to a recovery that refuses it.
+#[tokio::test]
+async fn a_partial_parent_needs_no_recovery_before_its_tab_settles() {
+    let mut f = fixture_attempt(Fault::None, false, true, json!({"browserEndMarker":true})).await;
+    let child = run_attempt_capture(&f).await.unwrap();
+    let parent = child["browser"]["attempt"]["parentId"].as_str().unwrap();
+    let coordinator = f.coordinator.as_mut().unwrap();
+    coordinator.adopt(&f.id, &f.cancel).unwrap();
+    coordinator.complete(&f.cancel).unwrap();
+    let saved = f.store.require(parent).unwrap();
+    assert_eq!(saved["status"], "partial");
+    assert_eq!(saved["recoveryRequired"], false);
+    assert_eq!(f.closes.load(Ordering::SeqCst), 0);
+    stop(f).await;
+}
+/// A saved partial is an answer, not a failure: nothing retries, reopens or rewrites it.
+#[tokio::test]
+async fn a_saved_partial_survives_reattach_and_recovery_without_a_retry() {
+    for attempt in [false, true] {
+        let mut f = fixture_attempt(
+            Fault::None,
+            false,
+            attempt,
+            json!({"browserEndMarker":true}),
+        )
+        .await;
+        let id = if attempt {
+            settled_parent(&mut f).await
+        } else {
+            run(&f).await.unwrap();
+            f.id.clone()
+        };
+        assert_eq!(f.store.require(&id).unwrap()["status"], "partial");
+        assert!(presses(&f).is_empty());
+        // A dead worker is what sends a reattachment towards recovery.
+        let mut dead = serde_json::to_value(ProcessIdentity::current().unwrap()).unwrap();
+        dead["nativeStart"] = json!("1");
+        dead["startedAtMs"] = json!(1.0);
+        let pid = dead["pid"].clone();
+        f.store
+            .update(&id, |meta| {
+                Ok(Some(json!({"lifecycle":merge_object(&meta["lifecycle"],
+                    &json!({"processIdentity":dead,"workerPid":pid,"workerProcessStartedAtMs":1.0}))})))
+            })
+            .unwrap();
+        let model = f.store.require(&id).unwrap()["model"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let directory = f.store.directory(&id).unwrap();
+        let saved = || {
+            (
+                fs::read(directory.join("meta.json")).unwrap(),
+                fs::read(
+                    directory.join(format!("models/{}.json", sessions::safe_model_slug(&model))),
+                )
+                .unwrap(),
+            )
+        };
+        let before = saved();
+        let mut output = vec![];
+        let view = crate::session_attach::AttachView {
+            model: None,
+            hide_prompt: true,
+            render: false,
+        };
+        let exit = crate::session_attach::attach(
+            &f.store,
+            &id,
+            &view,
+            &Environment::new(),
+            &CancellationToken::new(),
+            &mut output,
+        )
+        .await
+        .unwrap();
+        let output = String::from_utf8(output).unwrap();
+        assert_eq!(exit, 0, "{output}");
+        assert!(
+            output.contains("Answer incomplete (end-marker-missing)"),
+            "{output}"
+        );
+        assert!(
+            !output.contains("Browser recovery is incomplete"),
+            "{output}"
+        );
+        assert_eq!(saved(), before);
+        let recovered = recover_existing(
+            &f.store,
+            &id,
+            f.profile.clone(),
+            f.cdp.clone(),
+            f.endpoint.clone(),
+            &limits(),
+            &CancellationToken::new(),
+        )
+        .await;
+        assert!(recovered.is_err(), "attempt={attempt}");
+        assert_eq!(saved(), before);
+        assert_eq!(f.closes.load(Ordering::SeqCst), 1);
+        assert_eq!(f.sends.load(Ordering::SeqCst), 1);
+        assert!(presses(&f).is_empty());
+        stop(f).await;
+    }
+}
+#[tokio::test]
+async fn a_tiny_answer_to_a_large_prompt_is_saved_partial() {
+    let prompt = "PUBLIC large prompt words ".repeat(400);
+    for (options, fault, expected) in [
+        (json!({"prompt":prompt}), Fault::TinyAnswer, "partial"),
+        (json!({}), Fault::TinyAnswer, "completed"),
+        (json!({"prompt":prompt}), Fault::None, "completed"),
+    ] {
+        let f = fixture_attempt(fault, false, false, options).await;
+        let result = run(&f).await.unwrap();
+        assert_eq!(result["status"], expected);
+        if expected == "partial" {
+            assert_eq!(result["response"]["incompleteReason"], "answer-too-short");
+        }
+        stop(f).await;
+    }
+}
+#[tokio::test]
+async fn a_marked_answer_completes_and_keeps_its_marker_in_the_saved_text() {
+    for attempt in [true, false] {
+        let mut f = fixture_attempt(
+            Fault::MarkedAnswer,
+            false,
+            attempt,
+            json!({"browserEndMarker":true}),
+        )
+        .await;
+        let id = if attempt {
+            settled_parent(&mut f).await
+        } else {
+            run(&f).await.unwrap();
+            f.id.clone()
+        };
+        let session = f.store.require(&id).unwrap();
+        assert_eq!(session["status"], "completed");
+        assert!(session.get("response").is_none_or(Value::is_null));
+        assert_eq!(
+            f.store.model_runs(&id).unwrap()[0]["response"]["status"],
+            "completed"
+        );
+        let committed = request(&f.store, &id).unwrap();
+        let marker = committed.extra["endMarker"].as_str().unwrap();
+        assert!(marker.starts_with("ALCUIN-END-"));
+        assert_eq!(
+            committed.prompt,
+            crate::browser_prompt::with_end_marker(
+                f.store.require(&id).unwrap()["options"]["prompt"]
+                    .as_str()
+                    .unwrap(),
+                marker
+            )
+        );
+        let saved = String::from_utf8(captured(&f.store, &id).unwrap()).unwrap();
+        assert!(saved.ends_with(&format!("\n{marker}\n")), "{saved}");
+        stop(f).await;
+    }
+}
+#[tokio::test]
+async fn a_run_without_the_option_keeps_its_prompt_and_completes_unmarked() {
+    let f = fixture(Fault::None, false).await;
+    let committed = request(&f.store, &f.id).unwrap();
+    assert!(!committed.prompt.contains("ALCUIN-END-"));
+    assert!(!committed.extra.contains_key("endMarker"));
+    assert_eq!(run(&f).await.unwrap()["status"], "completed");
     stop(f).await;
 }
 #[tokio::test]
@@ -7490,10 +7817,16 @@ async fn explicit_lost_send_recovery_reads_original_commitment_without_a_second_
         "orphan",
         "orphan-model-error",
         "attached-cancel",
+        "marked",
     ] {
-        let f = fixture(Fault::LostSendAck, false).await;
+        let options = if mode == "marked" {
+            json!({"browserEndMarker":true})
+        } else {
+            json!({})
+        };
+        let f = fixture_attempt(Fault::LostSendAck, false, false, options).await;
         assert!(run(&f).await.is_err());
-        if mode != "terminal" {
+        if !matches!(mode, "terminal" | "marked") {
             let mut previous = serde_json::to_value(ProcessIdentity::current().unwrap()).unwrap();
             previous["nativeStart"] = json!("1");
             previous["startedAtMs"] = json!(1.0);
@@ -7620,9 +7953,22 @@ async fn explicit_lost_send_recovery_reads_original_commitment_without_a_second_
             assert_eq!(f.closes.load(Ordering::SeqCst), 0);
         } else {
             let result = result.unwrap();
-            assert_eq!(result["status"], "completed");
+            let status = if mode == "marked" {
+                "partial"
+            } else {
+                "completed"
+            };
+            assert_eq!(result["status"], status);
             assert_eq!(result["recoveryRequired"], false);
-            assert_eq!(result["models"][0]["status"], "completed");
+            assert_eq!(result["models"][0]["status"], status);
+            assert_eq!(
+                result["response"]["incompleteReason"],
+                if mode == "marked" {
+                    json!("end-marker-missing")
+                } else {
+                    Value::Null
+                }
+            );
             assert_eq!(
                 result["browser"]["runtime"]["userCommitReceipt"]["messageId"],
                 "user-public"

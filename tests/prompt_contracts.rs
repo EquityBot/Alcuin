@@ -647,6 +647,38 @@ fn an_explicit_pro_model_outranks_a_saved_thinking_time() {
     assert_eq!(request.browser["thinkingTime"], "extra-high");
 }
 #[test]
+fn the_end_marker_is_opt_in_from_the_call_or_saved_config() {
+    let root = tempfile::tempdir().unwrap();
+    let env = Environment::new();
+    let call = json!({"prompt":"PUBLIC end marker","engine":"browser","browserEndMarker":true});
+    let plain = json!({"prompt":"PUBLIC end marker","engine":"browser"});
+    let saved = json!({"browser":{"endMarker":true}});
+    for (input, config, expected) in [
+        (&plain, json!({}), json!(null)),
+        (&call, json!({}), json!(true)),
+        (&plain, saved, json!(true)),
+    ] {
+        let request = execution::resolve(input, &config, &env, root.path()).unwrap();
+        assert_eq!(request.browser["endMarker"], expected);
+    }
+}
+#[test]
+fn the_end_marker_refuses_runs_that_could_not_prove_it() {
+    let root = tempfile::tempdir().unwrap();
+    let env = Environment::new();
+    let store = alcuin::sessions::SessionStore::new(root.path().join("home"));
+    let input = json!({"prompt":"PUBLIC end marker","engine":"browser","browserEndMarker":true,
+        "browserFollowUps":["PUBLIC second turn"]});
+    let request = execution::resolve(&input, &json!({}), &env, root.path()).unwrap();
+    assert_eq!(
+        alcuin::browser_runner::prepare(&store, &request, root.path())
+            .unwrap_err()
+            .to_string(),
+        "The browser end marker cannot be combined with browser follow-ups."
+    );
+    assert!(store.list(true).unwrap().is_empty());
+}
+#[test]
 fn partial_mode_is_saved_with_the_run_options() {
     let root = tempfile::tempdir().unwrap();
     let input = json!({"prompt":"PUBLIC partial mode","engine":"api","partialMode":"ok"});

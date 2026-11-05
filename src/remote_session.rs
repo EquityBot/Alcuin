@@ -82,6 +82,10 @@ fn prepare_with_base(
         request.browser["researchMode"] != "search",
         "Web Search is a local browser pilot; --remote-host does not negotiate this capability yet. Use local Chrome or --browser-attach-running."
     );
+    anyhow::ensure!(
+        request.browser["endMarker"] != true,
+        "The browser end marker is a local browser check; --remote-host does not negotiate this capability yet. Use local Chrome or --browser-attach-running."
+    );
     connection.client(store)?;
     let mut request = request.clone();
     if let Some(options) = request.options.as_object_mut() {
@@ -752,6 +756,27 @@ mod tests {
         let receiver =
             Receiver::new(&store, &id, &identity, false, &CancellationToken::new()).unwrap();
         (store, id, receiver)
+    }
+    #[test]
+    fn the_end_marker_refuses_a_remote_host_before_any_session_exists() {
+        let home = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(home.path().join("oracle"));
+        let input =
+            json!({"prompt":"PUBLIC end marker","engine":"browser","browserEndMarker":true});
+        let request =
+            crate::execution::resolve(&input, &json!({}), &Environment::new(), home.path())
+                .unwrap();
+        let connection = Connection {
+            host: "127.0.0.1:1".into(),
+            token: None,
+        };
+        assert_eq!(
+            prepare(&store, &request, home.path(), &connection)
+                .unwrap_err()
+                .to_string(),
+            "The browser end marker is a local browser check; --remote-host does not negotiate this capability yet. Use local Chrome or --browser-attach-running."
+        );
+        assert!(store.list(true).unwrap().is_empty());
     }
     #[test]
     fn receiver_capture_is_durable_before_ack_and_late_owner_writes_are_refused() {

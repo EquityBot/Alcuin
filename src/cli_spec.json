@@ -321,6 +321,9 @@
     "flags": "--browser-bundle-files"
   },
   {
+    "flags": "--browser-end-marker"
+  },
+  {
     "flags": "--browser-bundle-format <format>"
   },
   {

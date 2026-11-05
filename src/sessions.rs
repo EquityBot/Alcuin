@@ -61,6 +61,15 @@ pub fn safe_model_slug(model: &str) -> String {
 pub fn terminal(status: &str) -> bool {
     matches!(status, "completed" | "partial" | "error" | "cancelled")
 }
+/// Whether a session finished with an answer that may be cut. A remote parent is also partial
+/// between its capture and result, but that one is still being delivered.
+pub(crate) fn saved_partial(meta: &Value) -> bool {
+    meta["status"] == "partial" && meta["browser"]["remoteDelivery"].is_null()
+}
+/// Whether a session status means an answer is saved: whole, or partial when it may be cut.
+pub(crate) fn answered(status: &Value) -> bool {
+    matches!(status.as_str(), Some("completed" | "partial"))
+}
 pub fn timestamp() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }

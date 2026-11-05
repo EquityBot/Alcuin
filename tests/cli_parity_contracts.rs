@@ -51,6 +51,43 @@ fn legacy_negatable_spellings_map_to_the_positive_flags() {
 }
 
 #[test]
+fn a_partial_session_says_so_in_status_and_session() {
+    let home = tempfile::tempdir().unwrap();
+    let store = alcuin::sessions::SessionStore::new(home.path());
+    let meta = store
+        .create(
+            serde_json::json!({"prompt":"PUBLIC partial session","model":"gpt-6-pro"}),
+            home.path(),
+            None,
+        )
+        .unwrap();
+    let id = meta["id"].as_str().unwrap();
+    store
+        .append_log(id, None, "GPT-6 Pro said:\nPUBLIC cut answer\n")
+        .unwrap();
+    store
+        .update(id, |_| {
+            Ok(Some(
+                serde_json::json!({"status":"partial","cwd":home.path(),
+                "response":{"status":"incomplete","incompleteReason":"end-marker-missing"}}),
+            ))
+        })
+        .unwrap();
+    let output = cli(home.path(), &["session", id]);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let text = stdout(&output);
+    assert!(text.contains("PUBLIC cut answer"), "{text}");
+    assert!(
+        text.contains("Answer incomplete (end-marker-missing): the saved text may be cut."),
+        "{text}"
+    );
+    let output = cli(home.path(), &["status"]);
+    let listing = stdout(&output);
+    let row = listing.lines().find(|line| line.ends_with(id)).unwrap();
+    assert_eq!(row.split_whitespace().next(), Some("partial"), "{listing}");
+}
+
+#[test]
 fn disabling_provider_native_capture_is_accepted() {
     let home = tempfile::tempdir().unwrap();
     let output = cli(

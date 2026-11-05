@@ -558,6 +558,7 @@ fn resolve_origin(
         ("browserResearchMode", "researchMode"),
         ("browserArchive", "archiveConversations"),
         ("browserKeepBrowser", "keepBrowser"),
+        ("browserEndMarker", "endMarker"),
         ("browserHeadless", "headless"),
         ("browserHideWindow", "hideWindow"),
     ] {

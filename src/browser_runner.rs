@@ -277,7 +277,18 @@ fn prepare_with_base(
         &request.options,
         &std::env::temp_dir(),
     )?;
-    let prompt = plan.composer_text.clone();
+    let end_marker =
+        (request.browser["endMarker"] == true).then(crate::browser_prompt::new_end_marker);
+    // shortcut: only the last turn could carry the marker, and a sequence's saved answer is the
+    // whole transcript; a marker per turn is the upgrade path.
+    anyhow::ensure!(
+        end_marker.is_none() || crate::browser_turns::prompts(&request.options)?.is_empty(),
+        "The browser end marker cannot be combined with browser follow-ups."
+    );
+    let prompt = match &end_marker {
+        Some(marker) => crate::browser_prompt::with_end_marker(&plan.composer_text, marker),
+        None => plan.composer_text.clone(),
+    };
     private_dir(store.home())?;
     let lock = DirectoryLock::acquire(
         &store.home().join("dispatch-admission.lock"),
@@ -353,7 +364,10 @@ fn prepare_with_base(
                 "estimatedInputTokens".into(),
                 json!(plan.estimated_input_tokens),
             ),
-        ]),
+        ])
+        .into_iter()
+        .chain(end_marker.map(|marker| ("endMarker".to_owned(), json!(marker))))
+        .collect(),
     };
     atomic_json(
         &store.directory(id)?.join("browser-request.json"),
@@ -1199,7 +1213,11 @@ fn complete(
         .as_array()
         .cloned()
         .unwrap_or_default();
-    let added = crate::browser_log::completion_warnings(&view, &committed);
+    let mut added = crate::browser_log::completion_warnings(&view, &committed);
+    // A provider child's answer is judged when its parent completes.
+    let incomplete =
+        crate::browser_log::incomplete_reason(&view, &committed, text).filter(|_| !child);
+    added.extend(incomplete.map(crate::browser_log::incomplete_warning));
     warnings.extend(added.iter().cloned());
     let mut block = crate::browser_log::completion(&view, &committed, &warnings, text);
     let (archive, line) = crate::browser_log::archive(&view);
@@ -1211,15 +1229,15 @@ fn complete(
     })?;
     store.update_session_and_model(id, model, |meta, run| {
         outcome.require(meta, witness, run, cancel)?;
-        let mut response = merge_object(
+        let (status, response) = crate::browser_log::answer_outcome(
             &run.map_or(Value::Null, |run| run["response"].clone()),
-            &json!({"status":"completed"}),
-        );
-        response
-            .as_object_mut()
-            .context("Invalid browser response metadata")?
-            .remove("incompleteReason");
+            incomplete,
+        )?;
         let mut changes = changes(meta)?;
+        changes["status"] = json!(status);
+        if incomplete.is_some() {
+            changes["response"] = response.clone();
+        }
         // A provider child's warnings and archive record belong to its parent's completion.
         if !child {
             let browser = if changes["browser"].is_object() {
@@ -1237,7 +1255,7 @@ fn complete(
         }
         Ok(Some((
             changes,
-            Some(json!({"status":"completed","completedAt":timestamp(),"response":response})),
+            Some(json!({"status":status,"completedAt":timestamp(),"response":response})),
         )))
     })
 }
@@ -1766,8 +1784,9 @@ async fn run_native_consultation(
             eprintln!("Selected child cleanup remains pending: {error:#}");
             store.update(id,|current| {
                 witness.require(current)?;
-                anyhow::ensure!(current["status"]=="completed","Consultation changed before cleanup warning");
-                Ok(Some(json!({"recoveryRequired":true,"cleanupWarning":format!("Selected child {} cleanup remains unconfirmed: {}",attempt.child_id,crate::browser_retirement::cleanup_error(&format!("{error:#}")))})))
+                anyhow::ensure!(crate::sessions::answered(&current["status"]),"Consultation changed before cleanup warning");
+                // Recovery reopens a completed session only; a partial one stays as saved.
+                Ok(Some(json!({"recoveryRequired":current["status"]=="completed","cleanupWarning":format!("Selected child {} cleanup remains unconfirmed: {}",attempt.child_id,crate::browser_retirement::cleanup_error(&format!("{error:#}")))})))
             })?;
         }
         store.require(id)
@@ -3088,7 +3107,7 @@ async fn run_owned(
         }).await?;
         target.release_retired_lease()?;
         retire_inputs(store,id,&committed)?;
-        store.update(id, |current| { witness.require(current)?; anyhow::ensure!(current["status"] == "completed", "Completed session changed before retirement acknowledgement"); Ok(Some(json!({"recoveryRequired":false,"browser":merge_object(&current["browser"], &json!({"runtime":merge_object(&current["browser"]["runtime"], &json!({"targetDispositionPending":false,"targetRetiredAt":timestamp()}))}))}))) })?;
+        store.update(id, |current| { witness.require(current)?; anyhow::ensure!(crate::sessions::answered(&current["status"]), "Completed session changed before retirement acknowledgement"); Ok(Some(json!({"recoveryRequired":false,"browser":merge_object(&current["browser"], &json!({"runtime":merge_object(&current["browser"]["runtime"], &json!({"targetDispositionPending":false,"targetRetiredAt":timestamp()}))}))}))) })?;
         Ok::<_, anyhow::Error>(())
     }.await;
     if let Err(first_error) = cleanup {
@@ -3099,7 +3118,8 @@ async fn run_owned(
             let current = store.require(id)?;
             witness.require(&current)?;
             anyhow::ensure!(
-                current["status"] == "completed" && current["dispatch"]["state"] == "completed",
+                crate::sessions::answered(&current["status"])
+                    && current["dispatch"]["state"] == "completed",
                 "Completed cleanup retry lost its terminal session"
             );
             let record = journal.read(&creator["allocationId"])?;
@@ -4201,7 +4221,7 @@ pub(crate) fn settle_completed_retirement(
         retire_inputs(store, id, &request(store, id)?)?;
     }
     store.update_until(id,deadline,|current| {
-        anyhow::ensure!(current==&saved && current["status"]=="completed", "Completed session changed during cleanup settlement");
+        anyhow::ensure!(current==&saved && crate::sessions::answered(&current["status"]), "Completed session changed during cleanup settlement");
         Ok(Some(json!({"recoveryRequired":false,"cleanupWarning":null,"browser":merge_object(&current["browser"],&json!({"runtime":merge_object(&current["browser"]["runtime"],&json!({"targetDispositionPending":false,"targetRetiredAt":timestamp()}))}))})))
     })?;
     Ok(())

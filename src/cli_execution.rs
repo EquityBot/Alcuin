@@ -464,8 +464,9 @@ pub(crate) async fn run(
                     &mut std::io::stdout(),
                 )
                 .await?;
-                if exit == 1 {
-                    let failed = store.require(id)?;
+                let failed = store.require(id)?;
+                // The attachment has already printed a partial run's notice.
+                if exit == 1 && crate::session_display::incomplete_notice(&failed).is_none() {
                     bail!(
                         "Session {id} failed: {}",
                         failed["errorMessage"]
@@ -573,34 +574,117 @@ pub(crate) async fn run(
         }
     } else {
         let mut stdout = std::io::stdout().lock();
-        let log = store.log(id)?;
-        let log = crate::cli_format::terminal_text(&log, stdout.is_terminal());
-        stdout.write_all(log.as_bytes())?;
-        stdout.flush()?;
-        let current = store.require(id)?;
-        if current["status"] == "completed"
-            && (current["cleanupWarning"].is_string()
-                || (current["recoveryRequired"] == true
-                    && current["browser"]["runtime"]["targetDispositionPending"] == true))
-        {
-            eprintln!("Answer saved. Owned browser tab cleanup is pending.");
-        }
+        let terminal = stdout.is_terminal();
+        print_browser_run(store, id, terminal, &mut stdout)?;
     }
-    if cancel.is_cancelled() {
-        return Ok(
-            if matches!(
-                store.require(id)?["status"].as_str(),
-                Some("completed" | "partial")
-            ) {
-                0
-            } else {
-                130
-            },
-        );
+    run_exit(
+        &store.require(id)?,
+        cancel.is_cancelled(),
+        result,
+        logged.is_some(),
+    )
+}
+fn print_browser_run(
+    store: &SessionStore,
+    id: &str,
+    terminal: bool,
+    output: &mut impl Write,
+) -> Result<()> {
+    let log = store.log(id)?;
+    let log = crate::cli_format::terminal_text(&log, terminal);
+    output.write_all(log.as_bytes())?;
+    output.flush()?;
+    let current = store.require(id)?;
+    if current["status"] == "completed"
+        && (current["cleanupWarning"].is_string()
+            || (current["recoveryRequired"] == true
+                && current["browser"]["runtime"]["targetDispositionPending"] == true))
+    {
+        eprintln!("Answer saved. Owned browser tab cleanup is pending.");
+    }
+    if let Some(notice) = crate::session_display::incomplete_notice(&current) {
+        writeln!(output, "\n{notice}")?;
+    }
+    Ok(())
+}
+/// A foreground run's exit: 1 when its saved answer may be cut, however the run ended.
+fn run_exit<T>(saved: &Value, cancelled: bool, result: Result<T>, logged: bool) -> Result<i32> {
+    let incomplete = i32::from(crate::session_display::incomplete_notice(saved).is_some());
+    if cancelled {
+        return Ok(if incomplete == 1 {
+            1
+        } else if crate::sessions::answered(&saved["status"]) {
+            0
+        } else {
+            130
+        });
     }
     match result {
-        Err(error) if logged.is_some() => Err(execution::LoggedFailure(error).into()),
-        result => result.map(|_| 0),
+        Err(error) if logged => Err(execution::LoggedFailure(error).into()),
+        result => result.map(|_| incomplete),
+    }
+}
+#[cfg(test)]
+mod partial_run_tests {
+    use super::{print_browser_run, run_exit};
+    use crate::sessions::SessionStore;
+    use serde_json::json;
+    #[test]
+    fn a_saved_partial_fails_the_run_unless_it_is_still_being_delivered() {
+        let partial = json!({"status":"partial"});
+        let delivering =
+            json!({"status":"partial","browser":{"remoteDelivery":{"acknowledged":true}}});
+        let completed = json!({"status":"completed"});
+        let running = json!({"status":"running"});
+        for (saved, cancelled, expected) in [
+            (&partial, false, 1),
+            (&partial, true, 1),
+            (&delivering, false, 0),
+            (&delivering, true, 0),
+            (&completed, false, 0),
+            (&completed, true, 0),
+            (&running, true, 130),
+        ] {
+            assert_eq!(
+                run_exit(saved, cancelled, Ok(()), false).unwrap(),
+                expected,
+                "{saved} cancelled={cancelled}"
+            );
+        }
+        let error = run_exit::<()>(
+            &partial,
+            false,
+            Err(anyhow::anyhow!("PUBLIC failure")),
+            false,
+        );
+        assert_eq!(error.unwrap_err().to_string(), "PUBLIC failure");
+    }
+    #[test]
+    fn a_direct_run_prints_the_partial_notice_after_the_saved_log() {
+        let home = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(home.path());
+        let meta = store
+            .create(
+                json!({"prompt":"PUBLIC partial run","model":"gpt-6-pro"}),
+                home.path(),
+                None,
+            )
+            .unwrap();
+        let id = meta["id"].as_str().unwrap();
+        store.append_log(id, None, "PUBLIC cut answer\n").unwrap();
+        store
+            .update(id, |_| {
+                Ok(Some(
+                    json!({"status":"partial","response":{"incompleteReason":"answer-too-short"}}),
+                ))
+            })
+            .unwrap();
+        let mut output = vec![];
+        print_browser_run(&store, id, false, &mut output).unwrap();
+        assert_eq!(
+            String::from_utf8(output).unwrap(),
+            "PUBLIC cut answer\n\nAnswer incomplete (answer-too-short): the saved text may be cut.\n"
+        );
     }
 }
 #[cfg(test)]

@@ -364,6 +364,31 @@ fn count(attachments: usize, format: BundleFormat) -> Result<()> {
     );
     Ok(())
 }
+/// A run's end marker. It reaches the provider only in the prompt, so an attached file cannot
+/// carry it and a cut answer cannot end with it.
+pub(crate) fn new_end_marker() -> String {
+    format!("ALCUIN-END-{}", uuid::Uuid::new_v4().simple())
+}
+pub(crate) fn with_end_marker(prompt: &str, marker: &str) -> String {
+    format!("{prompt}\n\nEnd your reply with this exact line and write nothing after it:\n{marker}")
+}
+fn closing_fence(line: &str) -> bool {
+    line.len() >= 3 && (line.chars().all(|c| c == '`') || line.chars().all(|c| c == '~'))
+}
+/// Whether the answer's last line is the marker, allowing for punctuation around it and for a
+/// code fence closing beneath it.
+pub(crate) fn ends_with_marker(answer: &str, marker: &str) -> bool {
+    let mut lines = answer
+        .lines()
+        .rev()
+        .map(policy::trim)
+        .filter(|line| !line.is_empty());
+    lines
+        .next()
+        .filter(|line| !closing_fence(line))
+        .or_else(|| lines.next())
+        .is_some_and(|line| line.trim_matches(|c: char| !c.is_alphanumeric()) == marker)
+}
 fn zip_instruction(prompt: &str, count: usize, path: &Path) -> String {
     let instruction = format!(
         "The attached `{}` contains {count} selected {} with relative paths preserved. Extract it into a temporary directory, then inspect the resulting file tree with filesystem and search tools before answering.",
@@ -697,6 +722,9 @@ impl BrowserPrompt {
             ));
             lines.push("[preview] Multi-turn is explicit only: Alcuin will send these prompts in order, but it never invents follow-ups automatically.".into());
         }
+        if config["endMarker"] == true {
+            lines.push("[preview] End marker: the answer must end with a line unique to this run, or it is saved as partial.".into());
+        }
         let cookies = if let Some(cookies) = config["inlineCookies"]
             .as_array()
             .filter(|cookies| !cookies.is_empty())
@@ -816,6 +844,44 @@ mod tests {
     }
     use super::*;
     use serde_json::json;
+    #[test]
+    fn end_markers_are_per_run_and_only_the_last_line_counts() {
+        let marker = new_end_marker();
+        assert_ne!(marker, new_end_marker());
+        assert!(
+            marker.starts_with("ALCUIN-END-") && marker.len() == 43,
+            "{marker}"
+        );
+        assert_eq!(
+            with_end_marker("PUBLIC prompt", "PUBLIC-END"),
+            "PUBLIC prompt\n\nEnd your reply with this exact line and write nothing after it:\nPUBLIC-END"
+        );
+        for answer in [
+            "PUBLIC-END",
+            "PUBLIC answer\n\nPUBLIC-END\n\n",
+            "PUBLIC answer\r\n  `PUBLIC-END` \r\n",
+            "PUBLIC answer\n**PUBLIC-END**",
+            "PUBLIC answer\n```\nPUBLIC-END\n```\n",
+            "PUBLIC answer\n~~~~\nPUBLIC-END\n~~~~",
+            "PUBLIC answer\nPUBLIC-END.",
+            "PUBLIC answer\n**PUBLIC-END**.\n",
+            "PUBLIC answer\n\"PUBLIC-END\"",
+        ] {
+            assert!(ends_with_marker(answer, "PUBLIC-END"), "{answer:?}");
+        }
+        for answer in [
+            "",
+            "PUBLIC cut mid-sent",
+            "PUBLIC-END\nPUBLIC more text after the marker",
+            "PUBLIC-END-FORGED",
+            "PUBLIC verdict: PUBLIC-END",
+            "```\nPUBLIC cut mid-sent\n```",
+            "PUBLIC-END\n```\nPUBLIC more text after the fence",
+            "PUBLIC-END\n```\n```",
+        ] {
+            assert!(!ends_with_marker(answer, "PUBLIC-END"), "{answer:?}");
+        }
+    }
     #[test]
     fn full_prompt_and_fallback_corpus_matches_the_pinned_reference() {
         use base64::{Engine as _, engine::general_purpose::STANDARD};
