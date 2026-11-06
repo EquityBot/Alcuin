@@ -346,8 +346,8 @@ mod tests {
             format!("ask{}", ["-admin-"].concat() + &body(60, 31)),
             "da39a3ee5e6b4b0d3255bfef95601890afd80709".into(),
         ];
-        for text in safe {
-            assert_eq!(found(text.as_bytes()), Vec::<&str>::new(), "{text:?}");
+        for (case, text) in safe.into_iter().enumerate() {
+            assert_eq!(found(text.as_bytes()), Vec::<&str>::new(), "case {case}");
         }
     }
     #[test]
