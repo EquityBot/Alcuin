@@ -144,8 +144,7 @@ fn read_text_files(files: &mut [PromptFile], maximum: Option<u64>) -> Result<()>
             file.size_bytes
         );
         if !raw {
-            let bytes = fs::read(&file.path)?;
-            prompts::require_scanned(file, &bytes)?;
+            let bytes = prompts::read_scanned(file)?;
             file.content = String::from_utf8_lossy(&bytes).into_owned();
         }
     }
@@ -555,7 +554,7 @@ impl BrowserPrompt {
             // and a NUL could cut it short.
             let mut undecodable = vec![];
             for file in &self.text_files {
-                if prompts::read_text(&file.path)?.is_none() {
+                if prompts::decode(prompts::read_scanned(file)?).is_none() {
                     undecodable.push(file.display_path.as_str());
                 }
             }
@@ -1012,6 +1011,36 @@ mod tests {
             },
             size_bytes: bytes.len() as u64,
             scanned_sha256: None,
+        }
+    }
+    #[test]
+    fn reread_text_keeps_the_selected_snapshot_size() {
+        for changed in [b"".as_slice(), b"PUBLIC grown".as_slice()] {
+            let root = tempfile::tempdir().unwrap();
+            // Captured snapshots have no scan digest, but their selected size still applies.
+            let source = file(root.path(), "public.txt", b"PUBLIC");
+            fs::write(&source.path, changed).unwrap();
+            let mut files = [source];
+            assert!(read_text_files(&mut files, None).is_err());
+            assert_eq!(files[0].content, "PUBLIC");
+        }
+    }
+    #[test]
+    fn text_bundle_validation_keeps_the_selected_snapshot_size() {
+        for changed in [b"".as_slice(), b"PUBLIC grown".as_slice()] {
+            let root = tempfile::tempdir().unwrap();
+            let source = file(root.path(), "public.txt", b"PUBLIC");
+            fs::write(&source.path, changed).unwrap();
+            assert!(
+                BrowserPrompt::assemble(
+                    &[source],
+                    "Review PUBLIC text",
+                    None,
+                    &json!({"browserBundleFiles": true}),
+                    root.path(),
+                )
+                .is_err()
+            );
         }
     }
     #[test]

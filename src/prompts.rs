@@ -80,6 +80,22 @@ pub(crate) fn require_scanned(file: &PromptFile, bytes: &[u8]) -> Result<()> {
     );
     Ok(())
 }
+/// Rereads only a regular file of the selected size and checks the scanned bytes before use.
+pub(crate) fn read_scanned(file: &PromptFile) -> Result<Vec<u8>> {
+    let entry = crate::native_fs::NativeEntry::open(&file.path, false)?;
+    let mut bytes = vec![];
+    (&entry.handle)
+        .take(file.size_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)?;
+    entry.require_matches(&file.path)?;
+    ensure!(
+        bytes.len() as u64 == file.size_bytes,
+        "{} size changed after its credential scan. Nothing was sent; run it again.",
+        file.display_path
+    );
+    require_scanned(file, &bytes)?;
+    Ok(bytes)
+}
 /// Scans a file at its real path, keeping the bytes when `keep` so that they need no second read.
 /// O_NONBLOCK stops a replaced FIFO hanging the open; only a regular file of the selected size
 /// passes.
@@ -438,7 +454,7 @@ impl FileWalker<'_> {
                 if depth.is_none_or(|depth| depth > 1) {
                     self.walk(&path, rules.clone(), files, visit, depth.map(|d| d - 1))?;
                 }
-            } else if kind.is_file() {
+            } else {
                 files.insert(path);
             }
         }
@@ -744,7 +760,7 @@ fn resolve_files_with(
 pub fn read_text(path: &Path) -> Result<Option<String>> {
     Ok(decode(fs::read(path)?))
 }
-fn decode(bytes: Vec<u8>) -> Option<String> {
+pub(crate) fn decode(bytes: Vec<u8>) -> Option<String> {
     String::from_utf8(bytes)
         .ok()
         .filter(|text| !text.contains('\0'))
