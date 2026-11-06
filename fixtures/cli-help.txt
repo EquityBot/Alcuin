@@ -210,6 +210,9 @@ Options:
   --browser-inline-files                Alias for --browser-attachments never
                                         (refuses resolved files). (default:
                                         false)
+  --browser-end-marker                  Ask for a line unique to this run at the
+                                        end of the answer, and save an answer
+                                        without it as partial. (default: false)
   --browser-bundle-files                Force one browser upload bundle;
                                         auto/zip includes all resolved files.
                                         Multi-file text/source uploads already

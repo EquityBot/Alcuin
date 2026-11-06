@@ -260,13 +260,10 @@ fn failed_owner(store: &SessionStore, record: &Value, consultation: Option<&str>
             return Ok(false);
         };
         let parent = store.stored_for_update(parent)?;
-        if !matches!(
-            parent["status"].as_str(),
-            Some("error" | "cancelled" | "completed")
-        ) {
+        answered = crate::sessions::answered(&parent["status"]);
+        if !answered && !matches!(parent["status"].as_str(), Some("error" | "cancelled")) {
             return Ok(false);
         }
-        answered = parent["status"] == "completed";
     }
     if !answered && kept_for_recovery(&session, chrono::Utc::now()) {
         return Ok(false);

@@ -789,6 +789,34 @@ fn fixture() -> (
         creator,
     )
 }
+/// The page may hold a whole-looking reply, but a saved partial stays as it was saved.
+#[tokio::test]
+async fn a_harvest_never_rewrites_a_saved_partial() {
+    let (_home, store, saved, snapshot, _) = fixture();
+    let id = saved["id"].as_str().unwrap();
+    let response = json!({"status":"incomplete","incompleteReason":"end-marker-missing"});
+    store
+        .update_model(
+            id,
+            "gpt-6-pro",
+            &json!({"status":"partial","response":response}),
+        )
+        .unwrap();
+    store
+        .update(id, |_| {
+            Ok(Some(json!({"status":"partial","response":response})))
+        })
+        .unwrap();
+    let meta = store.directory(id).unwrap().join("meta.json");
+    let before = std::fs::read(&meta).unwrap();
+    assert!(
+        complete_owned(&store, id, &snapshot, &CancellationToken::new())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(std::fs::read(&meta).unwrap(), before);
+}
 #[tokio::test]
 async fn recovered_observation_publishes_full_outputs_without_original_target_authority() {
     let (home, store, saved, mut snapshot, creator) = fixture();

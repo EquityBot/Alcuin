@@ -739,6 +739,17 @@ pub(crate) fn trim_before_first_answer(log: &str) -> &str {
     }
     log
 }
+/// What `session` and a foreground run say about a saved answer that may be cut.
+pub(crate) fn incomplete_notice(meta: &Value) -> Option<String> {
+    crate::sessions::saved_partial(meta).then(|| {
+        format!(
+            "Answer incomplete ({}): the saved text may be cut.",
+            meta["response"]["incompleteReason"]
+                .as_str()
+                .unwrap_or("partial")
+        )
+    })
+}
 /// Reference formatCompletionSummary with the slug.
 pub(crate) fn completion_summary(meta: &Value) -> Option<String> {
     let usage = &meta["usage"];

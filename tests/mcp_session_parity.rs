@@ -244,6 +244,49 @@ async fn wait_without_a_saved_answer_keeps_the_log_apart_from_the_output() {
 }
 
 #[tokio::test]
+async fn wait_reports_a_partial_run_within_its_output_schema() {
+    let home = tempfile::tempdir().unwrap();
+    let server = server(home.path());
+    let meta = server
+        .store
+        .create(
+            json!({"prompt":"PUBLIC partial run","model":"gpt-6-pro"}),
+            home.path(),
+            None,
+        )
+        .unwrap();
+    let id = meta["id"].as_str().unwrap();
+    let incomplete = json!({"status":"incomplete","incompleteReason":"end-marker-missing"});
+    let model = meta["model"].as_str().unwrap();
+    server
+        .store
+        .update_model(
+            id,
+            model,
+            &json!({"status":"partial","response":incomplete}),
+        )
+        .unwrap();
+    server
+        .store
+        .update(id, |_| {
+            Ok(Some(json!({"status":"partial","response":incomplete})))
+        })
+        .unwrap();
+    let wait = structured(
+        server
+            .invoke("wait", json!({"id":id}), &CancellationToken::new())
+            .await
+            .unwrap(),
+    );
+    assert_eq!(
+        (&wait["status"], &wait["waitStatus"]),
+        (&json!("partial"), &json!("terminal"))
+    );
+    assert_eq!(wait["models"][0]["response"], incomplete);
+    conforms(&wait, &output_schema("wait"), "wait");
+}
+
+#[tokio::test]
 async fn consult_dry_runs_keep_the_fallback_consent() {
     let home = tempfile::tempdir().unwrap();
     let server = server(home.path());

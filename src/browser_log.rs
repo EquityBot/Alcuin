@@ -2,6 +2,7 @@
 //! dispatch and the evidence, warning, answer and finish lines after capture.
 use crate::browser_runner::BrowserRequest;
 use crate::cli_execution::{elapsed_compact, to_fixed, token_count};
+use anyhow::{Context, Result};
 use serde_json::{Value, json};
 
 const LARGE_PRO_FAST_INPUT_TOKENS: u64 = 25_000;
@@ -26,6 +27,67 @@ fn grouped(value: u64) -> String {
 }
 fn input_tokens(request: &BrowserRequest) -> Option<u64> {
     request.extra.get("estimatedInputTokens")?.as_u64()
+}
+/// valkyriweb/oracle 4682d91d1a: an answer this short to a prompt this long is a cut capture.
+const TINY_ANSWER_INPUT_TOKENS: u64 = 1_000;
+const TINY_ANSWER_UNITS: usize = 2;
+/// Why a captured answer cannot count as whole, if it cannot. The end marker is the stronger
+/// evidence, so it decides a run that carries one, however short the answer.
+pub(crate) fn incomplete_reason(
+    meta: &Value,
+    request: &BrowserRequest,
+    answer: &str,
+) -> Option<&'static str> {
+    if let Some(marker) = request.extra.get("endMarker").and_then(Value::as_str) {
+        return (!crate::browser_prompt::ends_with_marker(answer, marker))
+            .then_some("end-marker-missing");
+    }
+    let units = crate::policy::trim(answer).encode_utf16().count();
+    let artifact = meta["artifacts"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|artifact| matches!(artifact["kind"].as_str(), Some("image" | "file")));
+    (input_tokens(request).is_some_and(|tokens| tokens >= TINY_ANSWER_INPUT_TOKENS)
+        && (1..=TINY_ANSWER_UNITS).contains(&units)
+        && !artifact)
+        .then_some("answer-too-short")
+}
+pub(crate) fn incomplete_warning(reason: &str) -> Value {
+    let message = if reason == "end-marker-missing" {
+        "Answer lacks this run's end marker, so it may be cut; saved as partial."
+    } else {
+        "Answer is too short for its prompt, so it may be cut; saved as partial."
+    };
+    json!({"code":"browser-answer-incomplete","severity":"warning","message":message,"details":{"reason":reason}})
+}
+/// A captured answer's terminal status, and its response record: partial and incomplete when
+/// there is a reason, otherwise completed.
+pub(crate) fn answer_outcome(
+    response: &Value,
+    reason: Option<&str>,
+) -> Result<(&'static str, Value)> {
+    let status = if reason.is_some() {
+        "incomplete"
+    } else {
+        "completed"
+    };
+    let mut response = crate::sessions::merge_object(response, &json!({"status":status}));
+    let fields = response
+        .as_object_mut()
+        .context("Invalid browser response metadata")?;
+    match reason {
+        Some(reason) => fields.insert("incompleteReason".into(), json!(reason)),
+        None => fields.remove("incompleteReason"),
+    };
+    Ok((
+        if reason.is_some() {
+            "partial"
+        } else {
+            "completed"
+        },
+        response,
+    ))
 }
 /// Reference automation logger words: a `[browser] ` line containing one prints without --verbose.
 const ALWAYS_PRINTED: [&str; 14] = [
@@ -562,6 +624,53 @@ mod tests {
             "promptSha256":"h","optionsSha256":"o","uploadPaths":[],"estimatedInputTokens":tokens,
             "bundled":bundled.map(|count|json!({"originalCount":count,"bundlePath":"/public/bundle.txt","format":"text"}))}))
         .unwrap()
+    }
+    #[test]
+    fn a_marked_answer_needs_its_marker_and_an_unmarked_one_a_plausible_size() {
+        let unmarked = |tokens| request(tokens, None);
+        let mut marked = request(5_000, None);
+        marked.extra.insert("endMarker".into(), json!("PUBLIC-END"));
+        let plain = json!({});
+        for (request, answer, expected) in [
+            (&marked, "PUBLIC whole\nPUBLIC-END\n", None),
+            (&marked, "I\nPUBLIC-END", None),
+            (&marked, "PUBLIC cut mid-sent", Some("end-marker-missing")),
+            (&unmarked(1_000), "I", Some("answer-too-short")),
+            (&unmarked(1_000), " 🦀 \n", Some("answer-too-short")),
+            (&unmarked(1_000), "OK!", None),
+            (&unmarked(999), "I", None),
+            (&unmarked(1_000), "", None),
+        ] {
+            assert_eq!(
+                incomplete_reason(&plain, request, answer),
+                expected,
+                "{answer:?}"
+            );
+        }
+        for kind in ["image", "file"] {
+            let meta = json!({"artifacts":[{"kind":kind}]});
+            assert_eq!(incomplete_reason(&meta, &unmarked(1_000), "I"), None);
+        }
+        let meta = json!({"artifacts":[{"kind":"transcript"}]});
+        assert_eq!(
+            incomplete_reason(&meta, &unmarked(1_000), "I"),
+            Some("answer-too-short")
+        );
+    }
+    #[test]
+    fn a_reason_makes_the_outcome_partial_and_none_clears_an_old_one() {
+        let earlier = json!({"id":"PUBLIC","status":"incomplete","incompleteReason":"earlier"});
+        assert_eq!(
+            answer_outcome(&earlier, None).unwrap(),
+            ("completed", json!({"id":"PUBLIC","status":"completed"}))
+        );
+        assert_eq!(
+            answer_outcome(&Value::Null, Some("end-marker-missing")).unwrap(),
+            (
+                "partial",
+                json!({"status":"incomplete","incompleteReason":"end-marker-missing"})
+            )
+        );
     }
     #[test]
     fn archive_decisions_follow_the_reference_order() {

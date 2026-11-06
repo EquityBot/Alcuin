@@ -2,7 +2,8 @@
 use super::*;
 use crate::{
     browser_chrome::AttachmentEndpoint, browser_profile::ProfileRegistry,
-    browser_runner::RunnerLimits, cdp::Cdp, process::Liveness, storage::DirectoryLock,
+    browser_runner::RunnerLimits, cdp::Cdp, process::Liveness, sessions::saved_partial,
+    storage::DirectoryLock,
 };
 use std::{
     sync::{
@@ -475,8 +476,9 @@ impl Guard {
         if self.admitted.load(Ordering::SeqCst) {
             let publishing = self.publishing.load(Ordering::SeqCst);
             for meta in [&parent, &child] {
-                let status = if publishing && meta["status"] == "completed" {
-                    "completed"
+                let finished = meta["status"] == "completed" || saved_partial(meta);
+                let status = if publishing && finished {
+                    meta["status"].as_str().unwrap_or_default()
                 } else {
                     "running"
                 };
@@ -1020,7 +1022,7 @@ impl Guard {
         let (parent, child) = self.require_base()?;
         remote_policy(&self.store, &parent, &self.cancel, self.deadline)?;
         ensure!(
-            parent["status"] == "completed"
+            (parent["status"] == "completed" || saved_partial(&parent))
                 && child["status"] == "completed"
                 && child["dispatch"]["state"] == "completed"
                 && receipt(&child) == *self.sealed_receipt.get().unwrap_or(&self.initial_receipt)
@@ -1160,7 +1162,8 @@ pub(crate) async fn recover(
             "{error:#}; recovery failure settlement retained: {settlement:#}"
         ));
     }
-    if result.is_ok() && store.stored_for_update(id)?["status"] == "completed" {
+    let saved = store.stored_for_update(id)?;
+    if result.is_ok() && (saved["status"] == "completed" || saved_partial(&saved)) {
         browser_runner::settle_saved_fresh(store, &guard.link.child_id).await;
         browser_runner::settle_saved_idle(store, &guard.link.child_id).await;
         browser_runner::settle_hinted_idle(store, &guard.link.child_id, true).await;

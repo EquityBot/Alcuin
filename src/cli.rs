@@ -1318,6 +1318,7 @@ async fn run_command(args: Vec<OsString>) -> Result<i32> {
     for (key, target) in [
         ("background", "background"),
         ("browser-bundle-files", "browserBundleFiles"),
+        ("browser-end-marker", "browserEndMarker"),
         ("browser-keep-browser", "browserKeepBrowser"),
         ("browser-headless", "browserHeadless"),
         ("browser-hide-window", "browserHideWindow"),
@@ -1512,6 +1513,9 @@ async fn run_command(args: Vec<OsString>) -> Result<i32> {
         }
         if let Some(timeout) = attachment_timeout {
             saved["attachmentTimeoutMs"] = timeout;
+        }
+        if !request.browser["endMarker"].is_null() {
+            saved["endMarker"] = request.browser["endMarker"].clone();
         }
         request.replace_browser_config(saved, &input, &env, &cwd)?;
     } else if let Some(timeout) = attachment_timeout {
@@ -2044,6 +2048,7 @@ const ROOT_RUN_FLAGS: &[&str] = &[
     "browser-inline-files",
     "browser-bundle-files",
     "browser-bundle-format",
+    "browser-end-marker",
     "browser-keep-browser",
     "browser-headless",
     "browser-hide-window",
