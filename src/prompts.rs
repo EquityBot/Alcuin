@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
     fs,
+    io::Read,
     path::{Path, PathBuf},
 };
 
@@ -64,6 +65,77 @@ pub struct PromptFile {
     pub display_path: String,
     pub content: String,
     pub size_bytes: u64,
+    /// SHA-256 of the bytes the credential scan saw. A staged snapshot, already verified, has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scanned_sha256: Option<String>,
+}
+/// Bytes read again after the credential scan must be the bytes it saw, or nothing is sent.
+pub(crate) fn require_scanned(file: &PromptFile, bytes: &[u8]) -> Result<()> {
+    ensure!(
+        file.scanned_sha256
+            .as_deref()
+            .is_none_or(|scanned| scanned == crate::artifacts::sha256(bytes)),
+        "{} changed after its credential scan. Nothing was sent; run it again.",
+        file.display_path
+    );
+    Ok(())
+}
+/// Rereads only a regular file of the selected size and checks the scanned bytes before use.
+pub(crate) fn read_scanned(file: &PromptFile) -> Result<Vec<u8>> {
+    let entry = crate::native_fs::NativeEntry::open(&file.path, false)?;
+    let mut bytes = vec![];
+    (&entry.handle)
+        .take(file.size_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)?;
+    entry.require_matches(&file.path)?;
+    ensure!(
+        bytes.len() as u64 == file.size_bytes,
+        "{} size changed after its credential scan. Nothing was sent; run it again.",
+        file.display_path
+    );
+    require_scanned(file, &bytes)?;
+    Ok(bytes)
+}
+/// Scans a file at its real path, keeping the bytes when `keep` so that they need no second read.
+/// O_NONBLOCK stops a replaced FIFO hanging the open; only a regular file of the selected size
+/// passes.
+fn scan_file(
+    path: &Path,
+    size: u64,
+    keep: bool,
+) -> Result<(PathBuf, crate::secret_scan::Scan, Vec<u8>)> {
+    let canonical = fs::canonicalize(path)?;
+    let entry = crate::native_fs::NativeEntry::open(&canonical, false)?;
+    ensure!(
+        entry.handle.metadata()?.is_file(),
+        "{} is not a regular file",
+        path.display()
+    );
+    let mut reader = (&entry.handle).take(size.saturating_add(1));
+    let mut bytes = vec![];
+    let scan = if keep {
+        reader.read_to_end(&mut bytes)?;
+        crate::secret_scan::scan(bytes.as_slice())?
+    } else {
+        crate::secret_scan::scan(reader)?
+    };
+    entry.require_matches(&canonical)?;
+    ensure!(
+        scan.bytes == size,
+        "{} changed while it was being scanned",
+        path.display()
+    );
+    Ok((canonical, scan, bytes))
+}
+/// Each override is one real file; `resolve_files_with` then requires that the run selected it.
+fn allowed_files(allowed: &[String], cwd: &Path) -> Result<BTreeSet<PathBuf>> {
+    allowed
+        .iter()
+        .map(|value| {
+            fs::canonicalize(absolute(cwd, value))
+                .with_context(|| format!("Cannot resolve --allow-secret-file {value}"))
+        })
+        .collect()
 }
 fn dynamic(pattern: &str) -> bool {
     pattern.contains(['*', '?', '[', '{', '('])
@@ -382,7 +454,7 @@ impl FileWalker<'_> {
                 if depth.is_none_or(|depth| depth > 1) {
                     self.walk(&path, rules.clone(), files, visit, depth.map(|d| d - 1))?;
                 }
-            } else if kind.is_file() {
+            } else {
                 files.insert(path);
             }
         }
@@ -415,13 +487,24 @@ pub fn resolve_files(
     max_bytes: u64,
     read_contents: bool,
 ) -> Result<Vec<PromptFile>> {
-    resolve_files_with(inputs, cwd, max_bytes, read_contents, &mut |_| {})
+    resolve_files_allowing(inputs, cwd, max_bytes, read_contents, &[])
+}
+/// `resolve_files` for a run that names files to send despite a credential match.
+pub fn resolve_files_allowing(
+    inputs: &[String],
+    cwd: &Path,
+    max_bytes: u64,
+    read_contents: bool,
+    allowed: &[String],
+) -> Result<Vec<PromptFile>> {
+    resolve_files_with(inputs, cwd, max_bytes, read_contents, allowed, &mut |_| {})
 }
 fn resolve_files_with(
     inputs: &[String],
     cwd: &Path,
     max_bytes: u64,
     read_contents: bool,
+    allowed: &[String],
     visit: &mut impl FnMut(&Path),
 ) -> Result<Vec<PromptFile>> {
     assert_brace_nesting(inputs)?;
@@ -561,9 +644,11 @@ fn resolve_files_with(
         // Reference validation: a missing path fails at once, every oversized file is listed.
         let metadata = fs::metadata(&path)
             .with_context(|| format!("Missing file or directory: {}", relative(&path, cwd)))?;
-        if !metadata.is_file() {
-            continue;
-        }
+        ensure!(
+            metadata.is_file(),
+            "Not a regular file: {}",
+            relative(&path, cwd)
+        );
         let size = metadata.len();
         if max_bytes != 0 && size > max_bytes {
             oversized.push(format!("{} ({})", relative(&path, cwd), format_bytes(size)));
@@ -590,11 +675,58 @@ fn resolve_files_with(
             oversized.join("\n- ")
         );
     }
+    let total = accepted
+        .iter()
+        .fold(0u64, |total, (_, size)| total.saturating_add(*size));
+    ensure!(
+        total <= crate::secret_scan::BUDGET_BYTES,
+        "The selected files total {}; a run may send at most {} so that all of it can be scanned for credentials.",
+        format_bytes(total),
+        format_bytes(crate::secret_scan::BUDGET_BYTES)
+    );
+    let allowed = allowed_files(allowed, cwd)?;
+    let mut unused = allowed.clone();
+    let mut matched = vec![];
+    let mut overridden = vec![];
+    let mut scanned = vec![];
+    for (path, size) in accepted {
+        let display = relative(&path, cwd);
+        let (canonical, scan, bytes) = scan_file(&path, size, read_contents)
+            .with_context(|| format!("Cannot scan {display}"))?;
+        let lines = crate::secret_scan::lines(&display, &scan.findings);
+        if allowed.contains(&canonical) {
+            unused.remove(&canonical);
+            overridden.extend(lines);
+        } else {
+            matched.extend(lines);
+        }
+        scanned.push((path, size, scan.sha256, bytes));
+    }
+    ensure!(
+        unused.is_empty(),
+        "--allow-secret-file names a file this run does not send: {}",
+        unused
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    ensure!(
+        matched.is_empty(),
+        "Refusing files whose contents match a credential pattern:\n- {}\nNothing was sent. Remove the value, or for a test fixture pass --allow-secret-file <path> on the CLI (MCP callers cannot override this).",
+        matched.join("\n- ")
+    );
+    if !overridden.is_empty() {
+        eprintln!(
+            "Sending despite a credential match (--allow-secret-file):\n- {}",
+            overridden.join("\n- ")
+        );
+    }
     let mut output = vec![];
     let mut undecodable = vec![];
-    for (path, size) in accepted {
+    for (path, size, scanned_sha256, bytes) in scanned {
         let content = if read_contents {
-            match read_text(&path)? {
+            match decode(bytes) {
                 Some(content) => content,
                 None => {
                     undecodable.push(relative(&path, cwd));
@@ -609,6 +741,7 @@ fn resolve_files_with(
             path,
             content,
             size_bytes: size,
+            scanned_sha256: Some(scanned_sha256),
         });
     }
     if !undecodable.is_empty() {
@@ -625,9 +758,12 @@ fn resolve_files_with(
 /// Reads a file as text; `None` when it is not valid UTF-8 or holds a NUL byte, so binary bytes are
 /// never garbled into a prompt and no NUL can cut it short further on.
 pub fn read_text(path: &Path) -> Result<Option<String>> {
-    Ok(String::from_utf8(fs::read(path)?)
+    Ok(decode(fs::read(path)?))
+}
+pub(crate) fn decode(bytes: Vec<u8>) -> Option<String> {
+    String::from_utf8(bytes)
         .ok()
-        .filter(|text| !text.contains('\0')))
+        .filter(|text| !text.contains('\0'))
 }
 fn language(path: &str) -> &'static str {
     match Path::new(path)
@@ -775,7 +911,7 @@ mod traversal_tests {
             Some("PUBLIC text")
         );
         assert_eq!(read_text(&root.join("nul.txt")).unwrap(), None);
-        let error = resolve_files_with(&["*.txt".into()], root, 1024, true, &mut |_| {})
+        let error = resolve_files_with(&["*.txt".into()], root, 1024, true, &[], &mut |_| {})
             .unwrap_err()
             .to_string();
         assert!(
@@ -808,6 +944,7 @@ mod traversal_tests {
             root,
             1024,
             true,
+            &[],
             &mut |p| visited.push(p.to_owned()),
         )
         .unwrap();
@@ -823,6 +960,7 @@ mod traversal_tests {
             root,
             1024,
             true,
+            &[],
             &mut |p| visited.push(p.to_owned()),
         )
         .unwrap();
@@ -834,13 +972,25 @@ mod traversal_tests {
 mod bounded_depth_tests {
     use super::*;
     #[test]
+    fn a_file_whose_size_moved_after_selection_fails_its_scan() {
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join("public.txt");
+        fs::write(&path, "PUBLIC").unwrap();
+        for (size, keep) in [(5, false), (7, false), (5, true), (7, true)] {
+            let error = scan_file(&path, size, keep).expect_err("refused");
+            assert!(error.to_string().contains("changed while"), "{error:#}");
+        }
+        assert!(scan_file(&path, 6, false).unwrap().2.is_empty());
+        assert_eq!(scan_file(&path, 6, true).unwrap().2, b"PUBLIC");
+    }
+    #[test]
     fn a_non_recursive_glob_does_not_visit_deeper_unmatched_directories() {
         let home = tempfile::tempdir().unwrap();
         let root = home.path();
         fs::create_dir_all(root.join("src/unrelated/deep/cache")).unwrap();
         fs::write(root.join("src/public.rs"), "PUBLIC").unwrap();
         let mut visited = vec![];
-        let files = resolve_files_with(&["src/*.rs".into()], root, 1024, true, &mut |p| {
+        let files = resolve_files_with(&["src/*.rs".into()], root, 1024, true, &[], &mut |p| {
             visited.push(p.to_owned())
         })
         .unwrap();

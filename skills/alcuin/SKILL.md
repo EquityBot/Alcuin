@@ -9,7 +9,7 @@ Alcuin sends a prompt and the files you choose to a model and saves the answer a
 
 ## Before you send
 
-Everything you attach goes to the provider. Show the user the provider and the files, and get their approval before you send. Never attach secrets. Preview what would go:
+Everything you attach goes to the provider. Show the user the provider and the files, and get their approval before you send. Never attach secrets. Alcuin refuses a run whose files or prompt match a credential pattern: remove the value, and pass `--allow-secret-file <path>` only for a test fixture the user has confirmed is fabricated. Preview what would go:
 
 ```sh
 alcuin --dry-run summary --files-report -p "Review this module" --file src/lib.rs

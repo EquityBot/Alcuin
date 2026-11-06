@@ -141,6 +141,15 @@ impl StagedUploads {
             session.require_matches(&session_path)?;
             directory.require_matches(&path)?;
             let mut source = UploadFile::open(&attachment.path)?;
+            // From here on `open` verifies this digest before every send.
+            ensure!(
+                attachment
+                    .scanned_sha256
+                    .as_ref()
+                    .is_none_or(|scanned| source.manifest()["sha256"] == *scanned),
+                "{} changed after its credential scan. Nothing was sent; run it again.",
+                attachment.display_path
+            );
             ensure!(
                 (!attachment.generated_bundle
                     && !crate::browser_prompt::raw_upload(&attachment.path))
@@ -197,6 +206,7 @@ impl StagedUploads {
                         .as_u64()
                         .context("Staged source size missing")?,
                     generated_bundle: saved.generated_bundle,
+                    scanned_sha256: None,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -382,6 +392,7 @@ mod tests {
                 display_path: "public.png".into(),
                 size_bytes: 18,
                 generated_bundle: false,
+                scanned_sha256: None,
             }],
         )
         .unwrap();

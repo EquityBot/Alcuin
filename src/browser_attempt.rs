@@ -1006,6 +1006,7 @@ mod tests {
                 display_path: name.into(),
                 size_bytes: bytes.len() as u64,
                 generated_bundle: false,
+                scanned_sha256: None,
             }],
         )
         .unwrap()

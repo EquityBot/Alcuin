@@ -23,6 +23,9 @@ Options:
                                         configurable via
                                         ORACLE_MAX_FILE_SIZE_BYTES or
                                         config.maxFileSizeBytes). (default: [])
+  --allow-secret-file <paths...>        Send these selected files, each by
+                                        exact path, despite a credential match.
+                                        Applies to this run only.
   --max-file-size-bytes <bytes>         Reject files larger than this many
                                         bytes.
   --copy-markdown                       Copy the assembled markdown bundle to

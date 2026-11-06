@@ -188,6 +188,7 @@ fn materialise_fallback_with(
                 } else {
                     String::from_utf8_lossy(&bytes).into_owned()
                 },
+                scanned_sha256: None,
             });
             originals.push(bytes);
         }

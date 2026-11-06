@@ -119,9 +119,18 @@ pub fn raw_upload(path: &Path) -> bool {
         .to_lowercase();
     MEDIA.contains(&extension.as_str()) || ARCHIVES.contains(&extension.as_str())
 }
-pub fn discover(inputs: &[String], cwd: &Path, maximum: Option<u64>) -> Result<Vec<PromptFile>> {
-    let mut files = prompts::resolve_files(inputs, cwd, 0, false)?;
-    for file in &mut files {
+pub fn discover(
+    inputs: &[String],
+    cwd: &Path,
+    maximum: Option<u64>,
+    allowed: &[String],
+) -> Result<Vec<PromptFile>> {
+    let mut files = prompts::resolve_files_allowing(inputs, cwd, 0, false, allowed)?;
+    read_text_files(&mut files, maximum)?;
+    Ok(files)
+}
+fn read_text_files(files: &mut [PromptFile], maximum: Option<u64>) -> Result<()> {
+    for file in files {
         let raw = raw_upload(&file.path);
         let limit = if raw {
             maximum.unwrap_or(0)
@@ -135,10 +144,11 @@ pub fn discover(inputs: &[String], cwd: &Path, maximum: Option<u64>) -> Result<V
             file.size_bytes
         );
         if !raw {
-            file.content = String::from_utf8_lossy(&fs::read(&file.path)?).into_owned();
+            let bytes = prompts::read_scanned(file)?;
+            file.content = String::from_utf8_lossy(&bytes).into_owned();
         }
     }
-    Ok(files)
+    Ok(())
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -148,6 +158,9 @@ pub struct Attachment {
     pub size_bytes: u64,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub generated_bundle: bool,
+    /// What `StagedUploads::capture` must find; none for bytes that are already staged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scanned_sha256: Option<String>,
 }
 impl Attachment {
     fn file(file: &PromptFile) -> Self {
@@ -160,6 +173,7 @@ impl Attachment {
                 file.content.len() as u64
             },
             generated_bundle: false,
+            scanned_sha256: file.scanned_sha256.clone(),
         }
     }
 }
@@ -540,7 +554,7 @@ impl BrowserPrompt {
             // and a NUL could cut it short.
             let mut undecodable = vec![];
             for file in &self.text_files {
-                if prompts::read_text(&file.path)?.is_none() {
+                if prompts::decode(prompts::read_scanned(file)?).is_none() {
                     undecodable.push(file.display_path.as_str());
                 }
             }
@@ -593,6 +607,7 @@ impl BrowserPrompt {
                     bytes.len() as u64 == source.size_bytes,
                     "Browser bundle source size changed"
                 );
+                prompts::require_scanned(source, &bytes)?;
                 contents.push(bytes);
             }
             let entries: Vec<_> = sources
@@ -612,6 +627,7 @@ impl BrowserPrompt {
             display_path: path.to_string_lossy().into_owned(),
             size_bytes: bytes.len() as u64,
             generated_bundle: true,
+            scanned_sha256: Some(crate::artifacts::sha256(&bytes)),
         }];
         attachments.extend(native);
         let count = if format == BundleFormat::Zip {
@@ -920,16 +936,21 @@ mod tests {
                 inputs.push(name.to_owned());
             }
             let options = &case["options"];
-            let result = discover(&inputs, root.path(), options["maxFileSizeBytes"].as_u64())
-                .and_then(|files| {
-                    BrowserPrompt::assemble(
-                        &files,
-                        options["prompt"].as_str().unwrap(),
-                        options["system"].as_str(),
-                        options,
-                        root.path(),
-                    )
-                });
+            let result = discover(
+                &inputs,
+                root.path(),
+                options["maxFileSizeBytes"].as_u64(),
+                &[],
+            )
+            .and_then(|files| {
+                BrowserPrompt::assemble(
+                    &files,
+                    options["prompt"].as_str().unwrap(),
+                    options["system"].as_str(),
+                    options,
+                    root.path(),
+                )
+            });
             let mut plan = match result {
                 Ok(plan) => plan,
                 Err(error) => {
@@ -961,6 +982,21 @@ mod tests {
         }
         assert!(differences.is_empty(), "{}", differences.join("\n"));
     }
+    #[test]
+    fn a_text_file_changed_after_its_scan_is_not_read_into_the_prompt() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("public.txt"), "PUBLIC one").unwrap();
+        let mut files =
+            prompts::resolve_files(&["public.txt".into()], root.path(), 0, false).unwrap();
+        fs::write(root.path().join("public.txt"), "PUBLIC two").unwrap();
+        let error = read_text_files(&mut files, None).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("changed after its credential scan")
+        );
+        assert!(files[0].content.is_empty());
+    }
     fn file(root: &Path, name: &str, bytes: &[u8]) -> PromptFile {
         let path = root.join(name);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -974,6 +1010,37 @@ mod tests {
                 String::from_utf8_lossy(bytes).into_owned()
             },
             size_bytes: bytes.len() as u64,
+            scanned_sha256: None,
+        }
+    }
+    #[test]
+    fn reread_text_keeps_the_selected_snapshot_size() {
+        for changed in [b"".as_slice(), b"PUBLIC grown".as_slice()] {
+            let root = tempfile::tempdir().unwrap();
+            // Captured snapshots have no scan digest, but their selected size still applies.
+            let source = file(root.path(), "public.txt", b"PUBLIC");
+            fs::write(&source.path, changed).unwrap();
+            let mut files = [source];
+            assert!(read_text_files(&mut files, None).is_err());
+            assert_eq!(files[0].content, "PUBLIC");
+        }
+    }
+    #[test]
+    fn text_bundle_validation_keeps_the_selected_snapshot_size() {
+        for changed in [b"".as_slice(), b"PUBLIC grown".as_slice()] {
+            let root = tempfile::tempdir().unwrap();
+            let source = file(root.path(), "public.txt", b"PUBLIC");
+            fs::write(&source.path, changed).unwrap();
+            assert!(
+                BrowserPrompt::assemble(
+                    &[source],
+                    "Review PUBLIC text",
+                    None,
+                    &json!({"browserBundleFiles": true}),
+                    root.path(),
+                )
+                .is_err()
+            );
         }
     }
     #[test]

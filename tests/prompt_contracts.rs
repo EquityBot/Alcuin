@@ -110,6 +110,7 @@ fn render_uses_reference_sections_line_numbers_and_safe_fences() {
         display_path: "example.rs".into(),
         content: "fn main() {\n    // ``` nested\n}\n".into(),
         size_bytes: 38,
+        scanned_sha256: None,
     };
     assert_eq!(
         prompts::render("System", "Prompt", &[file]),
@@ -127,6 +128,7 @@ fn file_sections_use_javascript_trailing_whitespace_and_preserve_internal_crlf()
         display_path: "public.txt".into(),
         content: "PUBLIC first\r\nsecond\u{85}\u{feff}".into(),
         size_bytes: 0,
+        scanned_sha256: None,
     };
     assert_eq!(
         prompts::file_sections(&[file], false, true),
@@ -141,6 +143,7 @@ fn file_sections_keep_every_ended_line_and_drop_only_the_final_line_ending() {
             display_path: "x".into(),
             content: content.into(),
             size_bytes: 0,
+            scanned_sha256: None,
         };
         prompts::file_sections(&[file], false, numbers)
     };
@@ -467,6 +470,7 @@ fn project_sources_plan_counts_duplicates_and_batches_ten() {
             display_path: format!("source-{i}.md"),
             content: String::new(),
             size_bytes: 10,
+            scanned_sha256: None,
         })
         .collect::<Vec<_>>();
     let plan = project_sources::upload_plan(&files);
@@ -866,7 +870,7 @@ fn a_text_bundle_refuses_files_that_are_not_utf8_and_zip_keeps_their_bytes() {
     let root = home.path();
     fs::write(root.join("public.txt"), b"PUBLIC\xff").unwrap();
     fs::write(root.join("ok.txt"), "PUBLIC").unwrap();
-    let files = discover(&["public.txt".into(), "ok.txt".into()], root, None).unwrap();
+    let files = discover(&["public.txt".into(), "ok.txt".into()], root, None, &[]).unwrap();
     let parent = tempfile::tempdir().unwrap();
     let assemble = |format: &str| {
         BrowserPrompt::assemble(

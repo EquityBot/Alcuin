@@ -309,16 +309,39 @@ fn resolve_origin(
         .is_some_and(|value| !policy::trim(value).is_empty())
         || input.get("maxFileSizeBytes").is_some_and(|v| !v.is_null())
         || config.get("maxFileSizeBytes").is_some_and(|v| !v.is_null());
+    // MCP callers read untrusted text, so only a person at the CLI can name these files.
+    let allowed: Vec<String> = input["allowSecretFiles"]
+        .as_array()
+        .filter(|_| !mcp)
+        .into_iter()
+        .flatten()
+        .filter_map(|value| value.as_str().map(str::to_owned))
+        .collect();
     let files = if engine == "browser" && input["renderOnly"] != true {
-        crate::browser_prompt::discover(&file_inputs, cwd, explicit_maximum.then_some(max_bytes))?
+        crate::browser_prompt::discover(
+            &file_inputs,
+            cwd,
+            explicit_maximum.then_some(max_bytes),
+            &allowed,
+        )?
     } else {
-        prompts::resolve_files(&file_inputs, cwd, max_bytes, true)?
+        prompts::resolve_files_allowing(&file_inputs, cwd, max_bytes, true, &allowed)?
     };
     let system = input["system"]
         .as_str()
         .map(policy::trim)
         .filter(|s| !s.is_empty())
         .unwrap_or(prompts::DEFAULT_SYSTEM);
+    let follow_ups = input["browserFollowUps"].as_array().into_iter().flatten();
+    crate::secret_scan::refuse_text(
+        [("prompt", prompt.as_str()), ("system prompt", system)]
+            .into_iter()
+            .chain(
+                follow_ups
+                    .filter_map(Value::as_str)
+                    .map(|text| ("follow-up", text)),
+            ),
+    )?;
     let markdown = prompts::render(system, &prompt, &files);
     let user_prompt = prompts::build_user_prompt(&prompt, &files);
     let mut options = json!({"prompt":prompt,"file":file_inputs,"model":model,"mode":engine,"maxFileSizeBytes":max_bytes,"search":input["search"].as_bool().unwrap_or(config["search"]!="off")});

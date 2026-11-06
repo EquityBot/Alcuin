@@ -15,6 +15,9 @@
     "flags": "-f, --file <paths...>"
   },
   {
+    "flags": "--allow-secret-file <paths...>"
+  },
+  {
     "flags": "--max-file-size-bytes <bytes>"
   },
   {
