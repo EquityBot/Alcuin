@@ -852,6 +852,63 @@ pub fn file_sections(files: &[PromptFile], indexed: bool, numbers: bool) -> Stri
         .collect::<Vec<_>>()
         .join("\n\n")
 }
+/// Reads back the display path and text of each section `file_sections` wrote, as a saved prompt
+/// or text bundle holds them. Anything else, such as the prompt before the sections, is skipped.
+/// A file's final line ending is gone, as `file_sections` drops it.
+pub fn parse_file_sections(text: &str) -> Vec<(String, String)> {
+    let lines: Vec<&str> = text.split('\n').collect();
+    let mut sections = vec![];
+    let mut at = 0;
+    while at < lines.len() {
+        match parse_file_section(&lines[at..]) {
+            Some((section, used)) => {
+                sections.push(section);
+                at += used;
+            }
+            None => at += 1,
+        }
+    }
+    sections
+}
+/// One section from its header line, with the number of lines it spans.
+fn parse_file_section(lines: &[&str]) -> Option<((String, String), usize)> {
+    let (index, path) = lines.first()?.strip_prefix("### File")?.split_once(": ")?;
+    let indexed = index
+        .strip_prefix(' ')
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+    if !(index.is_empty() || indexed) {
+        return None;
+    }
+    let count = match lines.get(1)?.strip_prefix("Lines: ") {
+        Some("0") => Some(0),
+        Some(range) => Some(range.strip_prefix("1-")?.parse::<usize>().ok()?),
+        None => None,
+    };
+    let opening = 1 + usize::from(count.is_some());
+    let fence_line = lines.get(opening)?;
+    let ticks = fence_line.len() - fence_line.trim_start_matches('`').len();
+    let fence = &fence_line[..ticks];
+    if ticks < 3 || fence_line[ticks..] != *language(path) {
+        return None;
+    }
+    let body = &lines[opening + 1..];
+    let length = body.iter().position(|line| *line == fence)?;
+    let body = &body[..length];
+    let text = match count {
+        None => body.join("\n"),
+        Some(0) if body == [""] => String::new(),
+        Some(count) if body.len() == count => {
+            let width = count.to_string().len();
+            body.iter()
+                .enumerate()
+                .map(|(i, line)| line.strip_prefix(&format!("{:>width$} | ", i + 1)))
+                .collect::<Option<Vec<_>>>()?
+                .join("\n")
+        }
+        Some(_) => return None,
+    };
+    Some(((path.to_owned(), text), opening + length + 2))
+}
 pub fn render(system: &str, prompt: &str, files: &[PromptFile]) -> String {
     let raw = format!(
         "[SYSTEM]\n{system}\n\n[USER]\n{}\n\n{}",
@@ -900,6 +957,46 @@ fn scaled(value: f64) -> String {
 #[cfg(test)]
 mod traversal_tests {
     use super::*;
+    #[test]
+    fn parse_file_sections_reads_back_what_file_sections_wrote() {
+        let file = |path: &str, content: &str| PromptFile {
+            path: PathBuf::from(path),
+            display_path: path.into(),
+            content: content.into(),
+            size_bytes: 0,
+            scanned_sha256: None,
+        };
+        let twelve: String = (1..=12).map(|n| format!("line {n}\n")).collect();
+        let files = [
+            file(
+                "src/a.rs",
+                "fn a() {}\n// ``` and ````\n  1 | not a number\n",
+            ),
+            file("notes: x.md", ""),
+            file("b.txt", "one\r\n\ntwo"),
+            file("c.py", &twelve),
+        ];
+        let expected = [
+            ("src/a.rs", "fn a() {}\n// ``` and ````\n  1 | not a number"),
+            ("notes: x.md", ""),
+            ("b.txt", "one\r\n\ntwo"),
+            ("c.py", twelve.trim_end()),
+        ]
+        .map(|(path, text)| (path.to_owned(), text.to_owned()));
+        for indexed in [false, true] {
+            for numbers in [false, true] {
+                let sent = format!(
+                    "PUBLIC prompt\n### File: not a section\n\n{}\n",
+                    file_sections(&files, indexed, numbers)
+                );
+                assert_eq!(
+                    parse_file_sections(&sent),
+                    expected,
+                    "indexed {indexed}, numbers {numbers}"
+                );
+            }
+        }
+    }
     #[test]
     fn a_text_file_holding_a_nul_byte_is_refused_like_binary() {
         let home = tempfile::tempdir().unwrap();

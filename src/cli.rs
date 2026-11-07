@@ -136,6 +136,9 @@ fn command(spec: &Value) -> Command {
                 .to_owned(),
         )
         .disable_help_subcommand(true);
+    if let Some(text) = spec["afterHelp"].as_str() {
+        command = command.after_help(text.to_owned());
+    }
     for (index, part) in parts.enumerate() {
         let id = part
             .trim_matches(['<', '>', '[', ']'])

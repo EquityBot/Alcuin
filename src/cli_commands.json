@@ -572,6 +572,7 @@
   {
     "command": "ground <session>",
     "about": "Flag cited lines and quotes in a session's saved answer that the files it sent do not contain.",
+    "afterHelp": "Exits 1 when it flags anything, 0 when it flags nothing and 2 when it cannot check. It reads the bytes the session saved when it sent its files, or the files as they are now when no copy remains.\n\nLimits: inline code counts as a quote, so a name the answer proposes is flagged; a quote that wraps across 2 lines of the answer is not checked; file#L10 citations are ignored; a name such as example.com:8080 reads as a host and is skipped unless a sent file has that name.",
     "options": [
       {
         "flags": "--json",

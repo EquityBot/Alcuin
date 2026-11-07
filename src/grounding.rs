@@ -6,31 +6,36 @@ use anyhow::{Context, Result};
 use regex::Regex;
 use serde::Serialize;
 use serde_json::Value;
-use std::{fs, path::PathBuf, sync::LazyLock};
+use std::{fs, path::Path, sync::LazyLock};
 
 /// Quotes shorter than this, after whitespace is collapsed, are too common to be evidence.
 const MIN_QUOTE_LENGTH: usize = 8;
 /// What the session's prompt is called among the sent texts. It has no extension, so no
 /// reference can name it, but the answer may quote it.
 const PROMPT: &str = "prompt";
+// shortcut: a name without a folder that ends in one of these common top-level domains reads as
+// a host and port (`example.com:8080`), so it is not reported unless a sent file has that name.
+// The public suffix list is the upgrade path.
+const HOST_SUFFIXES: &[&str] = &[
+    "com", "net", "org", "io", "ai", "dev", "app", "co", "au", "uk", "local", "internal",
+];
 
-// A path with an extension, then :line or :start-end. `references` checks that the path does
-// not continue a longer token, such as a URL host before its port.
-const REFERENCE: &str = r"((?:[A-Za-z0-9_.-]+[\\/])*[A-Za-z0-9_-][A-Za-z0-9_.-]*\.[A-Za-z][A-Za-z0-9]{0,7}):([0-9]+)(?:-([0-9]+))?";
+// An optional drive, home or root prefix, a path with an extension, then :line or :start-end.
+// `references` checks that the path does not continue a longer token, such as a URL host.
+const REFERENCE: &str = r"((?:[A-Za-z]:[\\/]|~?/)?(?:[\p{L}\p{N}\p{M}_.-]+[\\/])*[\p{L}\p{N}\p{M}_-][\p{L}\p{N}\p{M}_.-]*\.[A-Za-z][A-Za-z0-9]{0,7}):([0-9]+)(?:-([0-9]+))?";
 static REFERENCE_AT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(&format!("^{REFERENCE}")).expect("reference pattern"));
 static REFERENCE_ONLY: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(&format!("^{REFERENCE}$")).expect("reference pattern"));
 static FENCE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\s*(`{3,}|~{3,})").expect("fence pattern"));
-static DIFF: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?m)^@@ -[0-9]+(?:,[0-9]+)? \+[0-9]+(?:,[0-9]+)? @@").expect("diff pattern")
-});
 static HUNK: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^@@ -[0-9]+(?:,[0-9]+)? \+([0-9]+)(?:,([0-9]+))? @@").expect("hunk pattern")
+    Regex::new(r"^@@ -([0-9]+)(?:,([0-9]+))? \+([0-9]+)(?:,([0-9]+))? @@").expect("hunk pattern")
 });
 static WORD: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[\p{L}\p{N}]$").expect("word pattern"));
+static PATH_CHAR: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[\p{L}\p{N}\p{M}_./\\-]$").expect("path pattern"));
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -38,6 +43,16 @@ pub enum Status {
     Grounded,
     OutOfRange,
     NotSent,
+}
+/// Where the sent files' text came from.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SentFiles {
+    /// The bytes the session saved when it sent them.
+    #[default]
+    Saved,
+    /// No saved copy remains, so the session's file selection was read as it is now.
+    Current,
 }
 #[derive(Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -59,9 +74,10 @@ pub struct QuoteCheck {
 #[derive(Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Report {
+    pub sent_files: SentFiles,
     pub references: Vec<ReferenceCheck>,
     pub quotes: Vec<QuoteCheck>,
-    /// Sent files modified after the session was created, checked against their current text.
+    /// With current files only: those modified after the session was created.
     pub changed_files: Vec<String>,
     /// Sent files that are not UTF-8 text, so nothing was checked against them.
     pub skipped_files: Vec<String>,
@@ -76,6 +92,7 @@ impl Report {
     }
 }
 pub struct SentFile {
+    /// Absolute, or relative to the session's working directory.
     pub path: String,
     pub text: String,
 }
@@ -97,10 +114,34 @@ fn number(digits: &str) -> u64 {
     digits.parse().unwrap_or(u64::MAX)
 }
 fn path_char(character: char) -> bool {
-    character.is_ascii_alphanumeric() || matches!(character, '_' | '/' | '\\' | '.' | '-')
+    PATH_CHAR.is_match(character.encode_utf8(&mut [0; 4]))
 }
 fn word(character: char) -> bool {
     WORD.is_match(character.encode_utf8(&mut [0; 4]))
+}
+fn absolute(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    path.starts_with('/') || bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
+}
+/// A lower-case path with forward slashes, joined to `cwd` unless absolute, without `.` or `..`.
+fn key(cwd: &str, path: &str) -> String {
+    let path = path.replace('\\', "/");
+    let joined = if absolute(&path) {
+        path
+    } else {
+        format!("{}/{path}", cwd.replace('\\', "/"))
+    };
+    let mut parts = vec![];
+    for part in joined.split('/') {
+        match part {
+            "." => {}
+            ".." => {
+                parts.pop();
+            }
+            _ => parts.push(part),
+        }
+    }
+    parts.join("/").to_lowercase()
 }
 
 /// Each `path:line` reference that starts a token: one not preceded by a path character.
@@ -157,35 +198,44 @@ const QUOTE_STYLES: [QuoteStyle; 4] = [
         close_boundary: false,
     },
 ];
-/// The index of the mark that closes a quote opened at `open`, as the fork's
-/// `\S(?:[^\n]*?\S)?` finds it: content of 2 or more characters, shortest first, then 1.
-fn closing(chars: &[char], open: usize, style: &QuoteStyle) -> Option<usize> {
-    if chars[open] != style.open || style.open_boundary && open > 0 && word(chars[open - 1]) {
-        return None;
-    }
-    let first = open + 1;
-    if chars.get(first).is_none_or(|c| c.is_whitespace()) {
-        return None;
-    }
-    let closes = |at: usize| {
-        chars.get(at).is_some_and(|c| style.close.contains(c))
-            && !(style.close_boundary && chars.get(at + 1).is_some_and(|c| word(*c)))
-    };
-    (first + 2..chars.len())
-        .find(|&at| !chars[at - 1].is_whitespace() && closes(at))
-        .or_else(|| closes(first + 1).then_some(first + 1))
-}
-/// The quoted spans in one line, by style and then position.
+/// The quoted spans in one line, by style and then position. A quote closes as the fork's
+/// `\S(?:[^\n]*?\S)?` finds it: at the nearest mark after 2 or more characters, else after 1.
 fn quotes(line: &str) -> Vec<String> {
     let chars: Vec<char> = line.chars().collect();
     let span = |from: usize, to: usize| chars[from..to].iter().collect::<String>();
     let mut found = vec![];
     for style in &QUOTE_STYLES {
+        let closes = |at: usize| {
+            chars.get(at).is_some_and(|c| style.close.contains(c))
+                && !(style.close_boundary && chars.get(at + 1).is_some_and(|c| word(*c)))
+        };
+        // The nearest index at or after each position that closes content ending in a
+        // non-space, found once per line so that many unclosed quotes stay linear.
+        let mut next = vec![None; chars.len() + 1];
+        for at in (1..chars.len()).rev() {
+            next[at] = if !chars[at - 1].is_whitespace() && closes(at) {
+                Some(at)
+            } else {
+                next[at + 1]
+            };
+        }
         let mut at = 0;
         while at < chars.len() {
-            match closing(&chars, at, style) {
+            let first = at + 1;
+            let opens = chars[at] == style.open
+                && !(style.open_boundary && at > 0 && word(chars[at - 1]))
+                && chars.get(first).is_some_and(|c| !c.is_whitespace());
+            let close = opens
+                .then(|| {
+                    next.get(first + 2)
+                        .copied()
+                        .flatten()
+                        .or_else(|| closes(first + 1).then_some(first + 1))
+                })
+                .flatten();
+            match close {
                 Some(close) => {
-                    found.push(span(at + 1, close));
+                    found.push(span(first, close));
                     at = close + 1;
                 }
                 None => at += 1,
@@ -211,44 +261,78 @@ fn quotes(line: &str) -> Vec<String> {
 }
 
 struct DiffSection {
-    /// Lower-case path from the `+++` header, without its `b/` prefix.
-    path: String,
-    /// New-side line ranges the hunks show, inclusive.
+    /// Keys of the old and new paths from the `---` and `+++` headers.
+    keys: Vec<String>,
+    /// Line ranges the hunks show on either side, inclusive.
     ranges: Vec<(u64, u64)>,
 }
 /// A unified diff shows each side of a file with a marker column, which would split any quote
-/// that wraps a line. Read the new and old sides back as text, and record which new-side lines
-/// each file's hunks show, so `path:line` can be checked against them.
-fn read_diff(text: &str) -> Option<(Vec<DiffSection>, [String; 2])> {
-    if !DIFF.is_match(text) {
+/// that wraps a line. Read the new and old sides back as text, and record which lines each
+/// file's hunks show, so `path:line` can be checked against them. Hunk line counts mark where
+/// each hunk ends, so a changed line that looks like a header stays content.
+fn read_diff(text: &str, cwd: &str) -> Option<(Vec<DiffSection>, [String; 2])> {
+    if !text.split('\n').any(|line| HUNK.is_match(line)) {
         return None;
     }
+    let header = |line: &str, side: &str| {
+        let path = line.split('\t').next().unwrap_or_default();
+        key(cwd, path.strip_prefix(side).unwrap_or(path))
+    };
     let mut sections: Vec<DiffSection> = vec![];
+    let mut old_key = None;
     let (mut new_side, mut old_side) = (vec![], vec![]);
+    let (mut old_left, mut new_left) = (0u64, 0u64);
     for line in text.split('\n').map(|line| line.trim_end_matches('\r')) {
-        if let Some(header) = line.strip_prefix("+++ ") {
-            let target = header.split('\t').next().unwrap_or_default();
+        if old_left > 0 || new_left > 0 {
+            match line.chars().next() {
+                // Some tools strip the space from an empty context line.
+                None | Some(' ') => {
+                    let context = line.get(1..).unwrap_or_default();
+                    new_side.push(context);
+                    old_side.push(context);
+                    old_left = old_left.saturating_sub(1);
+                    new_left = new_left.saturating_sub(1);
+                    continue;
+                }
+                Some('-') => {
+                    old_side.push(&line[1..]);
+                    old_left = old_left.saturating_sub(1);
+                    continue;
+                }
+                Some('+') => {
+                    new_side.push(&line[1..]);
+                    new_left = new_left.saturating_sub(1);
+                    continue;
+                }
+                Some('\\') => continue,
+                // A hunk shorter than its header says: read the line as a header.
+                Some(_) => (old_left, new_left) = (0, 0),
+            }
+        }
+        if let Some(path) = line.strip_prefix("--- ") {
+            old_key = Some(header(path, "a/"));
+        } else if let Some(path) = line.strip_prefix("+++ ") {
             sections.push(DiffSection {
-                path: target.strip_prefix("b/").unwrap_or(target).to_lowercase(),
+                keys: old_key
+                    .take()
+                    .into_iter()
+                    .chain([header(path, "b/")])
+                    .collect(),
                 ranges: vec![],
             });
-        } else if line.starts_with("--- ") {
-            continue;
         } else if let Some(hunk) = HUNK.captures(line) {
-            let start = number(&hunk[1]);
-            let size = hunk.get(2).map_or(1, |count| number(count.as_str()));
-            if size > 0
-                && let Some(section) = sections.last_mut()
-            {
-                section.ranges.push((start, start.saturating_add(size - 1)));
+            let side = |start: usize, count: usize| {
+                let first = number(&hunk[start]);
+                let size = hunk.get(count).map_or(1, |count| number(count.as_str()));
+                (first, size)
+            };
+            let (old, new) = (side(1, 2), side(3, 4));
+            (old_left, new_left) = (old.1, new.1);
+            if let Some(section) = sections.last_mut() {
+                for (first, size) in [old, new].into_iter().filter(|&(_, size)| size > 0) {
+                    section.ranges.push((first, first.saturating_add(size - 1)));
+                }
             }
-        } else if let Some(added) = line.strip_prefix('+') {
-            new_side.push(added);
-        } else if let Some(removed) = line.strip_prefix('-') {
-            old_side.push(removed);
-        } else if let Some(context) = line.strip_prefix(' ') {
-            new_side.push(context);
-            old_side.push(context);
         }
     }
     Some((
@@ -260,9 +344,10 @@ fn read_diff(text: &str) -> Option<(Vec<DiffSection>, [String; 2])> {
     ))
 }
 
-/// Checks the answer's references and quotes against the sent files. Paths compare
-/// case-insensitively, and a reference names a file when the file's path ends with it.
-pub fn check(answer: &str, files: &[SentFile]) -> Report {
+/// Checks the answer's references and quotes against the sent files. Relative paths are taken
+/// from `cwd`, the session's working directory. Paths compare case-insensitively; a relative or
+/// home (`~/`) reference names a file whose path ends with it, an absolute one only that file.
+pub fn check(answer: &str, files: &[SentFile], cwd: &str) -> Report {
     struct Sent {
         key: String,
         lines: usize,
@@ -270,13 +355,13 @@ pub fn check(answer: &str, files: &[SentFile]) -> Report {
     let sent: Vec<Sent> = files
         .iter()
         .map(|file| Sent {
-            key: file.path.replace('\\', "/").to_lowercase(),
+            key: key(cwd, &file.path),
             lines: line_count(&file.text),
         })
         .collect();
     let mut sections = vec![];
     let mut texts: Vec<String> = files.iter().map(|file| normalise(&file.text)).collect();
-    for (diff_sections, sides) in files.iter().filter_map(|file| read_diff(&file.text)) {
+    for (diff_sections, sides) in files.iter().filter_map(|file| read_diff(&file.text, cwd)) {
         sections.extend(diff_sections);
         texts.extend(sides);
     }
@@ -284,37 +369,49 @@ pub fn check(answer: &str, files: &[SentFile]) -> Report {
     let mut fence: Option<String> = None;
     for (index, line) in answer.split('\n').enumerate() {
         let answer_line = index + 1;
-        if let Some(marker) = FENCE.captures(line).map(|c| c[1].to_owned())
-            && fence.as_deref().is_none_or(|open| marker.starts_with(open))
-        {
-            fence = if fence.is_some() { None } else { Some(marker) };
-            continue;
-        }
-        if fence.is_some() {
-            continue;
+        match &fence {
+            // Only a bare run of the opening character, at least as long, closes a fence.
+            Some(open) => {
+                let marker = line.trim();
+                let character = open.chars().next();
+                let closes =
+                    marker.len() >= open.len() && marker.chars().all(|c| Some(c) == character);
+                if closes {
+                    fence = None;
+                }
+                continue;
+            }
+            None => {
+                if let Some(marker) = FENCE.captures(line) {
+                    fence = Some(marker[1].to_owned());
+                    continue;
+                }
+            }
         }
         for captures in references(line) {
-            let want = captures[1].replace('\\', "/");
-            let want = want.strip_prefix("./").unwrap_or(&want).to_lowercase();
+            let raw = captures[1].replace('\\', "/");
+            let raw = raw.strip_prefix("./").unwrap_or(&raw);
+            let (want, exact) = match raw.strip_prefix("~/") {
+                Some(home) => (home.to_lowercase(), false),
+                None if absolute(raw) => (key("", raw), true),
+                None => (raw.to_lowercase(), false),
+            };
             let suffix = format!("/{want}");
+            let names = |path: &str| path == want || !exact && path.ends_with(&suffix);
             let start = number(&captures[2]);
             let last = captures
                 .get(3)
                 .map_or(start, |end| start.max(number(end.as_str())));
-            let reference = captures[0].to_owned();
             let file_lines = sent
                 .iter()
-                .filter(|file| file.key == want || file.key.ends_with(&suffix))
+                .filter(|file| names(&file.key))
                 .map(|file| file.lines)
                 .max();
             let status = match file_lines {
                 Some(lines) if start >= 1 && last <= lines as u64 => Status::Grounded,
                 Some(_) => Status::OutOfRange,
-                // A diff's paths are repository-relative, and the answer may add or drop a prefix.
                 None if sections.iter().any(|section| {
-                    (section.path == want
-                        || section.path.ends_with(&suffix)
-                        || want.ends_with(&format!("/{}", section.path)))
+                    section.keys.iter().any(|key| names(key))
                         && section
                             .ranges
                             .iter()
@@ -323,11 +420,18 @@ pub fn check(answer: &str, files: &[SentFile]) -> Report {
                 {
                     Status::Grounded
                 }
+                None if !want.contains('/')
+                    && want
+                        .rsplit_once('.')
+                        .is_some_and(|(_, suffix)| HOST_SUFFIXES.contains(&suffix)) =>
+                {
+                    continue;
+                }
                 None => Status::NotSent,
             };
             report.references.push(ReferenceCheck {
                 answer_line,
-                reference,
+                reference: captures[0].to_owned(),
                 status,
                 file_lines,
             });
@@ -347,26 +451,81 @@ pub fn check(answer: &str, files: &[SentFile]) -> Report {
     report
 }
 
-/// Checks a session's saved answer against its prompt and the files it sent. Sessions keep the
-/// file selection, not the bytes sent, so the selection is resolved again from the session's
-/// working directory and each file read as it is now; a file modified after the session was
-/// created is listed in `changed_files`.
-pub fn session_report(store: &SessionStore, id: &str) -> Result<Report> {
-    let meta = store.require(id)?;
-    anyhow::ensure!(
-        meta["browser"]["capturedAnswer"].is_object() || meta["capturedAnswer"].is_object(),
-        "Session \"{id}\" has no saved answer to check."
-    );
-    let answer = String::from_utf8(crate::browser_runner::captured(store, id)?)
-        .context("The saved answer is not UTF-8")?;
+fn sections(text: &str) -> impl Iterator<Item = SentFile> {
+    crate::prompts::parse_file_sections(text)
+        .into_iter()
+        .map(|(path, text)| SentFile { path, text })
+}
+/// The texts a session sent, from its saved request: an API request body, or a browser prompt
+/// and its staged uploads, with the uploads that are not text. None when no saved copy remains.
+fn saved_files(
+    store: &SessionStore,
+    id: &str,
+    meta: &Value,
+) -> Result<Option<(Vec<SentFile>, Vec<String>)>> {
+    let directory = store.directory(id)?;
+    if directory.join("dispatch-request.json").is_file() {
+        let body = crate::execution::committed_request(store, id)?.body;
+        let user = body["input"][0]["content"][0]["text"]
+            .as_str()
+            .context("The saved API request has no prompt.")?;
+        let mut files = vec![
+            SentFile {
+                path: PROMPT.into(),
+                text: body["instructions"].as_str().unwrap_or_default().into(),
+            },
+            SentFile {
+                path: PROMPT.into(),
+                text: user.into(),
+            },
+        ];
+        files.extend(sections(user));
+        return Ok(Some((files, vec![])));
+    }
+    if !directory.join("browser-request.json").is_file() {
+        return Ok(None);
+    }
+    let request = crate::browser_runner::request(store, id)?;
+    let mut files = vec![SentFile {
+        path: PROMPT.into(),
+        text: request.prompt.clone(),
+    }];
+    let mut skipped = vec![];
+    let Some(staged) = &request.staged_uploads else {
+        // A local run stages every file it sends.
+        let none = meta["options"]["file"].as_array().is_none_or(Vec::is_empty);
+        return Ok(none.then_some((files, skipped)));
+    };
+    // A run that closes its tab cleanly removes its staged uploads.
+    if !staged.directory.is_dir() {
+        return Ok(None);
+    }
+    let text_bundle = request
+        .extra
+        .get("bundled")
+        .is_some_and(|bundled| bundled["format"] == "text");
+    for (index, saved) in staged.files.iter().enumerate() {
+        let text = crate::prompts::decode(staged.open(index)?.contents()?);
+        match text {
+            // ZIP bundles are not read.
+            _ if saved.generated_bundle && !text_bundle => return Ok(None),
+            Some(text) if saved.generated_bundle => files.extend(sections(&text)),
+            Some(text) => files.push(SentFile {
+                path: saved.display_path.clone(),
+                text,
+            }),
+            None => skipped.push(saved.display_path.clone()),
+        }
+    }
+    Ok(Some((files, skipped)))
+}
+/// The session's prompt and file selection as they are now, with the files modified since the
+/// session was created and those that are not text.
+fn current_files(meta: &Value, cwd: &str, id: &str) -> Result<(Vec<SentFile>, [Vec<String>; 2])> {
     let created = meta["createdAt"]
         .as_str()
         .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
         .with_context(|| format!("Session \"{id}\" has no valid creation time."))?;
-    let cwd = meta["cwd"]
-        .as_str()
-        .map(PathBuf::from)
-        .with_context(|| format!("Session \"{id}\" has no working directory."))?;
     let options = &meta["options"];
     let inputs: Vec<String> = options["file"]
         .as_array()
@@ -380,7 +539,7 @@ pub fn session_report(store: &SessionStore, id: &str) -> Result<Report> {
         text: options["prompt"].as_str().unwrap_or_default().into(),
     }];
     let (mut changed, mut skipped) = (vec![], vec![]);
-    for file in crate::prompts::resolve_files(&inputs, &cwd, 0, false)? {
+    for file in crate::prompts::resolve_files(&inputs, Path::new(cwd), 0, false)? {
         let modified = fs::metadata(&file.path)
             .and_then(|metadata| metadata.modified())
             .with_context(|| format!("Cannot read {}", file.display_path))?;
@@ -394,13 +553,36 @@ pub fn session_report(store: &SessionStore, id: &str) -> Result<Report> {
             .with_context(|| format!("Cannot read {}", file.display_path))?
         {
             Some(text) => files.push(SentFile {
-                path: file.path.to_string_lossy().into_owned(),
+                path: file.display_path,
                 text,
             }),
             None => skipped.push(file.display_path),
         }
     }
-    let mut report = check(&answer, &files);
+    Ok((files, [changed, skipped]))
+}
+/// Checks a session's saved answer against what it sent: the bytes its saved request kept, or,
+/// when none remain, its prompt and file selection as they are now.
+pub fn session_report(store: &SessionStore, id: &str) -> Result<Report> {
+    let meta = store.require(id)?;
+    anyhow::ensure!(
+        meta["browser"]["capturedAnswer"].is_object() || meta["capturedAnswer"].is_object(),
+        "Session \"{id}\" has no saved answer to check."
+    );
+    let answer = String::from_utf8(crate::browser_runner::captured(store, id)?)
+        .context("The saved answer is not UTF-8")?;
+    let cwd = meta["cwd"]
+        .as_str()
+        .with_context(|| format!("Session \"{id}\" has no working directory."))?;
+    let (files, sent_files, [changed, skipped]) = match saved_files(store, id, &meta)? {
+        Some((files, skipped)) => (files, SentFiles::Saved, [vec![], skipped]),
+        None => {
+            let (files, lists) = current_files(&meta, cwd, id)?;
+            (files, SentFiles::Current, lists)
+        }
+    };
+    let mut report = check(&answer, &files, cwd);
+    report.sent_files = sent_files;
     report.changed_files = changed;
     report.skipped_files = skipped;
     Ok(report)
@@ -425,6 +607,12 @@ pub fn format_report(report: &Report) -> String {
         plural(report.quotes.len(), "quote"),
         report.quotes.len() - found,
     )];
+    if report.sent_files == SentFiles::Current {
+        lines.push(
+            "The session kept no copy of the files it sent, so they were read as they are now."
+                .into(),
+        );
+    }
     let mut section = |title: &str, items: Vec<String>| {
         if !items.is_empty() {
             lines.push(title.to_owned());
@@ -494,6 +682,9 @@ mod tests {
             text: "Success: every table claim matches the code.\n".into(),
         }
     }
+    fn checked(answer: &str, files: &[SentFile]) -> Report {
+        check(answer, files, "/work/repo")
+    }
     fn statuses(report: &Report) -> Vec<(&str, Status)> {
         report
             .references
@@ -511,7 +702,7 @@ mod tests {
 
     #[test]
     fn grounds_a_reference_by_path_suffix_and_line_range() {
-        let report = check(
+        let report = checked(
             "See src/engine.rs:2 and packages/close/src/engine.rs:1-4.",
             &[engine()],
         );
@@ -526,7 +717,7 @@ mod tests {
     }
     #[test]
     fn flags_a_line_past_the_end_and_a_file_not_sent() {
-        let report = check(
+        let report = checked(
             "Bug at engine.rs:9. Compare docs/scope.md:134.",
             &[engine()],
         );
@@ -549,25 +740,25 @@ mod tests {
         );
         assert!(report.flagged());
         // A file that was not sent is flagged on its own.
-        assert!(check("Compare docs/scope.md:134.", &[engine()]).flagged());
+        assert!(checked("Compare docs/scope.md:134.", &[engine()]).flagged());
     }
     #[test]
     fn ignores_url_hosts_with_ports_and_line_0_is_out_of_range() {
-        let report = check(
+        let report = checked(
             "Open https://example.com:443/x then engine.rs:0.",
             &[engine()],
         );
         assert_eq!(statuses(&report), [("engine.rs:0", Status::OutOfRange)]);
         // A path that continues a longer token is not a reference, as with the fork's lookbehind.
         assert!(
-            check("See .engine.rs:2 and x/.engine.rs:2", &[engine()])
+            checked("See .engine.rs:2 and x/.engine.rs:2", &[engine()])
                 .references
                 .is_empty()
         );
     }
     #[test]
     fn finds_quotes_across_wrapped_lines_and_curly_quotes_and_flags_invented_ones() {
-        let report = check(
+        let report = checked(
             &[
                 "The comment says ‘A blank   ReviewGroup is refused’.",
                 "The brief asks that 'every table claim matches the code'.",
@@ -588,18 +779,18 @@ mod tests {
     }
     #[test]
     fn does_not_open_quotes_at_apostrophes_and_skips_short_quotes_and_bare_references() {
-        let report = check(
+        let report = checked(
             "Ryan's note doesn't say 'whilst'; see `engine.rs:2` and `let status`.",
             &[engine()],
         );
         assert_eq!(found(&report), [("let status", true)]);
         // 7 characters is under the minimum; 8 is checked.
-        let report = check("`1234567` and `12345678`", &[engine()]);
+        let report = checked("`1234567` and `12345678`", &[engine()]);
         assert_eq!(found(&report), [("12345678", false)]);
     }
     #[test]
     fn skips_lines_inside_fenced_code_blocks() {
-        let report = check(
+        let report = checked(
             &[
                 "```rust",
                 "let fixed = 'proposed new code';",
@@ -613,7 +804,7 @@ mod tests {
         assert_eq!(report, Report::default());
         assert!(!report.flagged());
         // A shorter or different marker does not close the fence.
-        let report = check(
+        let report = checked(
             "````\n```\n~~~\nengine.rs:99\n````\nengine.rs:99",
             &[engine()],
         );
@@ -637,7 +828,7 @@ mod tests {
             ]
             .join("\n"),
         };
-        let report = check(
+        let report = checked(
             &[
                 "Old text: 'A control that raises nothing has passed'.",
                 "New text: 'A control that ran and raised nothing has passed'.",
@@ -664,7 +855,7 @@ mod tests {
     }
     #[test]
     fn formats_counts_and_each_item_that_needs_a_readers_check() {
-        let mut report = check(
+        let mut report = checked(
             "engine.rs:2 engine.rs:7 docs/x.md:1 'every account is mapped twice'",
             &[engine()],
         );
@@ -684,5 +875,160 @@ mod tests {
             ]
             .join("\n")
         );
+    }
+
+    #[test]
+    fn absolute_and_home_references_are_checked() {
+        let report = checked(
+            r"See /work/packages/close/src/engine.rs:2, C:\work\src\engine.rs:99, /work/src/engine.rs:99, ~/repo/nope.rs:5 and ~/close/src/engine.rs:9.",
+            &[engine()],
+        );
+        assert_eq!(
+            statuses(&report),
+            [
+                ("/work/packages/close/src/engine.rs:2", Status::Grounded),
+                (r"C:\work\src\engine.rs:99", Status::NotSent),
+                ("/work/src/engine.rs:99", Status::NotSent),
+                ("~/repo/nope.rs:5", Status::NotSent),
+                ("~/close/src/engine.rs:9", Status::OutOfRange)
+            ]
+        );
+        // An absolute path names that file only, and a drive letter compares like any segment.
+        let windows = SentFile {
+            path: r"C:\Work\src\engine.rs".into(),
+            text: "one\n".into(),
+        };
+        let report = checked("/src/engine.rs:1 and c:/work/src/engine.rs:1", &[windows]);
+        assert_eq!(
+            statuses(&report),
+            [
+                ("/src/engine.rs:1", Status::NotSent),
+                ("c:/work/src/engine.rs:1", Status::Grounded)
+            ]
+        );
+    }
+    fn lib_diff() -> SentFile {
+        SentFile {
+            path: "/work/frozen/lib.diff".into(),
+            text: [
+                "--- a/src/lib.c",
+                "+++ b/src/lib.c",
+                "@@ -100,4 +100,2 @@",
+                "-first removed",
+                "-second removed",
+                "-third removed",
+                "+one added",
+                " kept",
+            ]
+            .join("\n"),
+        }
+    }
+    #[test]
+    fn a_diff_grounds_citations_of_either_side() {
+        let report = checked(
+            "Removed at src/lib.c:101-103; kept at src/lib.c:101; src/lib.c:104 was never shown.",
+            &[lib_diff()],
+        );
+        assert_eq!(
+            statuses(&report),
+            [
+                ("src/lib.c:101-103", Status::Grounded),
+                ("src/lib.c:101", Status::Grounded),
+                ("src/lib.c:104", Status::NotSent)
+            ]
+        );
+    }
+    #[test]
+    fn a_diff_path_takes_only_the_session_folders_as_an_added_prefix() {
+        let report = checked(
+            "other/src/lib.c:100 and repo/src/lib.c:100 and /work/repo/src/lib.c:100",
+            &[lib_diff()],
+        );
+        assert_eq!(
+            statuses(&report),
+            [
+                ("other/src/lib.c:100", Status::NotSent),
+                ("repo/src/lib.c:100", Status::Grounded),
+                ("/work/repo/src/lib.c:100", Status::Grounded)
+            ]
+        );
+    }
+    #[test]
+    fn changed_lines_that_look_like_diff_headers_stay_content() {
+        let diff = SentFile {
+            path: "/work/frozen/headers.diff".into(),
+            text: [
+                "--- a/src/a.c",
+                "+++ b/src/a.c",
+                "@@ -1,2 +1,2 @@",
+                " keep",
+                "--- old comment",
+                "+++ new comment",
+                "@@ -10 +10 @@",
+                "-old line here",
+                "+new line here",
+            ]
+            .join("\n"),
+        };
+        // Read as headers, those lines would leave each side without them and give the second
+        // hunk to a file called "new comment".
+        let report = checked(
+            "`keep -- old comment` became `keep ++ new comment` at src/a.c:2, and src/a.c:10 changed.",
+            &[diff],
+        );
+        assert_eq!(
+            found(&report),
+            [("keep -- old comment", true), ("keep ++ new comment", true)]
+        );
+        assert_eq!(
+            statuses(&report),
+            [
+                ("src/a.c:2", Status::Grounded),
+                ("src/a.c:10", Status::Grounded)
+            ]
+        );
+    }
+    #[test]
+    fn a_fence_with_an_info_string_does_not_close_an_open_fence() {
+        let report = checked(
+            "```\nengine.rs:99\n```rust\nengine.rs:98\n```\nengine.rs:97",
+            &[engine()],
+        );
+        assert_eq!(statuses(&report), [("engine.rs:97", Status::OutOfRange)]);
+        assert_eq!(report.references[0].answer_line, 6);
+    }
+    #[test]
+    fn hosts_with_ports_are_skipped_and_non_ascii_paths_are_whole() {
+        let sent = SentFile {
+            path: "données/engine.rs".into(),
+            text: "one\ntwo\n".into(),
+        };
+        let report = checked(
+            "Call api.openai.com:443 or example.com:8080; see données/engine.rs:2 and 数据/nope.rs:3.",
+            &[sent],
+        );
+        assert_eq!(
+            statuses(&report),
+            [
+                ("données/engine.rs:2", Status::Grounded),
+                ("数据/nope.rs:3", Status::NotSent)
+            ]
+        );
+        // A sent file with a host-like name is still checked.
+        let notes = SentFile {
+            path: "notes.com".into(),
+            text: "one\n".into(),
+        };
+        assert_eq!(
+            statuses(&checked("notes.com:3", &[notes])),
+            [("notes.com:3", Status::OutOfRange)]
+        );
+    }
+    #[test]
+    fn many_unclosed_quotes_on_one_line_stay_fast() {
+        let line = "'a ".repeat(40_000);
+        let started = std::time::Instant::now();
+        assert!(checked(&line, &[engine()]).quotes.is_empty());
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
     }
 }
