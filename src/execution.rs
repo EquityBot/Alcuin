@@ -958,7 +958,9 @@ fn prepare_with_base(
     admission.release()?;
     Ok(session)
 }
-pub fn committed_request(store: &SessionStore, id: &str) -> Result<CommittedRequest> {
+/// The saved request with its identity and body checked, but not the current model policy,
+/// which `committed_request` adds for dispatch.
+pub fn saved_request(store: &SessionStore, id: &str) -> Result<CommittedRequest> {
     let committed: CommittedRequest = serde_json::from_slice(&fs::read(
         store.directory(id)?.join("dispatch-request.json"),
     )?)?;
@@ -968,6 +970,10 @@ pub fn committed_request(store: &SessionStore, id: &str) -> Result<CommittedRequ
             && sha256(&serde_json::to_vec(&committed.body)?) == committed.body_sha256,
         "Committed request identity or source changed; refusing dispatch."
     );
+    Ok(committed)
+}
+pub fn committed_request(store: &SessionStore, id: &str) -> Result<CommittedRequest> {
+    let committed = saved_request(store, id)?;
     policy::assert_model_allowed(Some(&committed.route.model))?;
     policy::require_api_pro(committed.body["reasoning"]["mode"].as_str())?;
     anyhow::ensure!(

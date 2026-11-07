@@ -197,6 +197,39 @@ fn resolved(work: &Path, input: Value) -> execution::ResolvedRequest {
 const SENT_ANSWER: &str = "engine.rs:4 closes it, notes.md:2 says 'Fabricated notes for tests' and engine.rs:3 quotes 'A blank ReviewGroup is refused'.\n";
 
 #[test]
+fn a_session_whose_model_dispatch_no_longer_permits_is_still_checked() {
+    let (home, store, work) = fixture();
+    let request = resolved(
+        &work,
+        json!({"prompt":"Review the engine for silent refusals.","engine":"api","files":["engine.rs"]}),
+    );
+    let route = Route {
+        model: "gpt-6-astra".into(),
+        base_url: "https://synthetic.example/v1".into(),
+        provider_label: "synthetic".into(),
+        key_source: "SYNTHETIC_KEY".into(),
+        azure_deployment_name: None,
+        transport: ApiTransport::Responses,
+    };
+    let id = execution::prepare(&store, &request, &work, route).unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    complete(&store, &id, "engine.rs:4 closes it.\n");
+    // As after a release whose model policy no longer names the model this session used.
+    let path = store.directory(&id).unwrap().join("dispatch-request.json");
+    let mut saved: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    saved["route"]["model"] = json!("gpt-5-pro");
+    fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
+    assert!(execution::committed_request(&store, &id).is_err());
+    let output = ground(home.path(), &[&id, "--json"]);
+    assert_eq!(output.status.code(), Some(0), "{}", text(&output.stderr));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["sentFiles"], "saved");
+    assert_eq!(report["references"][0]["status"], "grounded");
+}
+
+#[test]
 fn an_api_session_is_checked_against_the_request_it_saved_even_with_an_allowed_credential() {
     let (home, store, work) = fixture();
     let token = ["gh", "p_"].concat() + &"PbL7q".repeat(8);

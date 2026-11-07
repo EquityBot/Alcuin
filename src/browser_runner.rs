@@ -378,6 +378,19 @@ fn prepare_with_base(
     Ok(meta)
 }
 pub(crate) fn request(store: &SessionStore, id: &str) -> Result<BrowserRequest> {
+    let (committed, meta) = read_request(store, id)?;
+    policy::assert_model_allowed(meta["options"]["model"].as_str())?;
+    check_upload_paths(&committed)?;
+    Ok(committed)
+}
+/// The saved request with its identity, prompt, options and upload paths checked, but not the
+/// current model policy, which `request` adds for dispatch.
+pub(crate) fn saved_request(store: &SessionStore, id: &str) -> Result<BrowserRequest> {
+    let (committed, _) = read_request(store, id)?;
+    check_upload_paths(&committed)?;
+    Ok(committed)
+}
+fn read_request(store: &SessionStore, id: &str) -> Result<(BrowserRequest, Value)> {
     let committed: BrowserRequest = serde_json::from_slice(&fs::read(
         store.directory(id)?.join("browser-request.json"),
     )?)?;
@@ -389,14 +402,16 @@ pub(crate) fn request(store: &SessionStore, id: &str) -> Result<BrowserRequest> 
             && committed.options_sha256 == sha256(&serde_json::to_vec(&meta["options"])?),
         "Browser committed source or options changed; refusing dispatch"
     );
-    policy::assert_model_allowed(meta["options"]["model"].as_str())?;
+    Ok((committed, meta))
+}
+fn check_upload_paths(committed: &BrowserRequest) -> Result<()> {
     if let Some(staged) = &committed.staged_uploads {
         anyhow::ensure!(
             staged.paths()? == committed.upload_paths,
             "Browser upload paths differ from their saved receipts"
         );
     }
-    Ok(committed)
+    Ok(())
 }
 pub fn start_owner(store: &SessionStore, id: &str, identity: &ProcessIdentity) -> Result<Value> {
     anyhow::ensure!(

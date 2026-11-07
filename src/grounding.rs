@@ -14,7 +14,7 @@ const MIN_QUOTE_LENGTH: usize = 8;
 /// reference can name it, but the answer may quote it.
 const PROMPT: &str = "prompt";
 // shortcut: a name without a folder that ends in one of these common top-level domains reads as
-// a host and port (`example.com:8080`), so it is not reported unless a sent file has that name.
+// a host and port (`example.com:8080`), so it is not flagged unless a sent file has that name.
 // The public suffix list is the upgrade path.
 const HOST_SUFFIXES: &[&str] = &[
     "com", "net", "org", "io", "ai", "dev", "app", "co", "au", "uk", "local", "internal",
@@ -43,6 +43,9 @@ pub enum Status {
     Grounded,
     OutOfRange,
     NotSent,
+    /// A name such as `example.com:8080` that no sent file has: read as a host and port, and
+    /// not flagged.
+    Host,
 }
 /// Where the sent files' text came from.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
@@ -87,7 +90,7 @@ impl Report {
     pub fn flagged(&self) -> bool {
         self.references
             .iter()
-            .any(|reference| reference.status != Status::Grounded)
+            .any(|reference| matches!(reference.status, Status::OutOfRange | Status::NotSent))
             || self.quotes.iter().any(|quote| !quote.found)
     }
 }
@@ -282,8 +285,15 @@ fn read_diff(text: &str, cwd: &str) -> Option<(Vec<DiffSection>, [String; 2])> {
     let mut old_key = None;
     let (mut new_side, mut old_side) = (vec![], vec![]);
     let (mut old_left, mut new_left) = (0u64, 0u64);
+    let mut in_hunk = false;
     for line in text.split('\n').map(|line| line.trim_end_matches('\r')) {
-        if old_left > 0 || new_left > 0 {
+        let starts_header = ["--- ", "+++ ", "diff "]
+            .iter()
+            .any(|prefix| line.starts_with(prefix))
+            || HUNK.is_match(line);
+        // Within its stated count a hunk line is content, even one that looks like a header.
+        // Past it, as in a hand-written diff that undercounts, content runs to the next header.
+        if old_left > 0 || new_left > 0 || in_hunk && !starts_header {
             match line.chars().next() {
                 // Some tools strip the space from an empty context line.
                 None | Some(' ') => {
@@ -306,8 +316,11 @@ fn read_diff(text: &str, cwd: &str) -> Option<(Vec<DiffSection>, [String; 2])> {
                 }
                 Some('\\') => continue,
                 // A hunk shorter than its header says: read the line as a header.
-                Some(_) => (old_left, new_left) = (0, 0),
+                Some(_) => (old_left, new_left, in_hunk) = (0, 0, false),
             }
+        }
+        if starts_header {
+            in_hunk = false;
         }
         if let Some(path) = line.strip_prefix("--- ") {
             old_key = Some(header(path, "a/"));
@@ -327,7 +340,7 @@ fn read_diff(text: &str, cwd: &str) -> Option<(Vec<DiffSection>, [String; 2])> {
                 (first, size)
             };
             let (old, new) = (side(1, 2), side(3, 4));
-            (old_left, new_left) = (old.1, new.1);
+            (old_left, new_left, in_hunk) = (old.1, new.1, true);
             if let Some(section) = sections.last_mut() {
                 for (first, size) in [old, new].into_iter().filter(|&(_, size)| size > 0) {
                     section.ranges.push((first, first.saturating_add(size - 1)));
@@ -425,7 +438,7 @@ pub fn check(answer: &str, files: &[SentFile], cwd: &str) -> Report {
                         .rsplit_once('.')
                         .is_some_and(|(_, suffix)| HOST_SUFFIXES.contains(&suffix)) =>
                 {
-                    continue;
+                    Status::Host
                 }
                 None => Status::NotSent,
             };
@@ -452,9 +465,15 @@ pub fn check(answer: &str, files: &[SentFile], cwd: &str) -> Report {
 }
 
 fn sections(text: &str) -> impl Iterator<Item = SentFile> {
+    // `file_sections` drops each file's final line ending; restore it so a last blank line counts.
     crate::prompts::parse_file_sections(text)
         .into_iter()
-        .map(|(path, text)| SentFile { path, text })
+        .map(|(path, mut text)| {
+            if !text.is_empty() {
+                text.push('\n');
+            }
+            SentFile { path, text }
+        })
 }
 /// The texts a session sent, from its saved request: an API request body, or a browser prompt
 /// and its staged uploads, with the uploads that are not text. None when no saved copy remains.
@@ -465,7 +484,7 @@ fn saved_files(
 ) -> Result<Option<(Vec<SentFile>, Vec<String>)>> {
     let directory = store.directory(id)?;
     if directory.join("dispatch-request.json").is_file() {
-        let body = crate::execution::committed_request(store, id)?.body;
+        let body = crate::execution::saved_request(store, id)?.body;
         let user = body["input"][0]["content"][0]["text"]
             .as_str()
             .context("The saved API request has no prompt.")?;
@@ -485,7 +504,7 @@ fn saved_files(
     if !directory.join("browser-request.json").is_file() {
         return Ok(None);
     }
-    let request = crate::browser_runner::request(store, id)?;
+    let request = crate::browser_runner::saved_request(store, id)?;
     let mut files = vec![SentFile {
         path: PROMPT.into(),
         text: request.prompt.clone(),
@@ -598,8 +617,12 @@ pub fn format_report(report: &Report) -> String {
     };
     let found = report.quotes.iter().filter(|quote| quote.found).count();
     let plural = |n: usize, noun: &str| format!("{n} {noun}{}", if n == 1 { "" } else { "s" });
+    let hosts = match count(Status::Host) {
+        0 => String::new(),
+        n => format!(", {n} read as {}", if n == 1 { "a host" } else { "hosts" }),
+    };
     let mut lines = vec![format!(
-        "Grounding: {} ({} grounded, {} out of range, {} not in the files sent); {} ({found} found, {} not found).",
+        "Grounding: {} ({} grounded, {} out of range, {} not in the files sent{hosts}); {} ({found} found, {} not found).",
         plural(report.references.len(), "reference"),
         count(Status::Grounded),
         count(Status::OutOfRange),
@@ -998,7 +1021,7 @@ mod tests {
         assert_eq!(report.references[0].answer_line, 6);
     }
     #[test]
-    fn hosts_with_ports_are_skipped_and_non_ascii_paths_are_whole() {
+    fn hosts_with_ports_are_reported_unflagged_and_non_ascii_paths_are_whole() {
         let sent = SentFile {
             path: "données/engine.rs".into(),
             text: "one\ntwo\n".into(),
@@ -1010,9 +1033,17 @@ mod tests {
         assert_eq!(
             statuses(&report),
             [
+                ("api.openai.com:443", Status::Host),
+                ("example.com:8080", Status::Host),
                 ("données/engine.rs:2", Status::Grounded),
                 ("数据/nope.rs:3", Status::NotSent)
             ]
+        );
+        let hosts = checked("Call api.openai.com:443 or example.com:8080.", &[engine()]);
+        assert!(!hosts.flagged());
+        assert_eq!(
+            format_report(&hosts),
+            "Grounding: 2 references (0 grounded, 0 out of range, 0 not in the files sent, 2 read as hosts); 0 quotes (0 found, 0 not found)."
         );
         // A sent file with a host-like name is still checked.
         let notes = SentFile {
@@ -1030,5 +1061,66 @@ mod tests {
         let started = std::time::Instant::now();
         assert!(checked(&line, &[engine()]).quotes.is_empty());
         assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    }
+    #[test]
+    fn saved_sections_keep_each_files_line_count() {
+        let file = |content: &str| crate::prompts::PromptFile {
+            path: "a.txt".into(),
+            display_path: "a.txt".into(),
+            content: content.into(),
+            size_bytes: 0,
+            scanned_sha256: None,
+        };
+        for content in ["one\n\n", "one", "a\nb\n", "x\r\n", ""] {
+            for indexed in [false, true] {
+                for numbers in [false, true] {
+                    let written = crate::prompts::file_sections(&[file(content)], indexed, numbers);
+                    let sent: Vec<SentFile> = sections(&written).collect();
+                    assert_eq!(sent.len(), 1);
+                    assert_eq!(
+                        line_count(&sent[0].text),
+                        line_count(content),
+                        "{content:?}, indexed {indexed}, numbers {numbers}"
+                    );
+                }
+            }
+        }
+        let prompt = crate::prompts::build_user_prompt("Review.", &[file("one\n\n")]);
+        let sent: Vec<SentFile> = sections(&prompt).collect();
+        assert_eq!(
+            statuses(&checked("a.txt:2", &sent)),
+            [("a.txt:2", Status::Grounded)]
+        );
+    }
+    #[test]
+    fn lines_past_an_undercounted_hunk_stay_content_until_the_next_header() {
+        let diff = SentFile {
+            path: "/work/review.diff".into(),
+            text: [
+                "--- a/src/lib.c",
+                "+++ b/src/lib.c",
+                "@@ -10,1 +10,1 @@",
+                "-int b;",
+                "+int c;",
+                "+the second added line",
+                "+and a third one here",
+                "--- a/src/other.c",
+                "+++ b/src/other.c",
+                "@@ -1 +1 @@",
+                "-before",
+                "+after",
+                "",
+            ]
+            .join("\n"),
+        };
+        let report = checked(
+            "Added 'the second added line and a third one here'; src/other.c:1 changed.",
+            &[diff],
+        );
+        assert_eq!(
+            found(&report),
+            [("the second added line and a third one here", true)]
+        );
+        assert_eq!(statuses(&report), [("src/other.c:1", Status::Grounded)]);
     }
 }
