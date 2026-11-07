@@ -274,6 +274,9 @@ Commands:
                                         ID is provided.
   restart [options] <id>                Re-run a stored session as a new session
                                         (clones options).
+  ground [options] <session>            Flag cited lines and quotes in a
+                                        session's saved answer that the files it
+                                        sent do not contain.
 
 Tips
 • Pass a prompt and attach relevant source with --file …; Alcuin cannot inspect your project directly.
@@ -305,6 +308,9 @@ Examples
 
   alcuin recover-native --request request.json --write-output answer.md
     Save a completed native ChatGPT reply while Alcuin's manual-login Chrome is open.
+
+  alcuin ground <sessionId>
+    Flag cited lines and quotes in a saved answer that the files the session sent do not contain.
 
   alcuin status --hours 72 --limit 50
     Show sessions from the last 72h (capped at 50 entries).

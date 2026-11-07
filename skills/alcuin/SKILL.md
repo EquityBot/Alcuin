@@ -44,6 +44,8 @@ alcuin session <id> --render   # a saved answer
 
 `--followup <id>` continues a saved conversation.
 
+Before acting on evidence the answer cites, run `alcuin ground <id>`. It exits 1 when a cited line runs past a sent file's end, a cited file was not sent or a quote appears in no sent file; check each flagged item against the source. When you report the answer, give a verdict and a reason for each finding you dismiss, not only for those you accept.
+
 If a run fails after sending, don't send the prompt again: the answer may still arrive. Run `alcuin session <id> --harvest --write-output answer.md` to read it from the conversation. If that shows an error rather than an answer, resend only with the user's approval.
 
 Run `alcuin --help --verbose` for every option.

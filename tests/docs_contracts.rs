@@ -137,3 +137,30 @@ fn issues_sort_files_and_flags_like_locale_compare() {
         ]
     );
 }
+#[test]
+fn readme_documents_ground_within_its_declared_flags() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let readme = fs::read_to_string(root.join("README.md")).unwrap();
+    assert!(readme.contains("`alcuin ground <id> --json`"));
+    let result = docs_check::check(root, &["README.md".into()]).unwrap();
+    let ground: Vec<_> = result
+        .issues
+        .iter()
+        .filter(|issue| issue.command.as_deref() == Some("alcuin ground"))
+        .collect();
+    assert!(ground.is_empty(), "{ground:?}");
+    // `--json` is declared on `ground`, so the check would catch a flag it lacks.
+    let home = tempfile::tempdir().unwrap();
+    fs::write(
+        home.path().join("ground.md"),
+        "alcuin ground <id> --json --hours 2\n",
+    )
+    .unwrap();
+    let result = docs_check::check(home.path(), &["ground.md".into()]).unwrap();
+    let flagged: Vec<_> = result
+        .issues
+        .iter()
+        .map(|issue| issue.flag.as_str())
+        .collect();
+    assert_eq!(flagged, ["--hours"]);
+}

@@ -30,6 +30,7 @@ const COMMANDS: &[&str] = &[
     "session",
     "status",
     "restart",
+    "ground",
 ];
 const HEALTH_FLAGS: &[&str] = &[
     "model",
@@ -532,7 +533,7 @@ async fn run_command(args: Vec<OsString>) -> Result<i32> {
         return Ok(1);
     }
     if let Some(name) = matches.subcommand_name()
-        && matches!(name, "perf-summary" | "browser-health")
+        && matches!(name, "perf-summary" | "browser-health" | "ground")
     {
         crate::perf::suppress();
     }
@@ -875,6 +876,24 @@ async fn run_command(args: Vec<OsString>) -> Result<i32> {
                     println!("{}", crate::perf::format_summary(&summary));
                 }
                 return Ok(0);
+            }
+            "ground" => {
+                require_flags(sub, &["session", "json"])?;
+                let id = text(sub, "session").context("ground requires a session ID")?;
+                // Exit 1 means the answer has findings, so a check that cannot run exits 2.
+                let report = match crate::grounding::session_report(&store, id) {
+                    Ok(report) => report,
+                    Err(error) => {
+                        eprintln!("✖ {error:#}");
+                        return Ok(2);
+                    }
+                };
+                if flag(sub, "json") {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else {
+                    println!("{}", crate::grounding::format_report(&report));
+                }
+                return Ok(i32::from(report.flagged()));
             }
             "session" | "status" => {
                 require_flags(sub, SESSION_FLAGS)?;

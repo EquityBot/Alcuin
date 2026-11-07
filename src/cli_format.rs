@@ -16,6 +16,7 @@ const SUBCOMMANDS: &[&str] = &[
     "session",
     "status",
     "restart",
+    "ground",
 ];
 
 fn spec_options(spec: &Value) -> impl Iterator<Item = &str> {

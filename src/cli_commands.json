@@ -568,5 +568,16 @@
       }
     ],
     "children": []
+  },
+  {
+    "command": "ground <session>",
+    "about": "Flag cited lines and quotes in a session's saved answer that the files it sent do not contain.",
+    "options": [
+      {
+        "flags": "--json",
+        "description": "Print every reference and quote with its status as JSON."
+      }
+    ],
+    "children": []
   }
 ]

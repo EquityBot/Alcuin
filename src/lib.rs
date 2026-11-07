@@ -53,6 +53,7 @@ pub mod config;
 pub mod docs_check;
 pub mod execution;
 pub mod followup;
+mod grounding;
 pub mod mcp;
 pub mod native_fs;
 mod native_reply;
