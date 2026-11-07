@@ -20,9 +20,13 @@ const HOST_SUFFIXES: &[&str] = &[
     "com", "net", "org", "io", "ai", "dev", "app", "co", "au", "uk", "local", "internal",
 ];
 
-// An optional drive, home or root prefix, a path with an extension, then :line or :start-end.
-// `references` checks that the path does not continue a longer token, such as a URL host.
-const REFERENCE: &str = r"((?:[A-Za-z]:[\\/]|~?/)?(?:[\p{L}\p{N}\p{M}_.-]+[\\/])*[\p{L}\p{N}\p{M}_-][\p{L}\p{N}\p{M}_.-]*\.[A-Za-z][A-Za-z0-9]{0,7}):([0-9]+)(?:-([0-9]+))?";
+// An optional drive, home or root prefix, folders, then a file name with an extension of up to
+// 16 characters, a dotfile or a conventional name without an extension, then :line or
+// :start-end. `references` checks that the path does not continue a longer token, such as a URL
+// host.
+// shortcut: other names without an extension (`bin/run:4`) are not read as references, since
+// `and/or:3` reads the same; matching them against the sent files' names is the upgrade path.
+const REFERENCE: &str = r"((?:[A-Za-z]:[\\/]|~?/)?(?:[\p{L}\p{N}\p{M}_.-]+[\\/])*(?:[\p{L}\p{N}\p{M}_-][\p{L}\p{N}\p{M}_.-]*\.[A-Za-z][A-Za-z0-9]{0,15}|\.[A-Za-z][\p{L}\p{N}\p{M}_.-]*|Dockerfile|Containerfile|Makefile|GNUmakefile|Justfile|Rakefile|Gemfile|Procfile|Jenkinsfile|Vagrantfile|LICENSE|CODEOWNERS)):([0-9]+)(?:-([0-9]+))?";
 static REFERENCE_AT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(&format!("^{REFERENCE}")).expect("reference pattern"));
 static REFERENCE_ONLY: LazyLock<Regex> =
@@ -270,10 +274,11 @@ struct DiffSection {
     ranges: Vec<(u64, u64)>,
 }
 /// A unified diff shows each side of a file with a marker column, which would split any quote
-/// that wraps a line. Read the new and old sides back as text, and record which lines each
-/// file's hunks show, so `path:line` can be checked against them. Hunk line counts mark where
-/// each hunk ends, so a changed line that looks like a header stays content.
-fn read_diff(text: &str, cwd: &str) -> Option<(Vec<DiffSection>, [String; 2])> {
+/// that wraps a line. Read each hunk's new and old sides back as text of their own, since lines
+/// of different hunks or files are not adjacent, and record which lines each file's hunks show,
+/// so `path:line` can be checked against them. Hunk line counts mark where each hunk ends, so a
+/// changed line that looks like a header stays content.
+fn read_diff(text: &str, cwd: &str) -> Option<(Vec<DiffSection>, Vec<String>)> {
     if !text.split('\n').any(|line| HUNK.is_match(line)) {
         return None;
     }
@@ -284,6 +289,13 @@ fn read_diff(text: &str, cwd: &str) -> Option<(Vec<DiffSection>, [String; 2])> {
     let mut sections: Vec<DiffSection> = vec![];
     let mut old_key = None;
     let (mut new_side, mut old_side) = (vec![], vec![]);
+    let mut sides = vec![];
+    fn flush(sides: &mut Vec<String>, hunk: [&mut Vec<&str>; 2]) {
+        for side in hunk.into_iter().filter(|side| !side.is_empty()) {
+            sides.push(normalise(&side.join("\n")));
+            side.clear();
+        }
+    }
     let (mut old_left, mut new_left) = (0u64, 0u64);
     let mut in_hunk = false;
     for line in text.split('\n').map(|line| line.trim_end_matches('\r')) {
@@ -321,6 +333,7 @@ fn read_diff(text: &str, cwd: &str) -> Option<(Vec<DiffSection>, [String; 2])> {
         }
         if starts_header {
             in_hunk = false;
+            flush(&mut sides, [&mut new_side, &mut old_side]);
         }
         if let Some(path) = line.strip_prefix("--- ") {
             old_key = Some(header(path, "a/"));
@@ -348,13 +361,8 @@ fn read_diff(text: &str, cwd: &str) -> Option<(Vec<DiffSection>, [String; 2])> {
             }
         }
     }
-    Some((
-        sections,
-        [
-            normalise(&new_side.join("\n")),
-            normalise(&old_side.join("\n")),
-        ],
-    ))
+    flush(&mut sides, [&mut new_side, &mut old_side]);
+    Some((sections, sides))
 }
 
 /// Checks the answer's references and quotes against the sent files. Relative paths are taken
@@ -420,19 +428,20 @@ pub fn check(answer: &str, files: &[SentFile], cwd: &str) -> Report {
                 .filter(|file| names(&file.key))
                 .map(|file| file.lines)
                 .max();
-            let status = match file_lines {
-                Some(lines) if start >= 1 && last <= lines as u64 => Status::Grounded,
-                Some(_) => Status::OutOfRange,
-                None if sections.iter().any(|section| {
+            // A diff can show lines that a sent copy of the same file does not have.
+            let in_diff = || {
+                sections.iter().any(|section| {
                     section.keys.iter().any(|key| names(key))
                         && section
                             .ranges
                             .iter()
                             .any(|&(first, end)| start >= first && last <= end)
-                }) =>
-                {
-                    Status::Grounded
-                }
+                })
+            };
+            let status = match file_lines {
+                Some(lines) if start >= 1 && last <= lines as u64 => Status::Grounded,
+                _ if in_diff() => Status::Grounded,
+                Some(_) => Status::OutOfRange,
                 None if !want.contains('/')
                     && want
                         .rsplit_once('.')
@@ -772,11 +781,17 @@ mod tests {
             &[engine()],
         );
         assert_eq!(statuses(&report), [("engine.rs:0", Status::OutOfRange)]);
-        // A path that continues a longer token is not a reference, as with the fork's lookbehind.
-        assert!(
-            checked("See .engine.rs:2 and x/.engine.rs:2", &[engine()])
-                .references
-                .is_empty()
+        // A reference starts its token, as with the fork's lookbehind, so the dotfiles here are
+        // read whole and never as the sent engine.rs.
+        assert_eq!(
+            statuses(&checked(
+                "See .engine.rs:2 and x/.engine.rs:2 or ..engine.rs:2",
+                &[engine()]
+            )),
+            [
+                (".engine.rs:2", Status::NotSent),
+                ("x/.engine.rs:2", Status::NotSent)
+            ]
         );
     }
     #[test]
@@ -958,6 +973,85 @@ mod tests {
                 ("src/lib.c:101-103", Status::Grounded),
                 ("src/lib.c:101", Status::Grounded),
                 ("src/lib.c:104", Status::NotSent)
+            ]
+        );
+    }
+    #[test]
+    fn long_extensions_dotfiles_and_conventional_names_are_references() {
+        let ignore = SentFile {
+            path: "/work/repo/.gitignore".into(),
+            text: "target\n".into(),
+        };
+        let report = checked(
+            "See gradle.properties:900, .gitignore:900, Dockerfile:900, src/Makefile:2, \
+             .gitignore:1 and a/b/c.properties:3.",
+            &[engine(), ignore],
+        );
+        assert_eq!(
+            statuses(&report),
+            [
+                ("gradle.properties:900", Status::NotSent),
+                (".gitignore:900", Status::OutOfRange),
+                ("Dockerfile:900", Status::NotSent),
+                ("src/Makefile:2", Status::NotSent),
+                (".gitignore:1", Status::Grounded),
+                ("a/b/c.properties:3", Status::NotSent)
+            ]
+        );
+        assert!(report.flagged());
+        // Words joined by a slash still read as prose.
+        assert!(
+            checked("Use and/or:3 here.", &[engine()])
+                .references
+                .is_empty()
+        );
+    }
+    #[test]
+    fn a_diff_grounds_lines_a_sent_copy_of_the_file_lacks() {
+        let snapshot = SentFile {
+            path: "/work/repo/src/lib.c".into(),
+            text: "one added\n".into(),
+        };
+        let report = checked(
+            "Removed at src/lib.c:101; src/lib.c:104 was never shown.",
+            &[snapshot, lib_diff()],
+        );
+        assert_eq!(
+            statuses(&report),
+            [
+                ("src/lib.c:101", Status::Grounded),
+                ("src/lib.c:104", Status::OutOfRange)
+            ]
+        );
+    }
+    #[test]
+    fn a_quote_does_not_join_lines_of_different_files_or_hunks() {
+        let diff = SentFile {
+            path: "/work/frozen/two.diff".into(),
+            text: [
+                "--- a/a.txt",
+                "+++ b/a.txt",
+                "@@ -1,0 +1 @@",
+                "+alpha one",
+                "@@ -9,0 +9 @@",
+                "+charlie three",
+                "--- a/b.txt",
+                "+++ b/b.txt",
+                "@@ -1,0 +1 @@",
+                "+bravo two",
+            ]
+            .join("\n"),
+        };
+        let report = checked(
+            "'charlie three bravo two' and 'alpha one charlie three' but 'charlie three'",
+            &[diff],
+        );
+        assert_eq!(
+            found(&report),
+            [
+                ("charlie three bravo two", false),
+                ("alpha one charlie three", false),
+                ("charlie three", true)
             ]
         );
     }
